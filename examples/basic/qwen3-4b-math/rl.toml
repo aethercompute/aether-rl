@@ -1,0 +1,64 @@
+max_steps = 100
+seq_len = 2048
+output_dir = "outputs/qwen3-4b-i3-math"
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
+
+[model]
+name = "Qwen/Qwen3-4B-Instruct-2507"
+
+[wandb]
+project = "aether-rl"
+name = "qwen3-4b-i3-math"
+
+[ckpt]
+
+[trainer.model.lora]
+rank = 16
+alpha = 32
+
+[trainer.optim]
+lr = 1e-5
+weight_decay = 0.0
+
+[orchestrator]
+batch_size = 64
+group_size = 8
+oversampling_factor = 2.0
+
+[orchestrator.renderer]
+name = "qwen3"
+enable_thinking = false
+
+[orchestrator.train.sampling]
+temperature = 1.0
+max_completion_tokens = 512
+
+[[orchestrator.pre_batch_filters]]
+type = "zero_advantage"
+enforce = true
+
+[[orchestrator.train.env]]
+name = "math-perfectible"
+id = "primeintellect/math-env@0.1.6"
+args = { difficulty_key = "avg@8_qwen3_4b_instruct_2507", min_avg_reward = 0.25, max_avg_reward = 0.75 }
+
+[orchestrator.eval]
+interval = 10
+num_examples = 64
+group_size = 1
+
+[orchestrator.eval.sampling]
+temperature = 0.0
+max_completion_tokens = 512
+
+[[orchestrator.eval.env]]
+name = "math500"
+id = "primeintellect/math500@0.1.17"
+
+[inference]
+
+[inference.model]
+max_model_len = 2048

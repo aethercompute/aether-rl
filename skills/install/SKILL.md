@@ -19,6 +19,12 @@ For an existing clone, init submodules explicitly:
 git submodule update --init --recursive
 ```
 
+If GitHub SSH access is unavailable, rewrite the public submodule URLs for this command only:
+
+```bash
+git -c url.https://github.com/.insteadOf=git@github.com: submodule update --init --recursive
+```
+
 ## Sync
 
 ```bash
