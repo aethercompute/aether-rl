@@ -42,9 +42,10 @@ This page covers everything you need to launch, observe, checkpoint, and recover
 
 ### Launch
 
-The minimal RL run trains an SFT-warmed `Qwen3-0.6B` on the `reverse-text` task — the env is bundled with the [`verifiers`](https://github.com/PrimeIntellect-ai/verifiers) submodule, so nothing else needs to be installed:
+The minimal RL run uses the `reverse-text-v1` workspace environment. Install that package, then launch the run:
 
 ```bash
+uv sync --all-extras --package prime-rl --package reverse-text-v1
 uv run rl @ examples/basic/reverse-text/rl.toml
 ```
 
@@ -100,7 +101,7 @@ Frozen models are declared inline on the algorithm, named where the model is use
 
 ```bash
 CUDA_VISIBLE_DEVICES=1 uv run inference \
-  --model.name <frozen-model> --server.port 8001
+  --model.name "your-org/frozen-model" --server.port 8001
 ```
 
 The standalone `uv run sft` entrypoint is the more traditional SFT path — pure dataset-based, no orchestrator. Use the `sft` algorithm only when you want a frozen model to generate the supervision on the fly.
@@ -170,7 +171,7 @@ The minimal SFT run trains `Qwen3-0.6B` on the `reverse-text` SFT dataset:
 uv run sft @ examples/basic/reverse-text/sft.toml --wandb
 ```
 
-Multi-GPU and multi-node use torchrun under the hood (the `sft` entrypoint manages this for you — see [Scaling § SFT and Torchrun](scaling.md#sft-and-torchrun) for non-default layouts; multi-node SFT goes through [SLURM](scaling.md#slurm)).
+The `sft` entrypoint manages multi-GPU launch; see [Scaling § SFT](scaling.md#sft). Multi-node SFT uses [SLURM](scaling.md#slurm).
 
 ### SFT-Specific Knobs
 
@@ -247,7 +248,7 @@ uv run rl @ rl.toml --max-steps 20 --ckpt.resume-step 10
 HF-compatible weight snapshots are written under `<output_dir>/weights/step_N/` whenever a full checkpoint runs (or you can write weights-only via `--ckpt.weights-only` for cheaper snapshots). Upload directly:
 
 ```bash
-uv run hf upload <user>/<model>-RL outputs/weights/step_100
+uv run hf upload "your-hf-user/your-model-RL" outputs/weights/step_100
 ```
 
 For LoRA runs, set `ckpt.weights.save_adapter_separately = true` to also write the raw adapter alongside the merged weights — useful when serving the adapter through a separate `/load_lora_adapter` call.
@@ -279,9 +280,9 @@ Env worker logs are the first place to look for env-side errors (most user code 
 Live tailing from a single point (works on the head node for multi-node runs over a shared filesystem):
 
 ```bash
-tail -F <output_dir>/logs/{trainer,orchestrator,inference}.log
-tail -F <output_dir>/logs/trainer/node_*.log     # multi-node only
-tail -F <output_dir>/logs/inference/router_*.log # multi-node only
+tail -F "${OUTPUT_DIR}"/logs/{trainer,orchestrator,inference}.log
+tail -F "${OUTPUT_DIR}"/logs/trainer/node_*.log     # multi-node only
+tail -F "${OUTPUT_DIR}"/logs/inference/router_*.log # multi-node only
 ```
 
 ### Console Output

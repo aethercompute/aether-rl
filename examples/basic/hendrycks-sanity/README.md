@@ -1,14 +1,22 @@
 # Hendrycks Sanity
 
-This example runs the Hendrycks Sanity Check experiment proposed in [Defeating the Training-Inference Mismatch](https://arxiv.org/abs/2510.26788). The sanity check tests whether an RL algorithm can reliably improve a model on problems it can *already partially solve*. The dataset is filtered from MATH to only include problems where the base model (`DeepSeek-R1-Distill-Qwen-1.5B`) solves 20-80% of the time across 40 rollouts. A reliable algorithm should push training accuracy on this "perfectible" subset above 95%.
+This example runs the sanity check from [Defeating the Training-Inference Mismatch](https://arxiv.org/abs/2510.26788). It trains `DeepSeek-R1-Distill-Qwen-1.5B` on MATH problems that the base model solves in 20-80% of 40 sampled attempts.
 
 Because our trainer is asynchronous, we perform only one gradient step per batch (the inference engine generates the next batch while the trainer processes the current one).
 
 > This example runs on 8 GPUs (4 for inference, 4 for training).
 
+## Setup
+
+The config uses `math-env-v1` for training and `aime24-v1` for evaluation. Install both workspace packages:
+
+```bash
+uv sync --all-extras --package prime-rl --package math-env-v1 --package aime24-v1
+```
+
 ## Training
 
-Schedule training locally on a node with 8 GPUs
+Launch locally on a node with eight GPUs:
 
 ```bash
 uv run rl @ examples/basic/hendrycks-sanity/rl.toml \

@@ -17,7 +17,6 @@ All entrypoints run via `uv run <command>` and accept TOML configs via `@ path/t
 - Lists: space-separated or JSON literal. Dicts: JSON literal, deep-merged with file values.
 - Optional sub-configs (`WandbConfig | None`): bare `--wandb` enables defaults; `--wandb @ wandb.toml` enables from a file; `--no-wandb` disables.
 - Discriminated unions are switched by the `type` tag (e.g. `--optimizer.type muon`).
-- Validation aliases let renamed fields keep working; legacy keys can be remapped in a `model_validator(mode="before")`.
 - Auto-generated `--help` panels from `Field(description=...)` or PEP 224 docstrings.
 - Friendly errors: required-field boxes, validator errors point at the offending flag, unknown flags get a "did you mean" hint.
 
@@ -33,13 +32,7 @@ uv run rl @ examples/basic/reverse-text/rl.toml --dry-run                       
 - Config: `RLConfig` (`packages/prime-rl-configs/src/prime_rl/configs/rl.py`)
 - Entrypoint: `src/prime_rl/entrypoints/rl.py`
 - SLURM: single- and multi-node
-- Environment packages: before launching a config with a non-core verifier env id,
-  verify the package imports under `uv run` (for example
-  `uv run python -c "import importlib.util; print(importlib.util.find_spec('r2e_gym_v1'))"`).
-  If a local env exists under `deps/research-environments/environments/` or
-  `deps/verifiers/environments/` but does not import, install the env workspace
-  members with `uv sync --all-packages` (all) or `uv sync --package prime-rl
-  --package <env>` (one) — they're auto-discovered, no `pyproject.toml` edit needed.
+- Environment packages: install the workspace packages named by the config before launching. For reverse text, use `uv sync --all-extras --package prime-rl --package reverse-text-v1`. Use repeated `--package <env>` arguments for other runs; reserve `--all-packages` for runs that intentionally need every workspace environment.
 
 ## `sft` — SFT training
 
@@ -67,8 +60,8 @@ uv run inference --model.name Qwen/Qwen3-0.6B --model.enforce-eager
 Smoke checks:
 
 ```bash
-curl http://<host>:<port>/health
-curl http://<host>:<port>/v1/models
+curl "http://${HOST}:${PORT}/health"
+curl "http://${HOST}:${PORT}/v1/models"
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "Qwen/Qwen3-0.6B", "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 50}'

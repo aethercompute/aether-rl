@@ -118,16 +118,18 @@ type = "grpo"
 
 [[orchestrator.train.env]]
 name = "math"
-taskset = { id = "math-v1" }
-harness = { id = "null", runtime = { type = "subprocess" } }
+env.taskset = { id = "math-env-v1" }
+env.agent.harness = { id = "null", runtime = { type = "subprocess" } }
 # inherits the top-level grpo
 
 [[orchestrator.train.env]]
 name = "terminal"
-taskset = { id = "terminal-v1" }
-harness = { id = "bash", runtime = { type = "subprocess" } }
+env.taskset = { id = "terminal-bench-2-v1" }
+env.agent.harness = { id = "bash", runtime = { type = "subprocess" } }
 algo = { type = "echo" }   # this env runs its own algorithm
 ```
+
+Install the `math-env-v1` and `terminal-bench-2-v1` workspace packages before launching this configuration.
 
 ### The Algorithm Classes
 
@@ -361,7 +363,7 @@ Filtered rollouts still appear in W&B distributions, just not in the trainer bat
 
 ## Multi-Turn Trajectories
 
-Multi-turn rollouts (tool use, browser environments, long conversations) used to be stitched into a single fake "single-turn" sample, which silently corrupted the importance ratio when chat templates didn't roundtrip. Since [`verifiers` v0.1.8](https://github.com/PrimeIntellect-ai/verifiers/releases/tag/v0.1.8), `prime-rl` records each LLM request/response as an independent **trajectory step** and merges them at training time using best-effort interleaving — with [renderers](#renderers) as the mechanism that keeps the merge safe by construction.
+`prime-rl` records each LLM request and response as an independent **trajectory step**, then merges compatible steps into training samples using best-effort interleaving. [Renderers](#renderers) preserve token identity across turns.
 
 ### Extension Property
 

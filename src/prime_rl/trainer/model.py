@@ -1076,12 +1076,6 @@ def fix_model_post_empty(model: nn.Module):
         model.model.embed_tokens.embed_scale.fill_(embed_scale)
 
 
-def reshard_module(model: nn.Module):
-    for module in model.modules():
-        if isinstance(module, FSDPModule):
-            module.reshard()
-
-
 def apply_ac(model: nn.Module, ac_config: ActivationCheckpointConfig):
     logger = get_logger()
     language_model = get_language_model(model)

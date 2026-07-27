@@ -125,7 +125,3 @@ def test_llama():
     )
     grad_diff = hf_from_prime_model.model.embed_tokens.weight.grad - hf_model.model.embed_tokens.weight.grad
     assert torch.allclose(grad_diff, torch.zeros_like(grad_diff), atol=1000), f"Max grad diff: {grad_diff.abs().max()}"
-
-
-if __name__ == "__main__":
-    test_llama_mlp_only()

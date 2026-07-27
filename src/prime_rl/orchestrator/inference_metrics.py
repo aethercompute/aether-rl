@@ -102,10 +102,6 @@ class EngineRollup:
 class NodeRollup:
     engines: dict[str, EngineRollup] = field(default_factory=dict)
 
-    @property
-    def engine_count(self) -> int:
-        return len(self.engines)
-
     def summed(self, attribute: str) -> float:
         return sum(getattr(engine, attribute) for engine in self.engines.values())
 

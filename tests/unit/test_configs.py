@@ -352,19 +352,7 @@ def test_tokenizer_name_falls_back_to_model_name_when_unset():
 
 
 def test_explicit_subconfig_tokenizer_name_survives_shared_model_propagation():
-    """Regression: shared ``[model] name = "M"`` must propagate model names but
-    must NOT clobber an explicit ``[orchestrator.tokenizer] name = "T"``.
-
-    This is the case that the old RL-level ``auto_setup_tokenizer`` fix-up got
-    wrong: it unconditionally re-derived ``orchestrator.tokenizer.name`` from
-    ``orchestrator.model.name`` after propagation, silently overriding
-    the user's explicit value. The ``mode="before"`` ``auto_setup_shared_configs``
-    propagator fixes this because it propagates the model name into the raw
-    dict before sub-configs are built, so ``OrchestratorConfig``'s own
-    ``auto_setup_tokenizer`` (mode=after) sees the resolved name *and* the
-    explicit user-set tokenizer name, and the ``fill``-if-absent semantic
-    leaves the explicit value alone.
-    """
+    """Shared model propagation preserves an explicit orchestrator tokenizer."""
     config = RLConfig.model_validate(
         {
             "model": {"name": "M"},
@@ -445,11 +433,7 @@ def test_shared_and_sub_max_steps_conflict_raises():
 
 
 def test_trainer_chat_template_cascades_to_inference():
-    """``[trainer.tokenizer] chat_template`` set directly (no shared
-    ``[tokenizer] chat_template``) must still reach
-    ``inference.model.chat_template`` so vLLM's ``--chat-template`` is wired
-    up. Regression: the original ``auto_setup_tokenizer`` cascaded this; the
-    refactored propagator must keep doing it."""
+    """A trainer chat template reaches inference when no shared template is set."""
     config = RLConfig.model_validate(
         {
             "model": {"name": "Qwen/Qwen3-0.6B"},
@@ -465,9 +449,7 @@ def test_trainer_chat_template_cascades_to_inference():
 
 
 def test_shared_wandb_fields_propagate_to_subconfigs():
-    """Every ``SharedWandbConfig`` leaf (project, entity, name, group, tags,
-    offline) propagates to both trainer.wandb and orchestrator.wandb. Regression
-    for a miss in the inline propagator."""
+    """Every shared W&B field propagates to trainer and orchestrator configs."""
     config = RLConfig.model_validate(
         {
             "model": {"name": "Qwen/Qwen3-0.6B"},

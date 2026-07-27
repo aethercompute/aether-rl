@@ -10,11 +10,11 @@ prime-rl uses [`pydantic-config`](https://github.com/PrimeIntellect-ai/pydantic-
 ## Loading and composition
 
 ```bash
-uv run rl @ examples/basic/reverse-text/rl.toml                                  # single TOML
-uv run rl @ examples/basic/reverse-text/rl.toml --max-steps 50                   # CLI override
-uv run rl @ base.toml @ overlay.toml                                       # left-to-right merge
-uv run rl --model @ model.toml --data @ data.toml                          # nested section files
-uv run rl @ base.toml --trainer @ trainer.toml --trainer.lr 1e-3           # mixed
+uv run rl @ examples/basic/reverse-text/rl.toml                        # single TOML
+uv run rl @ examples/basic/reverse-text/rl.toml --max-steps 50         # CLI override
+uv run rl @ base.toml @ overlay.toml                                   # left-to-right merge
+uv run rl --trainer.model @ model.toml --trainer.data @ data.toml      # nested section files
+uv run rl @ base.toml --trainer @ trainer.toml --trainer.optim.lr 1e-3 # mixed
 ```
 
 Resolution order: CLI > config files (left-to-right) > class defaults. Merging is deep — unset fields in an overlay are preserved from the base.
@@ -30,7 +30,7 @@ uv run rl @ rl.toml --dry-run --output-dir /tmp/x # write resolved TOML to /tmp/
 
 ## Validators
 
-Incompatible combinations (e.g. CP requires flash attention) must raise in a `model_validator` at resolve time, not at runtime. When renaming a field, emit a deprecation warning with a migration hint — never silently drop.
+Incompatible combinations that can be determined from config alone must raise in a `model_validator` at resolve time.
 
 ## Special syntax
 

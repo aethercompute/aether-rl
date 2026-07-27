@@ -18,18 +18,9 @@ __all__ = [
     "MultiMonitor",
     "NoOpMonitor",
     "setup_monitor",
-    "get_monitor",
 ]
 
 _MONITOR: Monitor | None = None
-
-
-def get_monitor() -> Monitor:
-    """Returns the global monitor."""
-    global _MONITOR
-    if _MONITOR is None:
-        raise RuntimeError("Monitor not initialized. Please call `setup_monitor` first.")
-    return _MONITOR
 
 
 def setup_monitor(
@@ -43,8 +34,6 @@ def setup_monitor(
     keep_full_history: bool = True,
     train_env_names: list[str] = [],
     eval_env_names: list[str] = [],
-    # Backward compatibility: support old 'config' keyword argument
-    config: WandbWithExtrasConfig | None = None,
 ) -> Monitor:
     """
     Sets up monitors to log metrics.
@@ -56,9 +45,6 @@ def setup_monitor(
     global _MONITOR
     if _MONITOR is not None:
         raise RuntimeError("Monitor already initialized. Please call `setup_monitor` only once.")
-
-    if config is not None and wandb_config is None:
-        wandb_config = config
 
     monitors: list[Monitor] = []
 

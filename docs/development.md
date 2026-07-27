@@ -107,9 +107,9 @@ Warm up the random-weight mini model with SFT on reverse-text so KL divergence b
 uv run sft \
   --model.name ./mini-glm-moe \
   --data.name PrimeIntellect/Reverse-Text-SFT \
-  --max_steps 200 \
+  --max-steps 200 \
   --optim.lr 1e-4 \
-  --ckpt.weights
+  --ckpt
 ```
 
 Then run the full RL stack on reverse-text:
@@ -134,10 +134,10 @@ Don't expect reward to climb meaningfully in 20 steps on a random model.
 
 Before merging a new model, you need to ensure the following:
 
-- The model is correctly registered and defines and all the required methods - such as `convert_hf_layer_to_tt` and `convert_tt_layer_to_hf`.
+- The model is registered and implements its state-dict detection, `conversion_chain`, and post-meta buffer initialization where needed.
 - The small smoke test passes.
 
-In the PR that adds the new model, you also need to provide a table covering the KL mismatch across 20 steps on `math` environment with `batch_size=64`. All the entries in the table must lower than 0.015. If this is not met, the PR will not be merged (unless reasonable justification is provided). This is to ensure all our models are consistent and their implementations match the implementations in the inference framework.
+Include a table covering KL mismatch across 20 steps on the `math` environment with `batch_size = 64`. Each entry must be below `0.015` unless the PR explains why a different threshold is appropriate.
 
 ## Adding a Custom VLM Implementation
 

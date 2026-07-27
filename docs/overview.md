@@ -1,6 +1,6 @@
 # Overview
 
-`prime-rl` is a framework for large-scale, asynchronous reinforcement learning of large language models. It is designed to be easy to use and hackable, yet capable of training 1T+-parameter MoE models on 1000+ GPU clusters.
+`prime-rl` supports asynchronous reinforcement learning and supervised fine-tuning of language models.
 
 ## Architecture
 
@@ -8,9 +8,9 @@ A `prime-rl` RL run is three cooperating processes:
 
 ![Architecture](assets/architecture.png)
 
-- **Inference** — vLLM-backed server (or fleet) holding the current policy. The orchestrator drives rollouts through the token-in `/inference/v1/generate` route via the [`renderers`](https://github.com/PrimeIntellect-ai/renderers) package (OpenAI-compatible chat/completions routes are also exposed for external clients). We are trying to stay up-to-date with the latest vLLM features, you can read more about the supported features and deployment options in the dedicated [inference documentation](inference.md).
+- **Inference** — vLLM-backed server or fleet holding the current policy. The orchestrator drives rollouts through `/inference/v1/generate` via the [`renderers`](https://github.com/PrimeIntellect-ai/renderers) package. OpenAI-compatible routes are also available; see [Inference](inference.md).
 - **Orchestrator** — Lightweight CPU process that owns the data plane across many [`verifiers`](https://github.com/PrimeIntellect-ai/verifiers) training and eval environments. Each env runs in an isolated subprocess with a variable-size pool of env workers for scalability. The orchestrator drives multi-turn rollouts against the inference fleet (tool use, browsers, sandboxes, long horizons) without re-tokenizing across turns, computes advantages, packs the rollouts into training batches, and relays new weights from trainer to inference.
-- **Trainer** — FSDP2 process group that consumes packed rollouts and steps the optimizer. We ship optimized custom modeling code for many MoE / dense / VLM families that unlocks advanced trainer parallelism — expert parallelism (EP, with DeepEP kernels) and context parallelism (CP) for long-sequence training — plus selective activation checkpointing, FP8 training on Hopper+, LoRA, and multi-tenant training (many concurrent LoRA tenants sharing one trainer + inference deployment). You can read more in the dedicated [training documentation](training.md).
+- **Trainer** — FSDP2 process group that consumes packed rollouts and steps the optimizer. Custom model implementations support EP, CP, selective activation checkpointing, low-precision training, LoRA, and multi-tenant training. See [Training](training.md).
 
 The three processes communicate through configurable transports — by default the trainer↔orchestrator rollout link uses the local filesystem, and weight broadcast uses NCCL for synchronous in-memory transfer (falling back to filesystem when LoRA is enabled or no inference server is configured). Swap to ZMQ for multi-host setups without shared storage. See [Scaling](scaling.md) for the deployment options.
 
@@ -20,19 +20,20 @@ The three processes communicate through configurable transports — by default t
 curl -sSL https://raw.githubusercontent.com/PrimeIntellect-ai/prime-rl/main/scripts/install.sh | bash
 ```
 
-The script clones the repo, initializes the [`verifiers`](https://github.com/PrimeIntellect-ai/verifiers) / [`renderers`](https://github.com/PrimeIntellect-ai/renderers) / [`research-environments`](https://github.com/PrimeIntellect-ai/research-environments) submodules, installs `uv`, and runs `uv sync --all-extras`. For manual setup, or troubleshooting, see the [README](https://github.com/PrimeIntellect-ai/prime-rl#setup).
+The script clones the repo, initializes the submodules, installs `uv`, and runs `uv sync --all-extras`. Environment packages are separate workspace members and are not installed by that command. For manual setup, see the [README](https://github.com/PrimeIntellect-ai/prime-rl#setup).
 
-You need at least one NVIDIA GPU (RTX 3090/4090/5090, A100, H100, H200, or B200). Single-GPU runs are supported for debugging; production RL is typically 1× inference node + 1+ trainer nodes.
+Standalone SFT or inference requires at least one NVIDIA GPU. The default local RL deployment assigns separate trainer and inference GPUs and therefore requires two visible GPUs.
 
 ## Quick Run
 
-Train an SFT-warmed `Qwen3-0.6B` on the `reverse-text` task — the env is bundled with the [`verifiers`](https://github.com/PrimeIntellect-ai/verifiers) submodule so no separate install is needed. This config ships in the repo and runs on two GPUs (one for inference, one for the trainer):
+Install the `reverse-text-v1` workspace package, then train the shipped SFT-warmed `Qwen3-0.6B` on two GPUs:
 
 ```bash
+uv sync --all-extras --package prime-rl --package reverse-text-v1
 uv run rl @ examples/basic/reverse-text/rl.toml
 ```
 
-The `rl` entrypoint reads `examples/basic/reverse-text/rl.toml`, splits it into per-process sub-configs, picks GPU 0 for inference and GPU 1 for the trainer, launches all three processes, and tees their stdout into `outputs/logs/{trainer,orchestrator,inference}.log`. Within a minute the trainer should log `step 1` and a reward sample; after 20 steps the run completes and final HF-compatible weights land at `outputs/weights/step_20`.
+The `rl` entrypoint resolves the config, assigns inference before trainer GPUs from `CUDA_VISIBLE_DEVICES`, launches all three processes, and writes logs under `outputs/logs/`. The config runs for 20 steps and writes HF-compatible weights under `outputs/weights/step_20`.
 
 ## Documentation
 

@@ -7,10 +7,20 @@ description: How to install prime-rl and its optional dependencies. Use when set
 
 ## Clone + submodules
 
-prime-rl is a monorepo with submodules. Use the install script when bootstrapping a fresh machine:
+prime-rl is a monorepo with submodules. From the directory where the repository should be cloned, run:
 
 ```bash
-bash scripts/install.sh   # clones, inits submodules, installs uv, runs `uv sync --all-extras`
+curl -sSL https://raw.githubusercontent.com/PrimeIntellect-ai/prime-rl/main/scripts/install.sh | bash
+cd prime-rl
+```
+
+The installer initializes submodules, installs `uv`, and runs `uv sync --all-extras`. To run it inside an existing clone, use `SKIP_CLONE=1 bash scripts/install.sh`.
+
+On aarch64, the installer builds `flash-attn` after the final exact sync. Preserve that build when adding an environment package:
+
+```bash
+uv sync --inexact --all-extras --package prime-rl --package reverse-text-v1
+uv run --no-sync rl @ examples/basic/reverse-text/rl.toml
 ```
 
 For an existing clone, init submodules explicitly:
@@ -32,10 +42,10 @@ uv sync                                    # core only
 uv sync --group dev                        # + pytest, ruff, pre-commit
 uv sync --all-extras                       # + extras (flash-attn, flash-attn-cute, …)
 uv sync --all-extras --all-packages        # + all env packages (needed to train on them)
-uv sync --package prime-rl --package gsm8k-v1  # core + just one env
+uv sync --all-extras --package prime-rl --package reverse-text-v1  # extras + one env
 ```
 
-Environment packages under `deps/research-environments/environments/*/*` and `deps/verifiers/environments/*` are uv **workspace members**, auto-discovered — adding a new env needs no `pyproject.toml` change. They are opt-in: a plain `uv sync` / `--all-extras` does not install them (and would remove them if already present — re-run with `--all-packages`, or `--inexact` to keep them). Install all with `--all-packages`, or a subset with repeated `--package <env>` (include `--package prime-rl` to keep the core). If two envs pin conflicting transitive versions (all members share one lock), add the loser to `[tool.uv.workspace].exclude`.
+Environment packages under `deps/research-environments/environments/*/*` and `deps/verifiers/environments/*` are auto-discovered uv workspace members. They are opt-in: `uv sync` and `uv sync --all-extras` do not install them and remove environment packages not selected by the command. Prefer repeated `--package <env>` arguments for the environments a run needs, and include `--package prime-rl`. Add `--all-extras` when the core extras must remain installed. Use `--all-packages` only when every workspace environment is required; incompatible workspace pins may prevent an all-package sync.
 
 When bumping a package past the workspace-wide `exclude-newer = "7 days"` window, add it (and any newly-required transitives) to `[tool.uv.exclude-newer-package]` before refreshing `uv.lock`.
 

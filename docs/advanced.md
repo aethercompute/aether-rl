@@ -23,18 +23,21 @@ This page covers the specialized features layered on top of the core training st
 impl = "custom"        # or "hf" to force the HF path
 ```
 
-| Family | HF config types | EP | CP |
+| Family | Example IDs | EP | CP |
 |---|---|---|---|
 | GLM-5 / GLM-5.2 (`glm_moe_dsa`) | `zai-org/GLM-5`, `zai-org/GLM-5-FP8`, `zai-org/GLM-5.2`, `zai-org/GLM-5.2-FP8` | ✅ | ✅ |
+| Qwen3 dense | `Qwen/Qwen3-0.6B`, … | ❌ | ✅ |
 | Qwen3 MoE | `Qwen/Qwen3-30B-A3B`, … | ✅ | ✅ |
+| Qwen3.5 dense | `Qwen/Qwen3.5-4B`, … | ❌ | ✅ |
 | Qwen3.5 MoE | `Qwen/Qwen3.5-35B-A3B`, … | ✅ | ✅ |
-| Qwen3 / Qwen3.5 VLMs | see [Multimodal training](#multimodal-training) | MoE only | ❌ |
+| Qwen3.5 VLMs | see [Multimodal training](#multimodal-training) | MoE model only | ✅ (Ulysses) |
 | Laguna | `poolside/Laguna-XS.2` | ✅ | ✅ |
 | MiniMax M2 | `MiniMax/MiniMax-M2` | ✅ | ✅ |
-| Nemotron H | `nvidia/Nemotron-3-Nano-30B-A3B`, … | ✅ | ❌ |
+| Nemotron H | `nvidia/Nemotron-3-Nano-30B-A3B`, … | ✅ | ✅ (Ulysses) |
 | Trinity (AFMoE) | `arcee-ai/Trinity-Mini`, … | ✅ | ✅ |
-| GLM-4 / GLM-4.5 / INTELLECT-3 | `THUDM/GLM-4-9B-0414`, `zai-org/GLM-4.5`, `PrimeIntellect/INTELLECT-3`, … | ✅ | ✅ |
-| GPT-OSS (HF MoE) | `openai/gpt-oss-20b`, `openai/gpt-oss-120b` | ❌ | ✅ |
+| GLM-4 / GLM-4.5 / INTELLECT-3 | `THUDM/GLM-4-9B-0414`, `zai-org/GLM-4.5`, `PrimeIntellect/INTELLECT-3`, … | MoE models | ✅ |
+| GPT-OSS (MoE) | `openai/gpt-oss-20b`, `openai/gpt-oss-120b` | ✅ | ✅ |
+| Llama | Llama-family checkpoints | ❌ | ✅ |
 
 The custom path enables you to set EP, CP, selective activation checkpointing, low-precision training (`[trainer.model.quantization]`), and faster MoE kernels (`moe_use_grouped_mm = true`, default). Forcing `impl = "hf"` is mostly useful when debugging — it's slower and disables most MoE-specific knobs.
 
@@ -42,7 +45,7 @@ The custom path enables you to set EP, CP, selective activation checkpointing, l
 
 Set `[trainer.model.quantization]` to train dense linears and MoE expert GEMMs in low precision. Two backends are available via the `type` discriminator:
 
-- `type = "fp8"` — DeepGEMM FP8 blockwise (requires SM90+ / Hopper). Options: `enable_grouped_gemm` (FP8 MoE expert GEMM). Both default on.
+- `type = "fp8"` — DeepGEMM FP8 blockwise (requires SM90+ / Hopper). Its `enable_grouped_gemm` option defaults on.
 - `type = "mxfp8"` — torchao MXFP8 microscaling (requires SM100+ / Blackwell). Options: `enable_grouped_gemm`, `enable_a2a` (MXFP8 expert-parallel all-to-all), and `recipe` (`mxfp8_rceil` default or `mxfp8_rceil_wgrad_with_hp`).
 
 ```toml
@@ -59,8 +62,7 @@ GLM-5.2 adds IndexShare: the DSA sparse-attention indexer runs only on a subset 
 `model.ep_comm_backend` picks the all-to-all kernel used for EP dispatch/combine:
 
 - **`torch`** (default): TorchTitan's all-to-all collective. Works everywhere, no extra install.
-- **`deepep`**: Utilizes DeepEP's custom all-to-all collectives. This provides better performance if EP dimension spans multiple nodes. We provide pre-built binaries for H100/H200 with cuda runtime 12.9 installed, you can install them by running `uv sync --all-extras`.
-DeepEP requires some careful tuning to achieve optimal performance, tuning parameters are `deepep_num_sms` and `deepep_token_chunk_size`.
+- **`deepep`**: DeepEP's custom all-to-all collectives. `uv sync --all-extras` installs the pinned platform wheel; tune `deepep_num_sms` and `deepep_token_chunk_size` for the deployment.
 
 With DeepEP, gradient clipping is currently not supported. (`optim.max_norm` is set to `None` automatically.)
 
@@ -77,19 +79,21 @@ The built-in VLM registry covers:
 
 ### Enabling VLM Mode
 
-Add `[model.vlm]` and bfloat16 dtypes:
+Set the shared model and VLM fields, then configure the trainer implementation and dtypes:
 
 ```toml
 [model]
 name = "Qwen/Qwen3.5-4B"
-impl = "custom"
-optimization_dtype = "bfloat16"
-reduce_dtype = "bfloat16"
 
 [model.vlm]
 vision_encoder_attr = "model.visual"
 language_model_attr = "model.language_model"
 # freeze_vision_encoder = true  # default; set false to fine-tune the encoder
+
+[trainer.model]
+impl = "custom"
+optimization_dtype = "bfloat16"
+reduce_dtype = "bfloat16"
 ```
 
 The weight-broadcast key prefix is derived as `{language_model_attr}.layers.` automatically.
@@ -105,7 +109,7 @@ VLM training requires a registered custom PrimeRL implementation.
 
 ## LoRA Training
 
-LoRA is enabled by adding `[model.lora]`:
+For standalone SFT, enable LoRA under `[model.lora]`:
 
 ```toml
 [model.lora]
@@ -114,12 +118,23 @@ alpha = 32
 dropout = 0.0
 ```
 
-`target_modules` defaults to a reasonable cross-family set (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`, `experts`, plus a few latent-projection names for Nemotron). Unknown names are silently ignored, so the defaults work across architectures. Add architecture-specific names to extend coverage (e.g. `in_proj` / `out_proj` for Mamba).
-
-LoRA is supported across SFT and RL. For RL, NCCL weight broadcast is **not** supported with LoRA — the default NCCL transport automatically falls back to filesystem when LoRA is enabled. To save the raw adapter alongside the merged HF weights:
+In a unified RL config, use the trainer path instead:
 
 ```toml
-[ckpt.weights]
+[trainer.model.lora]
+rank = 16
+alpha = 32
+dropout = 0.0
+```
+
+`target_modules` defaults to a reasonable cross-family set (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`, `experts`, plus a few latent-projection names for Nemotron). Unknown names are silently ignored, so the defaults work across architectures. Add architecture-specific names to extend coverage (e.g. `in_proj` / `out_proj` for Mamba).
+
+LoRA is supported across SFT and RL. For RL, NCCL weight broadcast is **not** supported with LoRA — the default NCCL transport automatically falls back to filesystem when LoRA is enabled. In a unified RL config, enable shared checkpointing and set the trainer-specific weight option to save the raw adapter alongside merged HF weights:
+
+```toml
+[ckpt]
+
+[trainer.ckpt.weights]
 save_adapter_separately = true
 ```
 
@@ -143,13 +158,13 @@ Example config: [`examples/advanced/glm-5.2/swe.toml`](https://github.com/PrimeI
 Monitor live queue depths to detect imbalance:
 
 ```bash
-curl -s http://<prefill_node>:8100/metrics | grep num_requests_waiting
-curl -s http://<decode_node>:8200/metrics | grep num_requests_waiting
+curl -s "http://${PREFILL_NODE}:8100/metrics" | grep num_requests_waiting
+curl -s "http://${DECODE_NODE}:8200/metrics" | grep num_requests_waiting
 ```
 
 If prefill queues and decode is idle, add prefill nodes (and vice versa).
 
-**Required setup for disaggregated P/D (NIXL/UCX).** The pip-wheel NIXL's bundled UCX segfaults on the prefill→decode KV transfer (`signal 11: invalid permissions for mapped object` in `libucs.so`) — reproduced on vLLM 0.22 and 0.23, with/without mooncake, with/without llm-d. Building NIXL against UCX 1.19.x from source is therefore **required** (not optional) for disaggregated P/D.
+**Required setup for disaggregated P/D (NIXL/UCX).** Build NIXL against UCX 1.19.x from source; the bundled wheel is not supported for prefill-to-decode KV transfer.
 
 ```bash
 salloc -N 1 --gres=gpu:1 bash -c 'bash scripts/install_nixl_from_source.sh'

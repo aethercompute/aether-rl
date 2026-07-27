@@ -28,9 +28,6 @@ def get_model_pairs():
         mlp_only_layers=[1],
         use_grouped_mm=False,
     )
-    # TODO: We should test this path because it's the most performant
-    # But the grad seems to be off in attn because of precision
-    # hf_config._attn_implementation = "flash_attention_2"
     hf_config._attn_implementation = "flash_attention_2"
     with torch.device("cuda"), default_dtype(torch.bfloat16):
         hf_model = HFQwen3MoeForCausalLM._from_config(hf_config)
@@ -151,7 +148,3 @@ def test_qwen3_moe_router_replay():
     # Verify gradients flow through the model with router replay
     out_replay["logits"].sum().backward()
     assert prime_model.model.embed_tokens.weight.grad is not None
-
-
-if __name__ == "__main__":
-    test_qwen3_moe_mlp_only()

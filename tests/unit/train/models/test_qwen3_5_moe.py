@@ -184,7 +184,3 @@ def test_qwen3_5_moe_context_parallel_setup_hook():
     assert model.model._cp_world_size == 2
     assert linear_layer.linear_attn.cp_group is cp_group
     assert linear_layer.linear_attn.cp_world_size == 2
-
-
-if __name__ == "__main__":
-    test_qwen3_5_moe()

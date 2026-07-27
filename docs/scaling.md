@@ -1,13 +1,13 @@
 # Scaling
 
-This page covers how to scale `prime-rl` from a single GPU to a 1000-GPU cluster: single-node and multi-node deployments, FSDP / expert parallelism / context parallelism, and throughput benchmarking. See [Training](training.md) for detailed documentation of the trainer configuration and [Inference](inference.md) for the inference configuration.
+This page covers single-node and multi-node deployment, FSDP, expert parallelism, context parallelism, SLURM, and throughput benchmarking. See [Training](training.md) for trainer configuration and [Inference](inference.md) for inference configuration.
 
 ## Table of Contents
 
 - [Single-Node vs. Multi-Node Deployment](#single-node-vs-multi-node-deployment)
   - [Single-Node](#single-node)
     - [RL Placement](#rl-placement)
-    - [SFT and Torchrun](#sft-and-torchrun)
+    - [SFT](#sft)
   - [Multi-Node](#multi-node)
 - [Parallelism Knobs](#parallelism-knobs)
   - [FSDP](#fsdp)
@@ -26,7 +26,7 @@ This page covers how to scale `prime-rl` from a single GPU to a 1000-GPU cluster
 
 ## Single-Node vs. Multi-Node Deployment
 
-The `rl`, `sft`, and `inference` entrypoints all accept a `[deployment]` block (`type = "single_node"` or `"multi_node"`) that picks how the trainer / orchestrator / inference processes are placed across hardware. **Single-node** runs locally; **multi-node** currently goes through [SLURM](#slurm) — the launcher writes an sbatch script that places inference replicas, the orchestrator, and the trainer with the right rendezvous endpoints, IPs, ports, and shared-filesystem paths wired in.
+The `rl` and `sft` entrypoints accept a top-level `[deployment]` block with `type = "single_node"` or `"multi_node"`. Standalone inference uses its own `[deployment]` block and also supports `type = "disaggregated"`. **Single-node** runs locally; **multi-node** currently goes through [SLURM](#slurm), which renders an sbatch script with the required process placement, rendezvous endpoints, ports, and shared paths.
 
 ### Single-Node
 
@@ -58,18 +58,15 @@ CUDA_VISIBLE_DEVICES=2,3 uv run rl @ rl.toml \
   --output-dir outputs/exp2
 ```
 
-#### SFT and Torchrun
+#### SFT
 
-`uv run sft` handles distributed launch internally. To scale from 1 to N GPUs, set the deployment GPU count (or just let it pick up `WORLD_SIZE`). For non-default layouts, the manual equivalent is:
+`uv run sft` handles distributed launch. Set the single-node deployment GPU count to scale from one to multiple GPUs:
 
 ```bash
-uv run torchrun \
-  --nproc-per-node 8 \
-  --local-ranks-filter 0 \
-  src/prime_rl/trainer/sft/train.py @ sft.toml
+uv run sft @ sft.toml --deployment.num-gpus 8
 ```
 
-`--local-ranks-filter 0` keeps console output to rank 0 only; per-rank stdout/stderr is still captured in `<output_dir>/logs/trainer/torchrun/`.
+The launcher captures rank-zero output in `trainer.log` and per-rank output under `<output_dir>/logs/trainer/torchrun/`.
 
 ### Multi-Node
 
@@ -92,12 +89,12 @@ FSDP2 is the default model sharding strategy. By default the trainer fully shard
 
 EP shards MoE expert weights across the EP mesh, dramatically reducing the FSDP communication volume per layer and improving the training throughput. EP is only available with the custom model implementation (`model.impl = "custom"` or `"auto"` for supported families).
 
-`ep` defaults to `"auto"`, which resolves at startup to the largest valid EP degree up to 8. It loads the model config to read `num_experts`, then picks the biggest divisor of `num_experts` that also divides the FSDP island size (`world_size // dp_replicate`), is a multiple of `cp`, and is <= 8. For non-MoE models, resolves to 1 (no-op). Set `ep` to an explicit integer to override:
+`ep` defaults to `"auto"`. For a detected MoE model using a supported implementation, it resolves to `min(world_size // dp_replicate, 8)`; otherwise it resolves to 1. The resulting parallel mesh must still satisfy the world-size, DP, CP, and EP constraints checked during setup. Set `ep` to an explicit integer to override:
 
 ```toml
 [trainer.model]
 impl = "custom"
-ep = 8                     # explicit EP degree; must divide num_experts
+ep = 8                     # explicit EP degree; must fit the parallel mesh
 ep_comm_backend = "torch"  # or "deepep"
 ```
 
@@ -105,7 +102,7 @@ ep_comm_backend = "torch"  # or "deepep"
 
 ### Context Parallelism
 
-CP shards a single sequence across multiple GPUs along the token dimension — for long-context sequences. We reccomend using `ulysses` style CP for most of the models to get the most throughput. Some models (e.g. GLM-5) only support `ring` style CP. Wrong setting will be rejected on validation.
+CP shards a sequence across multiple GPUs along the token dimension. Use `ulysses` for models with linear-attention or Mamba layers and for VLMs. Unsupported combinations are rejected during validation or model setup.
 
 `ulysses` head-shards Q/K/V, so the CP degree must divide `num_attention_heads`. GQA models with fewer KV heads than the CP degree (e.g. NemotronH: 32 query heads, 2 KV heads) are supported via KV-head replication; the CP degree must then be a multiple of `num_key_value_heads`. Hybrid Mamba layers head-shard independently (`cp_mamba`), which requires the CP degree to divide `mamba_num_heads` and `n_groups`.
 
@@ -133,7 +130,7 @@ mode = "selective"
 targets = ["norm", "attn_proj"]  # see Reference for the full list per architecture
 ```
 
-`ac_offloading` is also on by default with `max_inflight_activations = 5`. We've observed this feature to be very effective, lowering the peak memory usage by 30-40% in some cases, while only lossing ~3-5% of throughput. To disable either, set `model.ac = "None"` or `model.ac_offloading = "None"`.
+`ac_offloading` is also on by default with `max_inflight_activations = 5`. In a unified RL config, disable either feature with `trainer.model.ac = "None"` or `trainer.model.ac_offloading = "None"`.
 
 ### Optimizer Offloading
 

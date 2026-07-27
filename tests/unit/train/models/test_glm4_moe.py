@@ -29,9 +29,6 @@ def get_model_pairs() -> tuple[HFGlm4MoeForCausalLM, PrimeRLGlm4MoeForCausalLM]:
         partial_rotary_factor=0.5,
         use_grouped_mm=False,
     )
-    # TODO: We should test this path because it's the most performant
-    # But the grad seems to be off in attn because of precision
-    # hf_config._attn_implementation = "flash_attention_2"
     hf_config._attn_implementation = "flash_attention_2"
     with torch.device("cuda"), default_dtype(torch.bfloat16):
         hf_model = HFGlm4MoeForCausalLM._from_config(hf_config)
@@ -122,7 +119,3 @@ def test_glm4_moe() -> None:
     )
     grad_diff = hf_model.model.embed_tokens.weight.grad - prime_model.model.embed_tokens.weight.grad
     assert torch.allclose(grad_diff, torch.zeros_like(grad_diff), atol=1000), f"Max grad diff: {grad_diff.abs().max()}"
-
-
-if __name__ == "__main__":
-    test_glm4_moe_mlp_only()
