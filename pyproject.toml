@@ -57,6 +57,7 @@ sft = "aether_rl.entrypoints.sft:main"
 inference = "aether_rl.entrypoints.inference:main"
 trainer = "aether_rl.entrypoints.trainer:main"
 orchestrator = "aether_rl.entrypoints.orchestrator:main"
+worker = "aether_rl.entrypoints.worker:main"
 env-server = "aether_rl.orchestrator.env_server.env_server:main"
 
 [project.entry-points."vllm.general_plugins"]
