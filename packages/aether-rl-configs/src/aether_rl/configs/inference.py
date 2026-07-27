@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal, TypeAlias
 from pydantic import Field, model_validator
 from pydantic_config import BaseConfig
 
-from aether_rl.configs.shared import BaseModelConfig, EnvVars, LogConfig, SlurmConfig
+from aether_rl.configs.shared import BaseModelConfig, EnvVars, LogConfig, SlurmConfig, TokenizerConfig
 from aether_rl.utils.config import find_package_resource, rgetattr, rsetattr
 from aether_rl.utils.parsers import resolve_reasoning_parser, resolve_tool_call_parser
 
@@ -331,6 +331,8 @@ class InferenceConfig(BaseConfig):
 
     model: ModelConfig = Field(default_factory=ModelConfig)
 
+    tokenizer: TokenizerConfig = Field(default_factory=TokenizerConfig)
+
     parallel: ParallelConfig = ParallelConfig()
     """Multi-node and multi-GPU parallelism (TP, DP, PP)."""
 
@@ -424,6 +426,16 @@ class InferenceConfig(BaseConfig):
 
     dry_run: bool = False
     """Only validate and dump resolved configs, then exit early."""
+
+    @model_validator(mode="after")
+    def auto_setup_tokenizer(self):
+        if self.tokenizer.name is None:
+            self.tokenizer.name = self.model.name
+            if self.tokenizer.revision is None:
+                self.tokenizer.revision = self.model.revision
+        if self.tokenizer.trust_remote_code is None:
+            self.tokenizer.trust_remote_code = self.model.trust_remote_code
+        return self
 
     @model_validator(mode="after")
     def validate_multi_node_requires_slurm(self):
@@ -556,6 +568,9 @@ class InferenceConfig(BaseConfig):
             "server.port": "port",
             "server.liveness_timeout_seconds": "liveness_timeout_seconds",
             "model.name": "model",
+            "model.revision": "revision",
+            "tokenizer.name": "tokenizer",
+            "tokenizer.revision": "tokenizer_revision",
             "model.dtype": "dtype",
             "model.max_model_len": "max_model_len",
             "model.enforce_eager": "enforce_eager",
@@ -589,6 +604,8 @@ class InferenceConfig(BaseConfig):
             value = rgetattr(self, config_key.replace("-", "_"))
             rsetattr(namespace, vllm_key, value)
 
+        namespace.trust_remote_code = self.model.trust_remote_code or bool(self.tokenizer.trust_remote_code)
+
         # Set `logprobs_mode` to `processed_logprobs` by default
         rsetattr(namespace, "logprobs_mode", "processed_logprobs")
 
@@ -610,6 +627,11 @@ class InferenceConfig(BaseConfig):
         # Remove chat_template if not set (vLLM doesn't accept None)
         if namespace.chat_template is None:
             delattr(namespace, "chat_template")
+
+        if namespace.revision is None:
+            delattr(namespace, "revision")
+        if namespace.tokenizer_revision is None:
+            delattr(namespace, "tokenizer_revision")
 
         # Remove tool_call_parser if not set (vLLM doesn't accept None) and gate
         # `enable_auto_tool_choice` on its presence.

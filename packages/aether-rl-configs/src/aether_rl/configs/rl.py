@@ -1,3 +1,4 @@
+import re
 import warnings
 from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
@@ -22,12 +23,12 @@ from aether_rl.configs.shared import (
     EnvVars,
     FileMonitorConfig,
     SlurmConfig,
+    TokenizerConfig,
     VLMConfig,
 )
 from aether_rl.configs.trainer import (
     BenchConfig,
     FakeDataLoaderConfig,
-    TokenizerConfig,
     TrainerConfig,
 )
 from aether_rl.configs.trainer import (
@@ -112,6 +113,9 @@ class SharedCheckpointConfig(BaseConfig):
 class SharedModelConfig(BaseConfig):
     name: str = "Qwen/Qwen3-0.6B"
     """HF model name or local path."""
+
+    revision: str | None = None
+    """Model revision. Distributed runs require a full 40-character Hugging Face commit SHA."""
 
     vlm: "VLMConfig | None" = None
     """VLM configuration. Set this to enable vision-language model support."""
@@ -216,6 +220,9 @@ DeploymentConfig: TypeAlias = Annotated[
 
 
 class RLConfig(BaseConfig):
+    mode: Literal["legacy", "distributed"] = "legacy"
+    """Execution topology. Distributed mode enables strict identity and LoRA-only validation."""
+
     trainer: TrainerConfig
 
     orchestrator: OrchestratorConfig
@@ -494,13 +501,66 @@ class RLConfig(BaseConfig):
             if self.inference is not None:
                 self.inference.enable_lora = True
                 self.inference.max_lora_rank = self.trainer.model.lora.rank
-            else:
+            elif self.mode != "distributed":
                 warnings.warn(
                     "LoRA is enabled, but inference is not configured. When manually starting the inference server, "
                     "make sure to set --enable_lora and --max-lora-rank.",
                     stacklevel=2,
                 )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_distributed_mode(self):
+        if self.mode != "distributed":
+            return self
+
+        if self.model is None or "model" not in self.model_fields_set:
+            raise ValueError("distributed mode requires an explicit top-level [model] config")
+        if self.tokenizer is None or "tokenizer" not in self.model_fields_set:
+            raise ValueError("distributed mode requires an explicit top-level [tokenizer] config")
+        if re.fullmatch(r"[^/\s]+/[^/\s]+", self.model.name) is None:
+            raise ValueError("distributed mode requires model.name to be a Hugging Face repository ID")
+        if re.fullmatch(r"[0-9a-f]{40}", self.model.revision or "") is None:
+            raise ValueError("distributed mode requires model.revision to be a full 40-character commit SHA")
+        if not self.tokenizer.name:
+            raise ValueError("distributed mode requires tokenizer.name")
+        if re.fullmatch(r"[^/\s]+/[^/\s]+", self.tokenizer.name) is None:
+            raise ValueError("distributed mode requires tokenizer.name to be a Hugging Face repository ID")
+        if re.fullmatch(r"[0-9a-f]{40}", self.tokenizer.revision or "") is None:
+            raise ValueError("distributed mode requires tokenizer.revision to be a full 40-character commit SHA")
+        if self.inference is not None:
+            raise ValueError("distributed mode runs inference on workers and must not configure central inference")
+        if self.deployment.type != "single_node" or self.deployment.num_infer_gpus != 0:
+            raise ValueError("distributed mode requires a single-node deployment with num_infer_gpus = 0")
+        if self.trainer.model.name != self.model.name or self.orchestrator.model.name != self.model.name:
+            raise ValueError("distributed mode requires the same model name for trainer and orchestrator")
+        if (
+            self.trainer.model.revision != self.model.revision
+            or self.orchestrator.model.revision != self.model.revision
+        ):
+            raise ValueError("distributed mode requires the same model revision for trainer and orchestrator")
+        if (
+            self.trainer.tokenizer.name != self.tokenizer.name
+            or self.orchestrator.tokenizer.name != self.tokenizer.name
+            or self.trainer.tokenizer.revision != self.tokenizer.revision
+            or self.orchestrator.tokenizer.revision != self.tokenizer.revision
+        ):
+            raise ValueError("distributed mode requires the same tokenizer name and revision for every component")
+        if self.trainer.model.lora is None:
+            raise ValueError("distributed mode requires trainer.model.lora")
+        if self.trainer.model.lora.modules_to_save:
+            raise ValueError("distributed mode does not support trainer.model.lora.modules_to_save")
+        if self.trainer.model.lora.alpha <= 0 or not self.trainer.model.lora.target_modules:
+            raise ValueError("distributed mode requires positive LoRA alpha and non-empty target_modules")
+        if self.trainer.max_concurrent_runs != 1:
+            raise ValueError("distributed mode supports exactly one run per coordinator")
+        if self.trainer.model.debug.random_init or self.trainer.model.debug.num_layers is not None:
+            raise ValueError("distributed mode does not support random initialization or layer truncation")
+        if self.trainer.model.quantization is not None:
+            raise ValueError("distributed mode does not support trainer-side model quantization")
+        if self.deployment.num_train_gpus < 1:
+            raise ValueError("distributed mode requires at least one trainer GPU")
         return self
 
     @model_validator(mode="after")

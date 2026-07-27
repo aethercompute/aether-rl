@@ -35,6 +35,7 @@ prime = false
 
 [manifest]
 members = [
+    "aether-rl",
     "aime24-v1",
     "aime25-v1",
     "aime26-v1",
@@ -91,7 +92,6 @@ members = [
     "papersearchqa-v1",
     "patterned-needle-in-haystack-v1",
     "pinchbench-v1",
-    "prime-rl",
     "programbench-v1",
     "prolog-v1",
     "proposer-solver-v1",
@@ -153,6 +153,209 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/85/ef/fd7649da8af11d93979831e8f1f8097e85e82d5bfeabc8c68b39175d8e75/addict-2.4.0.tar.gz", hash = "sha256:b3b2210e0e067a281f5646c8c5db92e99b7231ea8b0eb5f74dbdf9e259d4e494", size = 9186, upload-time = "2020-11-21T16:21:31.416Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6a/00/b08f23b7d7e1e14ce01419a467b583edbb93c6cdb8654e54a9cc579cd61f/addict-2.4.0-py3-none-any.whl", hash = "sha256:249bb56bbfd3cdc2a004ea0ff4c2b6ddc84d53bc2194761636eb314d5cfa5dfc", size = 3832, upload-time = "2020-11-21T16:21:29.588Z" },
+]
+
+[[package]]
+name = "aether-rl"
+version = "0.7.0"
+source = { editable = "." }
+dependencies = [
+    { name = "aether-rl-configs" },
+    { name = "aiolimiter" },
+    { name = "beartype" },
+    { name = "datasets" },
+    { name = "dion" },
+    { name = "flash-linear-attention" },
+    { name = "jaxtyping" },
+    { name = "loguru" },
+    { name = "modelexpress" },
+    { name = "mooncake-transfer-engine" },
+    { name = "msgspec" },
+    { name = "numpy" },
+    { name = "nvidia-ml-py" },
+    { name = "openai" },
+    { name = "orjson" },
+    { name = "pandas" },
+    { name = "prime" },
+    { name = "prime-pydantic-config" },
+    { name = "pyarrow" },
+    { name = "pybase64" },
+    { name = "pyzmq" },
+    { name = "renderers" },
+    { name = "rich" },
+    { name = "ring-flash-attn" },
+    { name = "setproctitle" },
+    { name = "tenacity" },
+    { name = "tilelang" },
+    { name = "torch" },
+    { name = "torchao", version = "0.17.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64'" },
+    { name = "torchao", version = "0.17.0+git02105d46c", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.6.0/torchao-0.17.0+git02105d46c-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
+    { name = "torchaudio" },
+    { name = "torchdata" },
+    { name = "torchtitan" },
+    { name = "torchvision" },
+    { name = "transformers" },
+    { name = "uvloop" },
+    { name = "verifiers", extra = ["harbor"] },
+    { name = "vllm", version = "0.24.0+cu129", source = { url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
+    { name = "vllm", version = "0.24.0+cu129", source = { url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
+    { name = "wandb" },
+    { name = "wandb-workspaces" },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "deep-ep", version = "1.1.0+1fd57b0", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.1.0+1fd57b0-cp312-cp312-linux_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
+    { name = "deep-ep", version = "1.2.1+29d31c0", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.2.1+29d31c0-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
+    { name = "deep-gemm", version = "2.5.0+891d57b", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
+    { name = "deep-gemm", version = "2.5.0+891d57b", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
+    { name = "flash-attn", marker = "platform_machine == 'x86_64'" },
+    { name = "flash-attn-3" },
+    { name = "flash-attn-4" },
+    { name = "nixl" },
+    { name = "nixl-cu12", version = "0.10.1", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/nixl_cu12-0.10.1-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
+    { name = "quack-kernels" },
+    { name = "vllm-router", version = "0.1.26", source = { url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
+    { name = "vllm-router", version = "0.1.26", source = { url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
+]
+disagg = [
+    { name = "deep-ep", version = "1.1.0+1fd57b0", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.1.0+1fd57b0-cp312-cp312-linux_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
+    { name = "deep-ep", version = "1.2.1+29d31c0", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.2.1+29d31c0-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
+    { name = "deep-gemm", version = "2.5.0+891d57b", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
+    { name = "deep-gemm", version = "2.5.0+891d57b", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
+    { name = "nixl" },
+    { name = "nixl-cu12", version = "0.10.1", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/nixl_cu12-0.10.1-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
+    { name = "vllm-router", version = "0.1.26", source = { url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
+    { name = "vllm-router", version = "0.1.26", source = { url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
+]
+flash-attn = [
+    { name = "flash-attn", marker = "platform_machine == 'x86_64'" },
+]
+flash-attn-3 = [
+    { name = "flash-attn-3" },
+]
+flash-attn-cute = [
+    { name = "flash-attn-4" },
+]
+gpt-oss = [
+    { name = "kernels" },
+]
+quack = [
+    { name = "quack-kernels" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "ipykernel" },
+    { name = "ipywidgets" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+mamba-ssm = [
+    { name = "mamba-ssm" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aether-rl", extras = ["disagg"], marker = "extra == 'all'" },
+    { name = "aether-rl", extras = ["flash-attn"], marker = "extra == 'all'" },
+    { name = "aether-rl", extras = ["flash-attn-3"], marker = "extra == 'all'" },
+    { name = "aether-rl", extras = ["flash-attn-cute"], marker = "extra == 'all'" },
+    { name = "aether-rl", extras = ["quack"], marker = "extra == 'all'" },
+    { name = "aether-rl-configs", editable = "packages/aether-rl-configs" },
+    { name = "aiolimiter", specifier = ">=1.2.1" },
+    { name = "beartype", specifier = ">=0.21.0" },
+    { name = "datasets", specifier = ">=4.0.0" },
+    { name = "deep-ep", marker = "platform_machine == 'aarch64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.1.0+1fd57b0-cp312-cp312-linux_aarch64.whl" },
+    { name = "deep-ep", marker = "platform_machine == 'x86_64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.2.1+29d31c0-cp312-cp312-linux_x86_64.whl" },
+    { name = "deep-gemm", marker = "platform_machine == 'aarch64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_aarch64.whl" },
+    { name = "deep-gemm", marker = "platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'disagg'" },
+    { name = "deep-gemm", marker = "platform_machine == 'x86_64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_x86_64.whl" },
+    { name = "dion", git = "https://github.com/samsja/dion.git?rev=d891eeb" },
+    { name = "flash-attn", marker = "platform_machine == 'x86_64' and extra == 'flash-attn'", url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.8.3+cu128torch2.11-cp312-cp312-linux_x86_64.whl" },
+    { name = "flash-attn-3", marker = "extra == 'flash-attn-3'", index = "https://download.pytorch.org/whl/test/cu128" },
+    { name = "flash-attn-4", marker = "extra == 'flash-attn-cute'", git = "https://github.com/Dao-AILab/flash-attention.git?subdirectory=flash_attn%2Fcute&rev=96bd151" },
+    { name = "flash-linear-attention", git = "https://github.com/fla-org/flash-linear-attention" },
+    { name = "jaxtyping", specifier = ">=0.3.2" },
+    { name = "kernels", marker = "extra == 'gpt-oss'" },
+    { name = "loguru", specifier = ">=0.7.3" },
+    { name = "modelexpress", specifier = "==0.3.0" },
+    { name = "mooncake-transfer-engine", specifier = ">=0.3.10.post2" },
+    { name = "msgspec", specifier = ">=0.18" },
+    { name = "nixl", marker = "extra == 'disagg'" },
+    { name = "nixl-cu12", marker = "platform_machine == 'x86_64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/nixl_cu12-0.10.1-cp312-cp312-linux_x86_64.whl" },
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "nvidia-ml-py", specifier = ">=12.575.51" },
+    { name = "openai", specifier = ">=1.106.1" },
+    { name = "orjson", specifier = ">=3.11.0" },
+    { name = "pandas", specifier = ">=2.0" },
+    { name = "prime", specifier = ">=0.6.19" },
+    { name = "prime-pydantic-config", editable = "deps/pydantic-config" },
+    { name = "pyarrow", specifier = ">=21.0.0" },
+    { name = "pybase64", specifier = ">=1.4.2" },
+    { name = "pyzmq", specifier = ">=27.1.0" },
+    { name = "quack-kernels", marker = "extra == 'quack'", specifier = ">=0.4.1" },
+    { name = "renderers", editable = "deps/renderers" },
+    { name = "rich", specifier = ">=14.0.0" },
+    { name = "ring-flash-attn", specifier = ">=0.1.8" },
+    { name = "setproctitle", specifier = ">=1.3.0" },
+    { name = "tenacity", specifier = ">=8.2.0" },
+    { name = "tilelang", specifier = ">=0.1.8" },
+    { name = "torch", specifier = ">=2.9.0", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "torchao", marker = "platform_machine != 'x86_64'", specifier = ">=0.17.0" },
+    { name = "torchao", marker = "platform_machine == 'x86_64'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.6.0/torchao-0.17.0+git02105d46c-cp312-cp312-linux_x86_64.whl" },
+    { name = "torchaudio", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "torchdata", specifier = ">=0.11.0" },
+    { name = "torchtitan", git = "https://github.com/pytorch/torchtitan?rev=23e4dfc" },
+    { name = "torchvision", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "transformers", specifier = "==5.6.2" },
+    { name = "uvloop", specifier = ">=0.21.0" },
+    { name = "verifiers", extras = ["harbor"], editable = "deps/verifiers" },
+    { name = "vllm", marker = "platform_machine != 'aarch64' and platform_machine != 'x86_64'", specifier = ">=0.24.0" },
+    { name = "vllm", marker = "platform_machine == 'aarch64'", url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_aarch64.whl" },
+    { name = "vllm", marker = "platform_machine == 'x86_64'", url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl" },
+    { name = "vllm-router", marker = "platform_machine == 'aarch64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_aarch64.whl" },
+    { name = "vllm-router", marker = "platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'disagg'" },
+    { name = "vllm-router", marker = "platform_machine == 'x86_64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_x86_64.whl" },
+    { name = "wandb", specifier = ">=0.26.1" },
+    { name = "wandb-workspaces", specifier = ">=0.4.3" },
+]
+provides-extras = ["flash-attn", "flash-attn-3", "flash-attn-cute", "disagg", "gpt-oss", "quack", "all"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "ipykernel", specifier = ">=6.29.5" },
+    { name = "ipywidgets", specifier = ">=8.1.7" },
+    { name = "pre-commit", specifier = ">=4.2.0" },
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=0.23" },
+    { name = "ruff", specifier = ">=0.12.1" },
+]
+mamba-ssm = [{ name = "mamba-ssm", specifier = ">=2.3.0" }]
+
+[[package]]
+name = "aether-rl-configs"
+version = "0.4.0"
+source = { editable = "packages/aether-rl-configs" }
+dependencies = [
+    { name = "prime-pydantic-config" },
+    { name = "pydantic" },
+    { name = "renderers" },
+    { name = "tomli" },
+    { name = "tomli-w" },
+    { name = "verifiers" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "prime-pydantic-config", specifier = ">=0.4.2" },
+    { name = "pydantic", specifier = ">=1.10.13" },
+    { name = "renderers", specifier = ">=0.1.8" },
+    { name = "tomli", specifier = ">=2.2.1" },
+    { name = "tomli-w", specifier = ">=1.2.0" },
+    { name = "verifiers", specifier = ">=0.2.1" },
 ]
 
 [[package]]
@@ -5117,209 +5320,6 @@ dev = [
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "rich", specifier = ">=15.0.0" },
     { name = "ruff", specifier = ">=0.12.1" },
-]
-
-[[package]]
-name = "aether-rl"
-version = "0.7.0"
-source = { editable = "." }
-dependencies = [
-    { name = "aiolimiter" },
-    { name = "beartype" },
-    { name = "datasets" },
-    { name = "dion" },
-    { name = "flash-linear-attention" },
-    { name = "jaxtyping" },
-    { name = "loguru" },
-    { name = "modelexpress" },
-    { name = "mooncake-transfer-engine" },
-    { name = "msgspec" },
-    { name = "numpy" },
-    { name = "nvidia-ml-py" },
-    { name = "openai" },
-    { name = "orjson" },
-    { name = "pandas" },
-    { name = "prime" },
-    { name = "prime-pydantic-config" },
-    { name = "aether-rl-configs" },
-    { name = "pyarrow" },
-    { name = "pybase64" },
-    { name = "pyzmq" },
-    { name = "renderers" },
-    { name = "rich" },
-    { name = "ring-flash-attn" },
-    { name = "setproctitle" },
-    { name = "tenacity" },
-    { name = "tilelang" },
-    { name = "torch" },
-    { name = "torchao", version = "0.17.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64'" },
-    { name = "torchao", version = "0.17.0+git02105d46c", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.6.0/torchao-0.17.0+git02105d46c-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
-    { name = "torchaudio" },
-    { name = "torchdata" },
-    { name = "torchtitan" },
-    { name = "torchvision" },
-    { name = "transformers" },
-    { name = "uvloop" },
-    { name = "verifiers", extra = ["harbor"] },
-    { name = "vllm", version = "0.24.0+cu129", source = { url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
-    { name = "vllm", version = "0.24.0+cu129", source = { url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
-    { name = "wandb" },
-    { name = "wandb-workspaces" },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "deep-ep", version = "1.1.0+1fd57b0", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.1.0+1fd57b0-cp312-cp312-linux_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
-    { name = "deep-ep", version = "1.2.1+29d31c0", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.2.1+29d31c0-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
-    { name = "deep-gemm", version = "2.5.0+891d57b", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
-    { name = "deep-gemm", version = "2.5.0+891d57b", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
-    { name = "flash-attn", marker = "platform_machine == 'x86_64'" },
-    { name = "flash-attn-3" },
-    { name = "flash-attn-4" },
-    { name = "nixl" },
-    { name = "nixl-cu12", version = "0.10.1", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/nixl_cu12-0.10.1-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
-    { name = "quack-kernels" },
-    { name = "vllm-router", version = "0.1.26", source = { url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
-    { name = "vllm-router", version = "0.1.26", source = { url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
-]
-disagg = [
-    { name = "deep-ep", version = "1.1.0+1fd57b0", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.1.0+1fd57b0-cp312-cp312-linux_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
-    { name = "deep-ep", version = "1.2.1+29d31c0", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.2.1+29d31c0-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
-    { name = "deep-gemm", version = "2.5.0+891d57b", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
-    { name = "deep-gemm", version = "2.5.0+891d57b", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
-    { name = "nixl" },
-    { name = "nixl-cu12", version = "0.10.1", source = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/nixl_cu12-0.10.1-cp312-cp312-linux_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
-    { name = "vllm-router", version = "0.1.26", source = { url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
-    { name = "vllm-router", version = "0.1.26", source = { url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
-]
-flash-attn = [
-    { name = "flash-attn", marker = "platform_machine == 'x86_64'" },
-]
-flash-attn-3 = [
-    { name = "flash-attn-3" },
-]
-flash-attn-cute = [
-    { name = "flash-attn-4" },
-]
-gpt-oss = [
-    { name = "kernels" },
-]
-quack = [
-    { name = "quack-kernels" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "ipykernel" },
-    { name = "ipywidgets" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-]
-mamba-ssm = [
-    { name = "mamba-ssm" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiolimiter", specifier = ">=1.2.1" },
-    { name = "beartype", specifier = ">=0.21.0" },
-    { name = "datasets", specifier = ">=4.0.0" },
-    { name = "deep-ep", marker = "platform_machine == 'aarch64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.1.0+1fd57b0-cp312-cp312-linux_aarch64.whl" },
-    { name = "deep-ep", marker = "platform_machine == 'x86_64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.2.1+29d31c0-cp312-cp312-linux_x86_64.whl" },
-    { name = "deep-gemm", marker = "platform_machine == 'aarch64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_aarch64.whl" },
-    { name = "deep-gemm", marker = "platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'disagg'" },
-    { name = "deep-gemm", marker = "platform_machine == 'x86_64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_x86_64.whl" },
-    { name = "dion", git = "https://github.com/samsja/dion.git?rev=d891eeb" },
-    { name = "flash-attn", marker = "platform_machine == 'x86_64' and extra == 'flash-attn'", url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.8.3+cu128torch2.11-cp312-cp312-linux_x86_64.whl" },
-    { name = "flash-attn-3", marker = "extra == 'flash-attn-3'", index = "https://download.pytorch.org/whl/test/cu128" },
-    { name = "flash-attn-4", marker = "extra == 'flash-attn-cute'", git = "https://github.com/Dao-AILab/flash-attention.git?subdirectory=flash_attn%2Fcute&rev=96bd151" },
-    { name = "flash-linear-attention", git = "https://github.com/fla-org/flash-linear-attention" },
-    { name = "jaxtyping", specifier = ">=0.3.2" },
-    { name = "kernels", marker = "extra == 'gpt-oss'" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "modelexpress", specifier = "==0.3.0" },
-    { name = "mooncake-transfer-engine", specifier = ">=0.3.10.post2" },
-    { name = "msgspec", specifier = ">=0.18" },
-    { name = "nixl", marker = "extra == 'disagg'" },
-    { name = "nixl-cu12", marker = "platform_machine == 'x86_64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/nixl_cu12-0.10.1-cp312-cp312-linux_x86_64.whl" },
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "nvidia-ml-py", specifier = ">=12.575.51" },
-    { name = "openai", specifier = ">=1.106.1" },
-    { name = "orjson", specifier = ">=3.11.0" },
-    { name = "pandas", specifier = ">=2.0" },
-    { name = "prime", specifier = ">=0.6.19" },
-    { name = "prime-pydantic-config", editable = "deps/pydantic-config" },
-    { name = "aether-rl", extras = ["disagg"], marker = "extra == 'all'" },
-    { name = "aether-rl", extras = ["flash-attn"], marker = "extra == 'all'" },
-    { name = "aether-rl", extras = ["flash-attn-3"], marker = "extra == 'all'" },
-    { name = "aether-rl", extras = ["flash-attn-cute"], marker = "extra == 'all'" },
-    { name = "aether-rl", extras = ["quack"], marker = "extra == 'all'" },
-    { name = "aether-rl-configs", editable = "packages/aether-rl-configs" },
-    { name = "pyarrow", specifier = ">=21.0.0" },
-    { name = "pybase64", specifier = ">=1.4.2" },
-    { name = "pyzmq", specifier = ">=27.1.0" },
-    { name = "quack-kernels", marker = "extra == 'quack'", specifier = ">=0.4.1" },
-    { name = "renderers", editable = "deps/renderers" },
-    { name = "rich", specifier = ">=14.0.0" },
-    { name = "ring-flash-attn", specifier = ">=0.1.8" },
-    { name = "setproctitle", specifier = ">=1.3.0" },
-    { name = "tenacity", specifier = ">=8.2.0" },
-    { name = "tilelang", specifier = ">=0.1.8" },
-    { name = "torch", specifier = ">=2.9.0", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torchao", marker = "platform_machine != 'x86_64'", specifier = ">=0.17.0" },
-    { name = "torchao", marker = "platform_machine == 'x86_64'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.6.0/torchao-0.17.0+git02105d46c-cp312-cp312-linux_x86_64.whl" },
-    { name = "torchaudio", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torchdata", specifier = ">=0.11.0" },
-    { name = "torchtitan", git = "https://github.com/pytorch/torchtitan?rev=23e4dfc" },
-    { name = "torchvision", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "transformers", specifier = "==5.6.2" },
-    { name = "uvloop", specifier = ">=0.21.0" },
-    { name = "verifiers", extras = ["harbor"], editable = "deps/verifiers" },
-    { name = "vllm", marker = "platform_machine != 'aarch64' and platform_machine != 'x86_64'", specifier = ">=0.24.0" },
-    { name = "vllm", marker = "platform_machine == 'aarch64'", url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_aarch64.whl" },
-    { name = "vllm", marker = "platform_machine == 'x86_64'", url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl" },
-    { name = "vllm-router", marker = "platform_machine == 'aarch64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_aarch64.whl" },
-    { name = "vllm-router", marker = "platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'disagg'" },
-    { name = "vllm-router", marker = "platform_machine == 'x86_64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_x86_64.whl" },
-    { name = "wandb", specifier = ">=0.26.1" },
-    { name = "wandb-workspaces", specifier = ">=0.4.3" },
-]
-provides-extras = ["flash-attn", "flash-attn-3", "flash-attn-cute", "disagg", "gpt-oss", "quack", "all"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "ipykernel", specifier = ">=6.29.5" },
-    { name = "ipywidgets", specifier = ">=8.1.7" },
-    { name = "pre-commit", specifier = ">=4.2.0" },
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=0.23" },
-    { name = "ruff", specifier = ">=0.12.1" },
-]
-mamba-ssm = [{ name = "mamba-ssm", specifier = ">=2.3.0" }]
-
-[[package]]
-name = "aether-rl-configs"
-version = "0.4.0"
-source = { editable = "packages/aether-rl-configs" }
-dependencies = [
-    { name = "prime-pydantic-config" },
-    { name = "pydantic" },
-    { name = "renderers" },
-    { name = "tomli" },
-    { name = "tomli-w" },
-    { name = "verifiers" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "prime-pydantic-config", specifier = ">=0.4.2" },
-    { name = "pydantic", specifier = ">=1.10.13" },
-    { name = "renderers", specifier = ">=0.1.8" },
-    { name = "tomli", specifier = ">=2.2.1" },
-    { name = "tomli-w", specifier = ">=1.2.0" },
-    { name = "verifiers", specifier = ">=0.2.1" },
 ]
 
 [[package]]

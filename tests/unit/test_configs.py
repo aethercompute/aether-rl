@@ -623,3 +623,117 @@ def test_explicit_inference_parser_wins_over_auto():
     )
     assert config.inference is not None
     assert config.inference.model.tool_call_parser == "hermes"
+
+
+FULL_REVISION = "a" * 40
+
+
+def distributed_config(**overrides) -> dict:
+    config = {
+        "mode": "distributed",
+        "model": {"name": "org/model", "revision": FULL_REVISION},
+        "tokenizer": {"name": "org/model", "revision": FULL_REVISION},
+        "trainer": {"model": {"lora": {}}},
+        "orchestrator": {"renderer": {"name": "default"}},
+        "deployment": {
+            "type": "single_node",
+            "gpus_per_node": 1,
+            "num_train_gpus": 1,
+            "num_infer_gpus": 0,
+        },
+    }
+    config.update(overrides)
+    return config
+
+
+def test_revisions_propagate_without_overriding_inference_tokenizer():
+    config = RLConfig.model_validate(
+        {
+            "model": {"name": "org/model", "revision": FULL_REVISION},
+            "tokenizer": {"name": "org/tokenizer", "revision": "b" * 40},
+            "trainer": {},
+            "orchestrator": {"renderer": {"name": "default"}},
+            "inference": {},
+        }
+    )
+    assert config.trainer.model.revision == FULL_REVISION
+    assert config.orchestrator.model.revision == FULL_REVISION
+    assert config.inference is not None
+    assert config.inference.model.revision == FULL_REVISION
+    assert config.trainer.tokenizer.revision == "b" * 40
+    assert config.orchestrator.tokenizer.revision == "b" * 40
+    assert config.inference.tokenizer.name == "org/model"
+    assert config.inference.tokenizer.revision == FULL_REVISION
+
+
+def test_inference_forwards_model_and_tokenizer_revisions_to_vllm():
+    config = InferenceConfig.model_validate(
+        {
+            "model": {"name": "org/model", "revision": FULL_REVISION},
+            "tokenizer": {"name": "org/tokenizer", "revision": "b" * 40},
+        }
+    )
+    namespace = config.to_vllm()
+    assert namespace.revision == FULL_REVISION
+    assert namespace.tokenizer == "org/tokenizer"
+    assert namespace.tokenizer_revision == "b" * 40
+
+
+def test_explicit_tokenizer_repository_does_not_inherit_model_revision():
+    config = InferenceConfig.model_validate(
+        {
+            "model": {"name": "org/model", "revision": FULL_REVISION},
+            "tokenizer": {"name": "org/tokenizer"},
+        }
+    )
+    assert config.tokenizer.revision is None
+    assert not hasattr(config.to_vllm(), "tokenizer_revision")
+
+
+def test_legacy_mode_does_not_require_revisions_or_lora():
+    config = RLConfig.model_validate(
+        {
+            "trainer": {},
+            "orchestrator": {},
+        }
+    )
+    assert config.mode == "legacy"
+    assert config.trainer.model.revision is None
+    assert config.trainer.model.lora is None
+
+
+def test_valid_distributed_lora_config_resolves_exact_identity():
+    config = RLConfig.model_validate(distributed_config())
+    assert config.mode == "distributed"
+    assert config.inference is None
+    assert config.trainer.model.lora is not None
+    assert config.trainer.model.revision == FULL_REVISION
+    assert config.orchestrator.model.revision == FULL_REVISION
+    assert config.trainer.tokenizer.revision == FULL_REVISION
+    assert config.orchestrator.tokenizer.revision == FULL_REVISION
+
+
+@pytest.mark.parametrize(
+    ("change", "error"),
+    [
+        ({"model": {"name": "org/model", "revision": "main"}}, "full 40-character"),
+        ({"tokenizer": {"name": "org/model", "revision": "abc1234"}}, "full 40-character"),
+        ({"trainer": {}}, "requires trainer.model.lora"),
+        (
+            {"trainer": {"model": {"lora": {"modules_to_save": ["lm_head"]}}}},
+            "does not support trainer.model.lora.modules_to_save",
+        ),
+        ({"inference": {}}, "must not configure central inference"),
+        (
+            {"deployment": {"type": "single_node", "gpus_per_node": 1, "num_train_gpus": 0, "num_infer_gpus": 0}},
+            "at least one trainer GPU",
+        ),
+        (
+            {"trainer": {"model": {"lora": {"alpha": 0}}}},
+            "positive LoRA alpha",
+        ),
+    ],
+)
+def test_distributed_mode_rejects_incompatible_config(change, error):
+    with pytest.raises(ValidationError, match=error):
+        RLConfig.model_validate(distributed_config(**change))

@@ -68,14 +68,14 @@ from aether_rl.utils.utils import format_time
 from aether_rl.utils.vlm import get_language_model, get_vision_encoder, is_vlm_architecture
 
 
-def pre_download_model(model_name: str) -> None:
+def pre_download_model(model_name: str, revision: str | None = None) -> None:
     """Pre-download model from HuggingFace Hub so all nodes have cached weights before training."""
     if Path(model_name).exists():
         get_logger().info(f"Model {model_name} found at local path, skipping download")
         return
     get_logger().info(f"Pre-downloading model {model_name}")
     t0 = time.perf_counter()
-    path = snapshot_download(repo_id=model_name, repo_type="model")
+    path = snapshot_download(repo_id=model_name, repo_type="model", revision=revision)
     get_logger().debug(
         f"Finished pre-downloading model {model_name} to {path} in {format_time(time.perf_counter() - t0)}"
     )
@@ -533,7 +533,8 @@ def get_model(
 ) -> nn.Module:
     logger = get_logger()
     logger.info(
-        f"Loading model config (name={config.name}, attn={config.attn}, trust_remote_code={config.trust_remote_code})"
+        f"Loading model config (name={config.name}, revision={config.revision}, "
+        f"attn={config.attn}, trust_remote_code={config.trust_remote_code})"
     )
 
     is_vlm_training = config.vlm is not None
@@ -546,7 +547,10 @@ def get_model(
     model_config = cast(
         PretrainedConfig,
         AutoConfig.from_pretrained(
-            config.name, attn_implementation=config.attn, trust_remote_code=config.trust_remote_code
+            config.name,
+            revision=config.revision,
+            attn_implementation=config.attn,
+            trust_remote_code=config.trust_remote_code,
         ),
     )
     model_config.use_cache = False
@@ -716,6 +720,7 @@ def get_model(
             logger.info(f"Loading model {config.name} using {model_cls.__name__} to CPU")
             model = model_cls.from_pretrained(
                 pretrained_model_name_or_path=config.name,
+                revision=config.revision,
                 config=model_config,
                 trust_remote_code=config.trust_remote_code,
                 **dtype_kwarg,
@@ -730,7 +735,11 @@ def get_model(
 
 def setup_tokenizer(config: TokenizerConfig) -> PreTrainedTokenizer:
     logger = get_logger()
-    tokenizer = AutoTokenizer.from_pretrained(config.name, trust_remote_code=config.trust_remote_code)
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.name,
+        revision=config.revision,
+        trust_remote_code=config.trust_remote_code,
+    )
     if config.chat_template is not None:
         path = Path(config.chat_template)
         if path.is_file():
@@ -751,7 +760,11 @@ def setup_processor(config: ModelConfig):
 
     logger = get_logger()
     try:
-        processor = AutoProcessor.from_pretrained(config.name, trust_remote_code=config.trust_remote_code)
+        processor = AutoProcessor.from_pretrained(
+            config.name,
+            revision=config.revision,
+            trust_remote_code=config.trust_remote_code,
+        )
     except (ValueError, OSError, KeyError) as e:
         logger.debug(f"No AutoProcessor available for {config.name} ({type(e).__name__}); treating as text-only.")
         return None
@@ -921,7 +934,7 @@ def load_dcp_from_hf(model: nn.Module, config: ModelConfig, parallel_dims: Paral
         return
 
     if not Path(config.name).exists():
-        snapshot_path = Path(snapshot_download(repo_id=config.name, repo_type="model"))
+        snapshot_path = Path(snapshot_download(repo_id=config.name, repo_type="model", revision=config.revision))
     else:
         logger.info(
             f"Loading model weights from path {config.name}, skipping snapshot download. If this is not expected, please remove the directory {config.name} and run again"

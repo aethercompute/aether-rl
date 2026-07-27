@@ -377,6 +377,8 @@ class SFTConfig(BaseConfig):
     def auto_setup_tokenizer(self):
         if self.tokenizer.name is None:
             self.tokenizer.name = self.model.name
+            if self.tokenizer.revision is None:
+                self.tokenizer.revision = self.model.revision
         if self.tokenizer.trust_remote_code is None:
             self.tokenizer.trust_remote_code = self.model.trust_remote_code
         return self

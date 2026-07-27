@@ -527,6 +527,9 @@ def rl_slurm(config: RLConfig):
 
 
 def rl(config: RLConfig):
+    if config.mode == "distributed":
+        raise ValueError("distributed mode must be launched through the coordinator entrypoint")
+
     resuming = config.ckpt is not None and config.ckpt.resume_step is not None
     clean = config.clean_output_dir and not os.environ.get("NEVER_CLEAN_OUTPUT_DIR")
     ckpt_output_dir = config.ckpt.output_dir if config.ckpt else None
@@ -556,7 +559,7 @@ def rl(config: RLConfig):
     if not config.dry_run:
         from aether_rl.trainer.model import pre_download_model
 
-        pre_download_model(config.trainer.model.name)
+        pre_download_model(config.trainer.model.name, config.trainer.model.revision)
 
     if config.slurm is not None:
         rl_slurm(config)

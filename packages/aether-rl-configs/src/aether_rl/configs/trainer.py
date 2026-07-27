@@ -11,6 +11,7 @@ from aether_rl.configs.shared import (
     FileSystemTransportConfig,
     HeartbeatConfig,
     MetricsServerConfig,
+    TokenizerConfig,
     TrainerLogConfig,
     TransportConfig,
     WandbConfig,
@@ -306,17 +307,6 @@ class ModelConfig(BaseModelConfig):
         if isinstance(self.quantization, MXFP8Config) and self.ep_comm_backend != "torch":
             raise ValueError("MXFP8 quantization requires model.ep_comm_backend='torch'.")
         return self
-
-
-class TokenizerConfig(BaseConfig):
-    name: str | None = None
-    """Tokenizer name or path. If None, the model's default tokenizer is used."""
-
-    trust_remote_code: bool | None = None
-    """Trust remote code when initializing the tokenizer. If None, inherits the model's ``trust_remote_code`` setting."""
-
-    chat_template: str | None = None
-    """Chat template for the tokenizer. Either a Jinja2 template string or a path to a template file. If None, the tokenizer's default chat template is used."""
 
 
 class ConstantSchedulerConfig(BaseConfig):
@@ -718,6 +708,8 @@ class TrainerConfig(BaseConfig):
     def auto_setup_tokenizer(self):
         if self.tokenizer.name is None:
             self.tokenizer.name = self.model.name
+            if self.tokenizer.revision is None:
+                self.tokenizer.revision = self.model.revision
         if self.tokenizer.trust_remote_code is None:
             self.tokenizer.trust_remote_code = self.model.trust_remote_code
         return self

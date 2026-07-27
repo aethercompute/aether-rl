@@ -72,6 +72,12 @@ def propagate_shared_fields(data: Any) -> Any:
         "orchestrator.model.name",
     )
     propagate(
+        "model.revision",
+        "trainer.model.revision",
+        "inference.model.revision",
+        "orchestrator.model.revision",
+    )
+    propagate(
         "model.vlm",
         "trainer.model.vlm",
         "inference.model.vlm",
@@ -109,11 +115,14 @@ def propagate_shared_fields(data: Any) -> Any:
     # [file_monitor] leaf. (Bare empty ``[file_monitor]`` block enablement is at the end.)
     propagate("file_monitor.filename", "trainer.file_monitor.filename", "orchestrator.file_monitor.filename")
 
-    # [tokenizer]. ``chat_template`` also flows to ``inference.model`` (vLLM's
-    # ``--chat-template``); ``name`` and ``trust_remote_code`` can legitimately
-    # differ between sub-configs (auto-derived from model names, which may
-    # differ for FP8-quantized inference variants).
+    # [tokenizer]. ``chat_template`` also flows to ``inference.model`` because
+    # that is where vLLM accepts ``--chat-template``.
     propagate("tokenizer.name", "trainer.tokenizer.name", "orchestrator.tokenizer.name")
+    propagate(
+        "tokenizer.revision",
+        "trainer.tokenizer.revision",
+        "orchestrator.tokenizer.revision",
+    )
     propagate(
         "tokenizer.trust_remote_code",
         "trainer.tokenizer.trust_remote_code",

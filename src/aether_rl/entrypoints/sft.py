@@ -214,7 +214,7 @@ def sft(config: SFTConfig):
     if not config.dry_run:
         from aether_rl.trainer.model import pre_download_model
 
-        pre_download_model(config.model.name)
+        pre_download_model(config.model.name, config.model.revision)
 
     if config.slurm is not None:
         sft_slurm(config)

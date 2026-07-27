@@ -21,6 +21,10 @@ Resolution order: CLI > config files (left-to-right) > class defaults. Merging i
 
 Naming: CLI uses kebab-case (`--model.max-model-len`); TOML uses snake_case (`max_model_len`).
 
+Model and tokenizer configs accept an optional `revision`. The distributed
+contract requires each revision to be a full 40-character Hugging Face commit
+SHA; legacy launch modes continue to allow omitted revisions.
+
 ## Inspect & validate
 
 ```bash

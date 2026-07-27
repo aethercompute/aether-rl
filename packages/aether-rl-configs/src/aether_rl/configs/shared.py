@@ -101,11 +101,28 @@ class BaseModelConfig(BaseConfig):
     name: str = "Qwen/Qwen3-0.6B"
     """HF model name or local path."""
 
+    revision: str | None = None
+    """Model revision. Distributed runs require a full 40-character Hugging Face commit SHA."""
+
     trust_remote_code: bool = False
     """Trust remote code when initializing the tokenizer."""
 
     vlm: "VLMConfig | None" = None
     """VLM configuration. Setting this enables vision-language model support."""
+
+
+class TokenizerConfig(BaseConfig):
+    name: str | None = None
+    """Tokenizer name or path. If None, the model's default tokenizer is used."""
+
+    revision: str | None = None
+    """Tokenizer revision. If None, inherits the model revision when the tokenizer name is inherited."""
+
+    trust_remote_code: bool | None = None
+    """Trust remote code when initializing the tokenizer. If None, inherits the model setting."""
+
+    chat_template: str | None = None
+    """Jinja2 chat template string or template file path. If None, uses the tokenizer default."""
 
 
 class ElasticConfig(BaseConfig):

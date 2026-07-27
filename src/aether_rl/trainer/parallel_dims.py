@@ -262,7 +262,11 @@ def _is_moe_model(config: ModelConfig) -> bool:
     """Return True if the model has MoE layers, by loading its HuggingFace config."""
     from transformers import AutoConfig
 
-    model_config = AutoConfig.from_pretrained(config.name, trust_remote_code=config.trust_remote_code)
+    model_config = AutoConfig.from_pretrained(
+        config.name,
+        revision=config.revision,
+        trust_remote_code=config.trust_remote_code,
+    )
     return hasattr(model_config, "num_experts") or hasattr(model_config, "n_routed_experts")
 
 
