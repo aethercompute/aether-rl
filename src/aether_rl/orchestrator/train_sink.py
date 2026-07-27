@@ -79,10 +79,10 @@ class TrainSink:
         # Keyed by the dispatcher's group UUID. ``(env_name, task_idx)``
         # isn't unique — the same task can be re-sampled while an
         # earlier group is still in flight
-        self.pending_groups: dict[uuid.UUID, list[Rollout]] = defaultdict(list)
+        self.pending_groups: dict[str | uuid.UUID, list[Rollout]] = defaultdict(list)
         # Episodes arrived per group — the finalization count (an episode may
         # add several traces to ``pending_groups`` but counts once here).
-        self.pending_group_episodes: dict[uuid.UUID, int] = defaultdict(int)
+        self.pending_group_episodes: dict[str | uuid.UUID, int] = defaultdict(int)
         self.pending_batch: list[Rollout] = []
         # Running payload-token total of ``pending_batch`` (token-batched
         # runs), kept in sync on append/pop so the readiness check never
@@ -169,7 +169,7 @@ class TrainSink:
         # tokenized — before its group is complete.
         await self.train_envs.get(rollout.env_name).algorithm.finalize_rollout(rollout)
 
-    async def process_group(self, group_id: uuid.UUID) -> None:
+    async def process_group(self, group_id: str | uuid.UUID) -> None:
         """Finalize one GRPO group: drop errored rollouts (the whole group
         when ``requires_group_scoring`` and any failed), assign advantages,
         run pre-batch filters, append survivors to ``pending_batch``."""

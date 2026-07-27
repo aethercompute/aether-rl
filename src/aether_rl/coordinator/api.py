@@ -36,6 +36,7 @@ from aether_rl.protocol import (
     WorkerRegistration,
     WorkerRegistrationResponse,
     canonical_json_bytes,
+    decode_result_envelope,
     sha256_digest,
 )
 
@@ -421,7 +422,7 @@ def create_coordinator_app(
 
     @app.put("/api/v1/assignments/{assignment_id}/result")
     async def result(assignment_id: str, request: Request) -> JSONResponse:
-        _validate_json_body(request, result_body_limit_bytes)
+        result_content_type = _validate_result_body(request, result_body_limit_bytes)
         assignment_limit = await service.call(repository.assignment_result_size_limit, assignment_id)
         effective_limit = min(result_body_limit_bytes, assignment_limit)
         incoming = repository.spool.incoming_dir
@@ -438,7 +439,11 @@ def create_coordinator_app(
                 await asyncio.to_thread(_flush_file, file)
             try:
                 envelope_bytes = await asyncio.to_thread(temporary_path.read_bytes)
-                envelope = await asyncio.to_thread(_parse_model_json, ResultEnvelope, envelope_bytes)
+                envelope = (
+                    await asyncio.to_thread(decode_result_envelope, envelope_bytes)
+                    if result_content_type == "application/msgpack"
+                    else await asyncio.to_thread(_parse_model_json, ResultEnvelope, envelope_bytes)
+                )
             except APIError:
                 raise
             except ValidationError as error:
@@ -546,6 +551,25 @@ def _validate_json_body(request: Request, limit: int) -> None:
             raise APIError(400, "invalid_content_length", "Content-Length must be non-negative")
         if declared_size > limit:
             raise APIError(413, "payload_too_large", "request body is too large")
+
+
+def _validate_result_body(request: Request, limit: int) -> str:
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type not in {"application/json", "application/msgpack"}:
+        raise APIError(415, "unsupported_media_type", "Content-Type must be application/json or application/msgpack")
+    if request.headers.get("content-encoding", "identity").lower() != "identity":
+        raise APIError(415, "unsupported_encoding", "Content-Encoding must be identity")
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_size = int(content_length)
+        except ValueError as error:
+            raise APIError(400, "invalid_content_length", "Content-Length must be an integer") from error
+        if declared_size < 0:
+            raise APIError(400, "invalid_content_length", "Content-Length must be non-negative")
+        if declared_size > limit:
+            raise APIError(413, "payload_too_large", "request body is too large")
+    return content_type
 
 
 def _quoted_etag(digest: str) -> str:

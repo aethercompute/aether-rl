@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: (
@@ -234,5 +234,60 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         "CREATE INDEX lease_requests_session_idx ON lease_requests(worker_session_id, created_at)",
         "CREATE UNIQUE INDEX lease_requests_lease_idx ON lease_requests(lease_id) WHERE lease_id IS NOT NULL",
         "CREATE INDEX assignments_schedulable_idx ON assignments(state, available_at, group_id, group_index, assignment_id)",
+    ),
+    5: (
+        "ALTER TABLE rollout_groups ADD COLUMN source_id TEXT REFERENCES scheduler_sources(source_id)",
+        """
+        UPDATE rollout_groups AS g
+        SET source_id = (
+            SELECT s.source_id FROM scheduler_sources AS s
+            WHERE substr(g.creation_key, 1, length('source:' || s.source_id || ':occurrence:')) =
+                  'source:' || s.source_id || ':occurrence:'
+            ORDER BY length(s.source_id) DESC
+            LIMIT 1
+        )
+        WHERE g.creation_key LIKE 'source:%'
+        """,
+        "CREATE INDEX rollout_groups_processing_idx ON rollout_groups(state, sequence, group_id)",
+        """
+        CREATE TABLE training_batches (
+            step INTEGER PRIMARY KEY CHECK (step > 0),
+            artifact_digest TEXT NOT NULL UNIQUE,
+            artifact_path TEXT NOT NULL UNIQUE,
+            size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
+            sample_count INTEGER NOT NULL CHECK (sample_count > 0),
+            created_at REAL NOT NULL,
+            CHECK (length(artifact_digest) = 71 AND substr(artifact_digest, 1, 7) = 'sha256:')
+        )
+        """,
+        """
+        CREATE TABLE processed_groups (
+            group_id TEXT PRIMARY KEY REFERENCES rollout_groups(group_id),
+            input_digest TEXT NOT NULL,
+            artifact_digest TEXT NOT NULL UNIQUE,
+            artifact_path TEXT NOT NULL UNIQUE,
+            size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
+            rollout_count INTEGER NOT NULL CHECK (rollout_count >= 0),
+            processed_at REAL NOT NULL,
+            CHECK (length(input_digest) = 71 AND substr(input_digest, 1, 7) = 'sha256:'),
+            CHECK (length(artifact_digest) = 71 AND substr(artifact_digest, 1, 7) = 'sha256:')
+        )
+        """,
+        """
+        CREATE TABLE processed_rollouts (
+            group_id TEXT NOT NULL REFERENCES processed_groups(group_id),
+            ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+            token_count INTEGER NOT NULL CHECK (token_count >= 0),
+            batch_step INTEGER REFERENCES training_batches(step),
+            batch_ordinal INTEGER,
+            discarded INTEGER NOT NULL DEFAULT 0 CHECK (discarded IN (0, 1)),
+            PRIMARY KEY (group_id, ordinal),
+            UNIQUE (batch_step, batch_ordinal),
+            CHECK ((batch_step IS NULL AND batch_ordinal IS NULL) OR
+                   (batch_step IS NOT NULL AND batch_ordinal IS NOT NULL AND batch_ordinal >= 0)),
+            CHECK (discarded = 0 OR batch_step IS NULL)
+        )
+        """,
+        "CREATE INDEX processed_rollouts_pending_idx ON processed_rollouts(batch_step, group_id, ordinal)",
     ),
 }

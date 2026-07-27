@@ -13,6 +13,7 @@ from aether_rl.protocol import (
     LeaseRequest,
     WorkerHeartbeat,
     canonical_json_bytes,
+    result_envelope_bytes,
 )
 from aether_rl.trainer.policy import publish_lora_policy
 from tests.unit.coordinator.test_database import (
@@ -28,6 +29,7 @@ from tests.unit.coordinator.test_database import (
 TOKEN = "test-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}", "Aether-Protocol-Version": "1"}
 JSON_HEADERS = {**AUTH, "Content-Type": "application/json"}
+MSGPACK_HEADERS = {**AUTH, "Content-Type": "application/msgpack"}
 
 
 def make_repository(tmp_path: Path, clock: FakeClock) -> CoordinatorRepository:
@@ -302,7 +304,7 @@ async def test_chunked_result_failure_idempotency_and_temp_cleanup(tmp_path: Pat
             lease_id="failure-lease",
             duration_seconds=20,
         )
-        envelope = canonical_json_bytes(result_envelope(result_lease))
+        envelope = result_envelope_bytes(result_envelope(result_lease))
 
         async def chunks():
             yield envelope[:10]
@@ -312,7 +314,7 @@ async def test_chunked_result_failure_idempotency_and_temp_cleanup(tmp_path: Pat
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=limited_app), base_url="http://test") as client:
             too_large = await client.put(
                 f"/api/v1/assignments/{result_assignment.assignment_id}/result",
-                headers=JSON_HEADERS,
+                headers=MSGPACK_HEADERS,
                 content=envelope,
             )
             assert too_large.status_code == 413
@@ -323,17 +325,17 @@ async def test_chunked_result_failure_idempotency_and_temp_cleanup(tmp_path: Pat
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             accepted = await client.put(
                 f"/api/v1/assignments/{result_assignment.assignment_id}/result",
-                headers=JSON_HEADERS,
+                headers=MSGPACK_HEADERS,
                 content=chunks(),
             )
             duplicate = await client.put(
                 f"/api/v1/assignments/{result_assignment.assignment_id}/result",
-                headers=JSON_HEADERS,
+                headers=MSGPACK_HEADERS,
                 content=envelope,
             )
             mismatch = await client.put(
                 f"/api/v1/assignments/{failure_assignment.assignment_id}/result",
-                headers=JSON_HEADERS,
+                headers=MSGPACK_HEADERS,
                 content=envelope,
             )
             assert accepted.status_code == 200

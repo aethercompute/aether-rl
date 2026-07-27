@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
-from typing import Annotated, Literal, TypeAlias
+from collections.abc import Callable, Mapping
+from typing import Annotated, Any, Literal, TypeAlias
 
 import msgspec
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, model_serializer, model_validator
@@ -318,7 +318,6 @@ class ResultEnvelope(ProtocolModel):
             raise ValueError("served policy ID does not match the requested policy ID")
         if self.requested_policy_digest != self.served_policy_digest:
             raise ValueError("served policy digest does not match the requested policy digest")
-        canonical_json_bytes(self.episode)
         if self.result_digest != episode_digest(self.episode):
             raise ValueError("result_digest does not match the episode payload")
         return self
@@ -327,9 +326,7 @@ class ResultEnvelope(ProtocolModel):
     def serialize_verified(self, handler: Callable[[ResultEnvelope], dict[str, object]]) -> dict[str, object]:
         if self.result_digest != episode_digest(self.episode):
             raise ValueError("result_digest does not match the episode payload")
-        payload = handler(self)
-        canonical_json_bytes(payload)
-        return payload
+        return handler(self)
 
 
 class FailureEnvelope(ProtocolModel):
@@ -391,6 +388,26 @@ def episode_digest(episode: WireEpisode) -> str:
         order="deterministic",
     )
     return sha256_digest(payload)
+
+
+def result_envelope_bytes(envelope: ResultEnvelope) -> bytes:
+    """Encode a complete result deterministically without losing binary trace sidecars."""
+    payload = _sorted_mappings(envelope.model_dump(mode="python"))
+    return msgspec.msgpack.encode(payload, enc_hook=msgpack_encoder)
+
+
+def decode_result_envelope(payload: bytes) -> ResultEnvelope:
+    return ResultEnvelope.model_validate(msgspec.msgpack.decode(payload))
+
+
+def _sorted_mappings(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _sorted_mappings(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        return [_sorted_mappings(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sorted_mappings(item) for item in value)
+    return value
 
 
 def _adapter_manifest_content(manifest: AdapterManifest) -> dict[str, JsonValue]:

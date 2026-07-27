@@ -50,6 +50,21 @@ ROLLOUT_TYPE = Rollout[vf.WireTaskData]
 ENV_SERVER_SPAWN_TIMEOUT = 600.0
 
 
+def episode_to_rollouts(episode: vf.WireEpisode) -> list[Rollout]:
+    if not episode.traces:
+        error = episode.error
+        detail = f"{error.type}: {error.message}" if error is not None else "no traces and no error recorded"
+        raise RuntimeError(f"env-rollout failed before any trace was minted — {detail}")
+    rollouts = [ROLLOUT_TYPE.model_construct(**dict(wire)) for wire in episode.traces]
+    for rollout in rollouts:
+        rollout.episode_id = episode.id
+        if not episode.ok and rollout.ok:
+            error = episode.error or vf.Error(type="EpisodeFailed", message="A sibling trace in this episode failed")
+            rollout.errors = [*rollout.errors, error]
+            rollout.ok = False
+    return rollouts
+
+
 def _run_env_server(
     *,
     log_file: str,
@@ -210,20 +225,7 @@ class Env:
             model=model_name,
             sampling=self._sampling(cache_salt),
         )
-        if not episode.traces:
-            error = episode.error
-            detail = f"{error.type}: {error.message}" if error is not None else "no traces and no error recorded"
-            raise RuntimeError(f"env-rollout failed before any trace was minted — {detail}")
-        rollouts = [ROLLOUT_TYPE.model_construct(**dict(wire)) for wire in episode.traces]
-        for rollout in rollouts:
-            rollout.episode_id = episode.id
-            if not episode.ok and rollout.ok:
-                error = episode.error or vf.Error(
-                    type="EpisodeFailed", message="A sibling trace in this episode failed"
-                )
-                rollout.errors = [*rollout.errors, error]
-                rollout.ok = False
-        return rollouts
+        return episode_to_rollouts(episode)
 
     async def run_group(
         self, client: vf.ClientConfig, task_idx: int, model_name: str, group_size: int, cache_salt: str | None

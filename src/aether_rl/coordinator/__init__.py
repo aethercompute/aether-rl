@@ -18,6 +18,7 @@ from .database import (
     SchemaVersionError,
 )
 from .environments import EnvironmentCatalog, EnvironmentSourceSpec, verifier_v1_task_payloads
+from .results import DurableTrainingQueue, RemoteResultProcessor, ResultProcessingSource, decode_training_batch
 from .scheduler import CoordinatorScheduler
 from .spool import AtomicSpool, ImmutableArtifactConflictError
 
@@ -34,6 +35,7 @@ __all__ = [
     "CoordinatorService",
     "CoordinatorState",
     "CreatedGroup",
+    "DurableTrainingQueue",
     "EnvironmentCatalog",
     "EnvironmentSourceSpec",
     "IncompatibleWorkerError",
@@ -44,7 +46,10 @@ __all__ = [
     "NotFoundError",
     "PendingResult",
     "RegistrationRecord",
+    "RemoteResultProcessor",
+    "ResultProcessingSource",
     "SchemaVersionError",
     "create_coordinator_app",
+    "decode_training_batch",
     "verifier_v1_task_payloads",
 ]

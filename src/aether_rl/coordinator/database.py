@@ -27,7 +27,9 @@ from aether_rl.protocol import (
     WorkerHeartbeat,
     WorkerRegistration,
     canonical_json_bytes,
+    decode_result_envelope,
     policy_manifest_digest,
+    result_envelope_bytes,
     sha256_digest,
 )
 from aether_rl.trainer.policy import verify_lora_policy
@@ -111,6 +113,50 @@ class CreatedGroup:
 class LeaseRequestDisposition:
     state: Literal["pending", "no_work", "leased"]
     lease: AssignmentLease | None = None
+
+
+@dataclass(frozen=True)
+class GroupOutcome:
+    assignment: RolloutAssignment
+    outcome: str
+    envelope_digest: str | None
+    result_path: Path | None
+
+
+@dataclass(frozen=True)
+class ReadyGroup:
+    group_id: str
+    source_id: str | None
+    kind: Literal["train", "eval"]
+    sequence: int
+    outcomes: tuple[GroupOutcome, ...]
+
+
+@dataclass(frozen=True)
+class PendingProcessedRollout:
+    group_id: str
+    ordinal: int
+    token_count: int
+    artifact_path: Path
+    artifact_digest: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class ProcessedGroupRecord:
+    group_id: str
+    artifact_digest: str
+    artifact_path: Path
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class TrainingBatchRecord:
+    step: int
+    artifact_digest: str
+    artifact_path: Path
+    size_bytes: int
+    sample_count: int
 
 
 class CoordinatorRepository:
@@ -695,8 +741,8 @@ class CoordinatorRepository:
             self.connection.execute(
                 "INSERT INTO rollout_groups "
                 "(group_id, policy_id, kind, environment_id, environment_revision, task_json, sampling_json, "
-                "group_size, state, created_at, creation_key, sequence) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'collecting', ?, ?, ?)",
+                "group_size, state, created_at, creation_key, sequence, source_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'collecting', ?, ?, ?, ?)",
                 (
                     group_id,
                     policy.policy_id,
@@ -709,6 +755,7 @@ class CoordinatorRepository:
                     now,
                     creation_key,
                     sequence,
+                    source["source_id"],
                 ),
             )
             for assignment in assignments:
@@ -1171,18 +1218,24 @@ class CoordinatorRepository:
             return self._expire_leases(now)
 
     def accept_result(self, envelope: ResultEnvelope) -> AcceptanceRecord:
-        envelope_bytes = canonical_json_bytes(envelope)
+        existing_artifact = self.connection.execute(
+            "SELECT artifact_path FROM accepted_results WHERE assignment_id = ?", (envelope.assignment_id,)
+        ).fetchone()
+        legacy_json = existing_artifact is not None and existing_artifact["artifact_path"].endswith(".json")
+        envelope_bytes = canonical_json_bytes(envelope) if legacy_json else result_envelope_bytes(envelope)
         envelope_digest = sha256_digest(envelope_bytes)
         duplicate = self._existing_terminal(envelope.assignment_id, envelope.lease_id, envelope_digest)
         if duplicate is not None:
-            self.spool.publish_result(envelope_digest, envelope_bytes)
+            self.spool.publish_result(envelope_digest, envelope_bytes, suffix=".json" if legacy_json else ".msgpack")
             return duplicate
         assignment, _ = self._validate_active_envelope(envelope)
         if envelope.requested_policy_id != assignment["policy_id"]:
             raise ConflictError("result policy ID does not match the assignment")
         if envelope.requested_policy_digest != assignment["policy_manifest_digest"]:
             raise ConflictError("result policy manifest digest does not match the assignment")
-        artifact_path = self.spool.publish_result(envelope_digest, envelope_bytes)
+        artifact_path = self.spool.publish_result(
+            envelope_digest, envelope_bytes, suffix=".json" if legacy_json else ".msgpack"
+        )
         now = self.clock()
         with self._transaction():
             duplicate = self._existing_terminal(envelope.assignment_id, envelope.lease_id, envelope_digest)
@@ -1296,6 +1349,212 @@ class CoordinatorRepository:
             if cursor.rowcount != 1:
                 raise InvalidStateError("result is not claimed for processing")
 
+    def ready_groups(self, limit: int = 1) -> tuple[ReadyGroup, ...]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        groups = self.connection.execute(
+            "SELECT g.* FROM rollout_groups g LEFT JOIN processed_groups p USING (group_id) "
+            "WHERE g.state = 'ready' AND p.group_id IS NULL ORDER BY g.sequence, g.group_id LIMIT ?",
+            (limit,),
+        ).fetchall()
+        ready: list[ReadyGroup] = []
+        for group in groups:
+            rows = self.connection.execute(
+                "SELECT a.assignment_json, o.outcome, r.envelope_digest, r.artifact_path "
+                "FROM assignments a JOIN assignment_outcomes o USING (assignment_id) "
+                "LEFT JOIN accepted_results r USING (assignment_id) "
+                "WHERE a.group_id = ? ORDER BY a.group_index, a.assignment_id",
+                (group["group_id"],),
+            ).fetchall()
+            if len(rows) != group["group_size"]:
+                raise InvalidStateError("ready group does not have one terminal outcome per assignment")
+            outcomes = tuple(
+                GroupOutcome(
+                    assignment=RolloutAssignment.model_validate_json(row["assignment_json"]),
+                    outcome=row["outcome"],
+                    envelope_digest=row["envelope_digest"],
+                    result_path=None if row["artifact_path"] is None else self.run_root / row["artifact_path"],
+                )
+                for row in rows
+            )
+            ready.append(
+                ReadyGroup(
+                    group_id=group["group_id"],
+                    source_id=group["source_id"],
+                    kind=group["kind"],
+                    sequence=group["sequence"],
+                    outcomes=outcomes,
+                )
+            )
+        return tuple(ready)
+
+    def record_processed_group(
+        self,
+        group_id: str,
+        *,
+        input_digest: str,
+        artifact_digest: str,
+        artifact_path: Path,
+        size_bytes: int,
+        token_counts: Sequence[int],
+    ) -> None:
+        relative_path = artifact_path.relative_to(self.run_root)
+        now = self.clock()
+        with self._transaction():
+            existing = self.connection.execute(
+                "SELECT * FROM processed_groups WHERE group_id = ?", (group_id,)
+            ).fetchone()
+            expected = (
+                input_digest,
+                artifact_digest,
+                str(relative_path),
+                size_bytes,
+                len(token_counts),
+            )
+            if existing is not None:
+                persisted = (
+                    existing["input_digest"],
+                    existing["artifact_digest"],
+                    existing["artifact_path"],
+                    existing["size_bytes"],
+                    existing["rollout_count"],
+                )
+                if persisted != expected:
+                    raise ConflictError("processed group already has different output")
+                return
+            group = self.connection.execute(
+                "SELECT state FROM rollout_groups WHERE group_id = ?", (group_id,)
+            ).fetchone()
+            if group is None or group["state"] != "ready":
+                raise InvalidStateError("group is not ready for processing")
+            self.connection.execute(
+                "INSERT INTO processed_groups "
+                "(group_id, input_digest, artifact_digest, artifact_path, size_bytes, rollout_count, processed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (group_id, input_digest, artifact_digest, str(relative_path), size_bytes, len(token_counts), now),
+            )
+            self.connection.executemany(
+                "INSERT INTO processed_rollouts(group_id, ordinal, token_count) VALUES (?, ?, ?)",
+                ((group_id, ordinal, token_count) for ordinal, token_count in enumerate(token_counts)),
+            )
+            self.connection.execute(
+                "UPDATE accepted_results SET processing_state = 'processed' WHERE assignment_id IN "
+                "(SELECT assignment_id FROM assignments WHERE group_id = ?)",
+                (group_id,),
+            )
+
+    def pending_processed_rollouts(self) -> tuple[PendingProcessedRollout, ...]:
+        rows = self.connection.execute(
+            "SELECT r.group_id, r.ordinal, r.token_count, p.artifact_path, p.artifact_digest, p.size_bytes "
+            "FROM processed_rollouts r JOIN processed_groups p USING (group_id) "
+            "JOIN rollout_groups g USING (group_id) WHERE r.batch_step IS NULL AND r.discarded = 0 "
+            "ORDER BY g.sequence, r.ordinal, r.group_id"
+        ).fetchall()
+        return tuple(
+            PendingProcessedRollout(
+                group_id=row["group_id"],
+                ordinal=row["ordinal"],
+                token_count=row["token_count"],
+                artifact_path=self.run_root / row["artifact_path"],
+                artifact_digest=row["artifact_digest"],
+                size_bytes=row["size_bytes"],
+            )
+            for row in rows
+        )
+
+    def processed_groups(self) -> tuple[ProcessedGroupRecord, ...]:
+        rows = self.connection.execute("SELECT * FROM processed_groups ORDER BY processed_at, group_id").fetchall()
+        return tuple(
+            ProcessedGroupRecord(
+                group_id=row["group_id"],
+                artifact_digest=row["artifact_digest"],
+                artifact_path=self.run_root / row["artifact_path"],
+                size_bytes=row["size_bytes"],
+            )
+            for row in rows
+        )
+
+    def next_training_batch_step(self) -> int:
+        return self.connection.execute("SELECT COALESCE(MAX(step), 0) + 1 FROM training_batches").fetchone()[0]
+
+    def discard_processed_rollouts(self, members: Sequence[tuple[str, int]]) -> None:
+        if not members:
+            raise ValueError("discarded rollout membership must not be empty")
+        with self._transaction():
+            updated = 0
+            for group_id, ordinal in members:
+                cursor = self.connection.execute(
+                    "UPDATE processed_rollouts SET discarded = 1 "
+                    "WHERE group_id = ? AND ordinal = ? AND batch_step IS NULL AND discarded = 0",
+                    (group_id, ordinal),
+                )
+                updated += cursor.rowcount
+            if updated != len(members):
+                raise ConflictError("processed rollout is no longer available for discard")
+
+    def record_training_batch(
+        self,
+        *,
+        step: int,
+        artifact_digest: str,
+        artifact_path: Path,
+        size_bytes: int,
+        sample_count: int,
+        members: Sequence[tuple[str, int]],
+    ) -> None:
+        if not members or sample_count < 1:
+            raise ValueError("training batch must contain members and samples")
+        relative_path = artifact_path.relative_to(self.run_root)
+        with self._transaction():
+            existing = self.connection.execute("SELECT * FROM training_batches WHERE step = ?", (step,)).fetchone()
+            expected = (artifact_digest, str(relative_path), size_bytes, sample_count)
+            if existing is not None:
+                persisted = (
+                    existing["artifact_digest"],
+                    existing["artifact_path"],
+                    existing["size_bytes"],
+                    existing["sample_count"],
+                )
+                if persisted != expected:
+                    raise ConflictError("training batch step already has different output")
+                return
+            if step != self.next_training_batch_step():
+                raise InvalidStateError("training batch step is not next in sequence")
+            placeholders = ", ".join("(?, ?)" for _ in members)
+            values = tuple(value for member in members for value in member)
+            available = self.connection.execute(
+                f"SELECT COUNT(*) FROM processed_rollouts WHERE batch_step IS NULL AND discarded = 0 "
+                f"AND (group_id, ordinal) IN "
+                f"({placeholders})",
+                values,
+            ).fetchone()[0]
+            if available != len(members):
+                raise ConflictError("training batch members are no longer available")
+            self.connection.execute(
+                "INSERT INTO training_batches "
+                "(step, artifact_digest, artifact_path, size_bytes, sample_count, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (step, artifact_digest, str(relative_path), size_bytes, sample_count, self.clock()),
+            )
+            self.connection.executemany(
+                "UPDATE processed_rollouts SET batch_step = ?, batch_ordinal = ? "
+                "WHERE group_id = ? AND ordinal = ? AND batch_step IS NULL",
+                ((step, batch_ordinal, *member) for batch_ordinal, member in enumerate(members)),
+            )
+
+    def training_batches(self) -> tuple[TrainingBatchRecord, ...]:
+        rows = self.connection.execute("SELECT * FROM training_batches ORDER BY step").fetchall()
+        return tuple(
+            TrainingBatchRecord(
+                step=row["step"],
+                artifact_digest=row["artifact_digest"],
+                artifact_path=self.run_root / row["artifact_path"],
+                size_bytes=row["size_bytes"],
+                sample_count=row["sample_count"],
+            )
+            for row in rows
+        )
+
     def recover(self) -> None:
         removed_incoming = False
         for path in self.spool.incoming_dir.iterdir():
@@ -1319,7 +1578,10 @@ class CoordinatorRepository:
             if path.stat().st_size != row["size_bytes"] or self.spool.file_digest(path) != row["envelope_digest"]:
                 raise ArtifactCorruptionError(f"referenced result artifact is corrupt: {path}")
             try:
-                envelope = ResultEnvelope.model_validate_json(path.read_bytes())
+                data = path.read_bytes()
+                envelope = (
+                    ResultEnvelope.model_validate_json(data) if path.suffix == ".json" else decode_result_envelope(data)
+                )
             except ValueError as error:
                 raise ArtifactCorruptionError(f"referenced result envelope is invalid: {path}") from error
             if envelope.assignment_id != row["assignment_id"] or envelope.lease_id != row["lease_id"]:

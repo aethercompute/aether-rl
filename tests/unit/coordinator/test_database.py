@@ -32,6 +32,8 @@ from aether_rl.protocol import (
     canonical_json_bytes,
     episode_digest,
     policy_manifest_digest,
+    result_envelope_bytes,
+    sha256_digest,
 )
 from aether_rl.trainer.policy import publish_lora_policy
 
@@ -175,7 +177,7 @@ def test_pragmas_migrations_and_newer_schema_rejection(tmp_path: Path):
         assert state.connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert state.connection.execute("PRAGMA synchronous").fetchone()[0] == 2
         assert state.connection.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
-        assert state.connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 4
+        assert state.connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 5
         assert not state.connection.execute("PRAGMA foreign_key_check").fetchall()
         with pytest.raises(CoordinatorLockError, match="run lock"):
             repository(tmp_path, clock)
@@ -183,7 +185,7 @@ def test_pragmas_migrations_and_newer_schema_rejection(tmp_path: Path):
     database_path = tmp_path / "newer.sqlite3"
     connection = sqlite3.connect(database_path)
     connection.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at REAL NOT NULL)")
-    connection.execute("INSERT INTO schema_migrations VALUES (5, 0)")
+    connection.execute("INSERT INTO schema_migrations VALUES (6, 0)")
     connection.commit()
     connection.close()
     with pytest.raises(SchemaVersionError, match="newer"):
@@ -195,14 +197,14 @@ def test_pragmas_migrations_and_newer_schema_rejection(tmp_path: Path):
     connection.execute(
         "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY CHECK (version > 0), applied_at REAL NOT NULL)"
     )
-    for version in range(1, 4):
+    for version in range(1, 5):
         for statement in MIGRATIONS[version]:
             connection.execute(statement)
         connection.execute("INSERT INTO schema_migrations VALUES (?, 0)", (version,))
     connection.commit()
     connection.close()
     with CoordinatorRepository(legacy_path, tmp_path / "legacy-run") as upgraded:
-        assert upgraded.connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 4
+        assert upgraded.connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 5
         assert "last_heartbeat_sent_at" in {
             row[1] for row in upgraded.connection.execute("PRAGMA table_info(worker_sessions)").fetchall()
         }
@@ -386,14 +388,14 @@ def test_atomic_result_idempotency_conflict_and_processing_recovery(tmp_path: Pa
         envelope = result_envelope(lease)
         accepted = state.accept_result(envelope)
         assert not accepted.duplicate
-        artifact = state.run_root / "spool" / "results" / f"{accepted.envelope_digest.removeprefix('sha256:')}.json"
-        assert artifact.read_bytes() == canonical_json_bytes(envelope)
+        artifact = state.run_root / "spool" / "results" / f"{accepted.envelope_digest.removeprefix('sha256:')}.msgpack"
+        assert artifact.read_bytes() == result_envelope_bytes(envelope)
         assert state.group_state(assignment.group_id) == "ready"
 
         clock.now = 1000
         artifact.unlink()
         assert state.accept_result(envelope).duplicate
-        assert artifact.read_bytes() == canonical_json_bytes(envelope)
+        assert artifact.read_bytes() == result_envelope_bytes(envelope)
         with pytest.raises(ConflictError, match="different accepted result"):
             state.accept_result(envelope.model_copy(update={"completed_at": 12.0}))
 
@@ -408,6 +410,43 @@ def test_atomic_result_idempotency_conflict_and_processing_recovery(tmp_path: Pa
         assert not orphan.exists()
         assert state.claim_pending_results(1)[0].assignment_id == assignment.assignment_id
         state.mark_result_processed(assignment.assignment_id)
+
+
+def test_legacy_json_result_recovers_and_retries_after_schema_upgrade(tmp_path: Path):
+    clock = FakeClock()
+    with initialized_repository(tmp_path, clock) as state:
+        state.register_worker(registration())
+        assignment = assignments(base_policy())[0]
+        state.create_group([assignment], max_attempts=1)
+        lease = state.create_lease(
+            assignment.assignment_id,
+            worker_id="worker-1",
+            worker_session_id="session-1",
+            lease_id="legacy-lease",
+            duration_seconds=2,
+        )
+        envelope = result_envelope(lease)
+        accepted = state.accept_result(envelope)
+        current = state.run_root / "spool" / "results" / f"{accepted.envelope_digest[7:]}.msgpack"
+        legacy_bytes = canonical_json_bytes(envelope)
+        legacy_digest = sha256_digest(legacy_bytes)
+        legacy_relative = state.spool.publish_result(legacy_digest, legacy_bytes, suffix=".json")
+        with state.connection:
+            state.connection.execute(
+                "UPDATE accepted_results SET envelope_digest = ?, artifact_path = ?, size_bytes = ? "
+                "WHERE assignment_id = ?",
+                (legacy_digest, legacy_relative, len(legacy_bytes), assignment.assignment_id),
+            )
+            state.connection.execute(
+                "UPDATE assignment_outcomes SET envelope_digest = ? WHERE assignment_id = ?",
+                (legacy_digest, assignment.assignment_id),
+            )
+        current.unlink()
+
+    with repository(tmp_path, clock) as reopened:
+        duplicate = reopened.accept_result(envelope)
+        assert duplicate.duplicate
+        assert duplicate.envelope_digest == legacy_digest
 
 
 def test_failure_retry_idempotency_and_result_corruption_is_fatal(tmp_path: Path):
@@ -448,7 +487,7 @@ def test_failure_retry_idempotency_and_result_corruption_is_fatal(tmp_path: Path
             duration_seconds=5,
         )
         accepted = state.accept_result(result_envelope(result_lease, completed_at=12))
-        artifact = state.run_root / "spool" / "results" / f"{accepted.envelope_digest.removeprefix('sha256:')}.json"
+        artifact = state.run_root / "spool" / "results" / f"{accepted.envelope_digest.removeprefix('sha256:')}.msgpack"
         artifact.write_bytes(b"corrupt")
         with pytest.raises(ArtifactCorruptionError, match="corrupt"):
             state.recover()

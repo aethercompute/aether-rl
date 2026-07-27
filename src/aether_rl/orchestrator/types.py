@@ -90,11 +90,13 @@ class Rollout(vf.Trace[DataT], Generic[DataT]):
 
     kind: RolloutKind = Field(default="train", exclude=True)
     env_name: str = Field(default="", exclude=True)
-    group_id: uuid.UUID = Field(default_factory=uuid.uuid4, exclude=True)
+    group_id: str | uuid.UUID = Field(default_factory=uuid.uuid4, exclude=True)
     # Links the traces of one episode; stamped into ``info`` on arrival so
     # saved records keep their grouping.
     episode_id: str = Field(default="", exclude=True)
     policy_version: int = Field(default=0, exclude=True)
+    policy_id: str | None = Field(default=None, exclude=True)
+    policy_digest: str | None = Field(default=None, exclude=True)
     off_policy_steps: int = Field(default=0, exclude=True)
     samples: list[TrainingSample] = Field(default_factory=list, exclude=True)
     # Per-token rl advantage stream, full-length-N (= len(token_ids)) per

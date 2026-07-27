@@ -29,6 +29,8 @@ class EnvironmentSourceSpec(BaseModel):
     def validate_canonical_payloads(self) -> EnvironmentSourceSpec:
         if not math.isfinite(self.weight):
             raise ValueError("weight must be finite")
+        if self.kind == "train" and (self.sampling.temperature is None or self.sampling.temperature <= 0):
+            raise ValueError("train sampling requires a positive temperature")
         canonical_json_bytes(list(self.tasks))
         canonical_json_bytes(self.sampling)
         return self

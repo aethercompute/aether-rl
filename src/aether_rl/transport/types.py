@@ -68,6 +68,12 @@ class TrainingSample(msgspec.Struct, array_like=True, gc=False, omit_defaults=Tr
     # samples without live rl member tokens (the trainer raises otherwise).
     advantages: list[float] | None = None
 
+    # Immutable behavior-policy provenance. Trailing optional fields preserve
+    # compatibility with the positional msgpack representation.
+    behavior_policy_id: str | None = None
+    behavior_policy_version: int | None = None
+    behavior_policy_digest: str | None = None
+
 
 class TrainingBatch(msgspec.Struct, array_like=True, gc=False, omit_defaults=True):
     """A batch of training examples with metadata for transport."""

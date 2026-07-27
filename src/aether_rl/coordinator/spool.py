@@ -21,13 +21,15 @@ class AtomicSpool:
         for directory in (self.spool_dir, self.incoming_dir, self.results_dir):
             self._create_durable_directory(directory)
 
-    def publish_result(self, digest: str, data: bytes) -> str:
+    def publish_result(self, digest: str, data: bytes, *, suffix: str = ".msgpack") -> str:
         self._validate_directory(self.incoming_dir)
         self._validate_directory(self.results_dir)
         if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
             raise ValueError("result artifact digest must be a SHA-256 digest")
+        if suffix not in {".json", ".msgpack"}:
+            raise ValueError("result artifact suffix is unsupported")
         digest_hex = digest.removeprefix("sha256:")
-        final_path = self.results_dir / f"{digest_hex}.json"
+        final_path = self.results_dir / f"{digest_hex}{suffix}"
         temporary_path = self.incoming_dir / f"{uuid.uuid4().hex}.tmp"
         descriptor = os.open(temporary_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:

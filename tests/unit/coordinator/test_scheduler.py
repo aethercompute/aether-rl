@@ -51,7 +51,7 @@ def source(
         kind=kind,
         environment=environment,
         tasks=({"task": 0}, {"task": 1}),
-        sampling=SamplingConfig(max_tokens=8),
+        sampling=SamplingConfig(temperature=1, max_tokens=8),
         group_size=size,
         max_attempts=attempts,
         result_size_limit_bytes=1024,
