@@ -290,6 +290,29 @@ class CoordinatorRepository:
             )
 
     def record_policy(self, manifest: PolicyManifest, artifact_path: Path) -> None:
+        verified, relative_path, manifest_json, digest = self._prepare_trained_policy_record(manifest, artifact_path)
+        with self._transaction():
+            self._record_policy_in_transaction(verified, relative_path, manifest_json, digest)
+
+    def record_and_activate_policy(self, manifest: PolicyManifest, artifact_path: Path) -> PolicyManifest:
+        verified, relative_path, manifest_json, digest = self._prepare_trained_policy_record(manifest, artifact_path)
+        with self._transaction():
+            self._record_policy_in_transaction(verified, relative_path, manifest_json, digest)
+            active = self.connection.execute(
+                "SELECT p.policy_version FROM runs r JOIN policies p ON p.policy_id = r.active_policy_id "
+                "WHERE r.singleton = 1"
+            ).fetchone()
+            if active is None:
+                raise InvalidStateError("run has not been initialized")
+            if verified.policy_version < active["policy_version"]:
+                raise InvalidStateError("policy activation must be monotonic")
+            self.connection.execute("UPDATE runs SET active_policy_id = ? WHERE singleton = 1", (verified.policy_id,))
+            self._reconcile_stale_work(self.clock())
+        return verified
+
+    def _prepare_trained_policy_record(
+        self, manifest: PolicyManifest, artifact_path: Path
+    ) -> tuple[PolicyManifest, str, bytes, str]:
         if manifest.policy_version == 0:
             raise ValueError("record_policy only records trained policies")
         verified = verify_lora_policy(Path(artifact_path), expected=manifest)
@@ -297,29 +320,33 @@ class CoordinatorRepository:
         manifest_json = canonical_json_bytes(verified)
         digest = policy_manifest_digest(verified)
         self._verified_policy_digests.add(digest)
-        with self._transaction():
-            run = self._run()
-            if verified.run_id != run["run_id"] or canonical_json_bytes(verified.base_model) != run["base_model_json"]:
-                raise ConflictError("policy does not belong to this run and base model")
-            existing = self.connection.execute(
-                "SELECT manifest_digest, artifact_path FROM policies WHERE policy_id = ? OR policy_version = ?",
-                (verified.policy_id, verified.policy_version),
-            ).fetchone()
-            if existing is not None:
-                if existing["manifest_digest"] == digest and existing["artifact_path"] == relative_path:
-                    return
-                raise ConflictError("policy version or ID already has different immutable contents")
-            self.connection.execute(
-                "INSERT INTO policies VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    verified.policy_id,
-                    verified.policy_version,
-                    digest,
-                    manifest_json,
-                    relative_path,
-                    verified.created_at,
-                ),
-            )
+        return verified, relative_path, manifest_json, digest
+
+    def _record_policy_in_transaction(
+        self, verified: PolicyManifest, relative_path: str, manifest_json: bytes, digest: str
+    ) -> None:
+        run = self._run()
+        if verified.run_id != run["run_id"] or canonical_json_bytes(verified.base_model) != run["base_model_json"]:
+            raise ConflictError("policy does not belong to this run and base model")
+        existing = self.connection.execute(
+            "SELECT manifest_digest, artifact_path FROM policies WHERE policy_id = ? OR policy_version = ?",
+            (verified.policy_id, verified.policy_version),
+        ).fetchone()
+        if existing is not None:
+            if existing["manifest_digest"] == digest and existing["artifact_path"] == relative_path:
+                return
+            raise ConflictError("policy version or ID already has different immutable contents")
+        self.connection.execute(
+            "INSERT INTO policies VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                verified.policy_id,
+                verified.policy_version,
+                digest,
+                manifest_json,
+                relative_path,
+                verified.created_at,
+            ),
+        )
 
     def activate_policy(self, policy_id: str) -> PolicyManifest:
         with self._transaction():

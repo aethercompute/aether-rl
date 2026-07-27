@@ -21,6 +21,7 @@ from .environments import EnvironmentCatalog, EnvironmentSourceSpec, verifier_v1
 from .results import DurableTrainingQueue, RemoteResultProcessor, ResultProcessingSource, decode_training_batch
 from .scheduler import CoordinatorScheduler
 from .spool import AtomicSpool, ImmutableArtifactConflictError
+from .trainer_bridge import CoordinatorTrainingBatchExporter
 
 __all__ = [
     "AcceptanceRecord",
@@ -34,6 +35,7 @@ __all__ = [
     "CoordinatorScheduler",
     "CoordinatorService",
     "CoordinatorState",
+    "CoordinatorTrainingBatchExporter",
     "CreatedGroup",
     "DurableTrainingQueue",
     "EnvironmentCatalog",

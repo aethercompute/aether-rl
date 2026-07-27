@@ -246,6 +246,7 @@ def test_run_policy_activation_and_worker_registration(tmp_path: Path):
         state.record_policy(trained, policies_dir / trained.policy_id)
         state.record_policy(trained, policies_dir / trained.policy_id)
         assert state.activate_policy(trained.policy_id) == trained
+        assert state.record_and_activate_policy(trained, policies_dir / trained.policy_id) == trained
         with pytest.raises(InvalidStateError, match="monotonic"):
             state.activate_policy(base_policy().policy_id)
 

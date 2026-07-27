@@ -9,6 +9,7 @@ from verifiers.v1.types import AssistantMessage, SamplingConfig, UserMessage
 from aether_rl.configs.algorithm import GRPOAlgoConfig
 from aether_rl.coordinator import (
     ArtifactCorruptionError,
+    CoordinatorTrainingBatchExporter,
     RemoteResultProcessor,
     ResultProcessingSource,
     decode_training_batch,
@@ -16,6 +17,8 @@ from aether_rl.coordinator import (
 from aether_rl.coordinator.environments import EnvironmentSourceSpec
 from aether_rl.orchestrator.algo import GRPOAlgorithm
 from aether_rl.protocol import ResultEnvelope, episode_digest, policy_manifest_digest
+from aether_rl.transport.filesystem import BATCH_FILE_NAME
+from aether_rl.utils.pathing import get_rollout_dir, get_step_path
 from tests.unit.coordinator.test_database import FakeClock, capabilities, failure_envelope, registration
 from tests.unit.coordinator.test_scheduler import make_repository
 
@@ -127,6 +130,20 @@ async def test_remote_results_finalize_grpo_emit_batch_and_replay_idempotently(t
         assert await processor.process_available() == (0, 0)
         assert repository.training_batches() == records
 
+        exporter = CoordinatorTrainingBatchExporter(
+            repository,
+            tmp_path / "trainer",
+            run_id="run_distributed",
+            run_config=b"output_dir = 'unused'\n",
+        )
+        assert exporter.export_available() == 1
+        assert (
+            tmp_path / "trainer" / "run_distributed" / "control" / "orch.toml"
+        ).read_bytes() == b"output_dir = 'unused'\n"
+        exported_path = get_step_path(get_rollout_dir(tmp_path / "trainer" / "run_distributed"), 1) / BATCH_FILE_NAME
+        assert exported_path.read_bytes() == records[0].artifact_path.read_bytes()
+        assert exporter.export_available() == 0
+
         eval_spec = spec.model_copy(
             update={
                 "source_id": "eval-source",
@@ -169,6 +186,60 @@ async def test_remote_results_finalize_grpo_emit_batch_and_replay_idempotently(t
         records[0].artifact_path.write_bytes(b"corrupt")
         with pytest.raises(ArtifactCorruptionError, match="digest|size"):
             RemoteResultProcessor(repository, (), batch_size=1)
+
+
+@pytest.mark.asyncio
+async def test_training_batch_export_rejects_conflicting_trainer_file(tmp_path: Path):
+    clock = FakeClock()
+    with make_repository(tmp_path / "coordinator", clock) as repository:
+        repository.register_worker(registration(caps=capabilities(capacity=2)))
+        spec = EnvironmentSourceSpec(
+            source_id="train-source",
+            kind="train",
+            environment=registration().capabilities.environments[0],
+            tasks=({"idx": 0, "prompt": "prompt"},),
+            sampling=SamplingConfig(temperature=1, max_tokens=8),
+            group_size=2,
+            max_attempts=1,
+        )
+        repository.register_scheduler_source(spec)
+        group = repository.create_next_group("train")
+        leases = [
+            repository.create_lease(
+                assignment.assignment_id,
+                worker_id="worker-1",
+                worker_session_id="session-1",
+                lease_id=f"lease-{index}",
+                duration_seconds=10,
+            )
+            for index, assignment in enumerate(group.assignments)
+        ]
+        repository.accept_result(result_envelope(leases[0], 0))
+        repository.accept_result(result_envelope(leases[1], 1))
+        processor = RemoteResultProcessor(
+            repository,
+            (
+                ResultProcessingSource(
+                    source_id=spec.source_id,
+                    environment=spec.environment,
+                    processing_id="grpo-v1",
+                    algorithm=GRPOAlgorithm(GRPOAlgoConfig(), None),  # type: ignore[arg-type]
+                ),
+            ),
+            batch_size=2,
+        )
+        assert await processor.process_available() == (1, 1)
+        exported_path = get_step_path(get_rollout_dir(tmp_path / "trainer" / "run_distributed"), 1) / BATCH_FILE_NAME
+        exported_path.parent.mkdir(parents=True)
+        exported_path.write_bytes(b"different")
+        exporter = CoordinatorTrainingBatchExporter(
+            repository,
+            tmp_path / "trainer",
+            run_id="run_distributed",
+            run_config=b"output_dir = 'unused'\n",
+        )
+        with pytest.raises(ArtifactCorruptionError, match="conflicts"):
+            exporter.export_available()
 
 
 @pytest.mark.asyncio
