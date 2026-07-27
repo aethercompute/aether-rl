@@ -46,18 +46,24 @@ from .database import (
     CoordinatorRepository,
     IncompatibleWorkerError,
     InvalidStateError,
+    LeaseRequestDisposition,
     NotFoundError,
 )
+from .scheduler import CoordinatorScheduler
 from .spool import ImmutableArtifactConflictError
 
 logger = logging.getLogger(__name__)
 
 
 class LeaseProvider(Protocol):
+    durable_mutations: bool
+
     async def try_lease(self, request: LeaseRequest) -> AssignmentLease | None: ...
 
 
 class NoLeaseProvider:
+    durable_mutations = False
+
     async def try_lease(self, request: LeaseRequest) -> AssignmentLease | None:
         return None
 
@@ -93,6 +99,25 @@ def _error(status_code: int, code: str, message: str, headers: dict[str, str] | 
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}}, headers=headers)
 
 
+def _lease_response(lease: AssignmentLease | None) -> JSONResponse:
+    if lease is None:
+        raise InvalidStateError("leased request is missing its durable lease")
+    return JSONResponse(content=lease.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
+
+
+def _no_work_response() -> Response:
+    return Response(status_code=204, headers={"Retry-After": "1", "Cache-Control": "no-store"})
+
+
+async def _complete_no_work(
+    service: CoordinatorService, repository: CoordinatorRepository, request_id: str
+) -> Response:
+    disposition = await service.call(repository.mark_lease_request_no_work, request_id)
+    if not isinstance(disposition, LeaseRequestDisposition):
+        raise TypeError("repository returned an invalid lease request disposition")
+    return _lease_response(disposition.lease) if disposition.state == "leased" else _no_work_response()
+
+
 def create_coordinator_app(
     repository: CoordinatorRepository,
     *,
@@ -102,7 +127,10 @@ def create_coordinator_app(
     control_body_limit_bytes: int = 1024 * 1024,
     result_body_limit_bytes: int = 64 * 1024 * 1024,
     lease_duration_seconds: float = 30.0,
+    loaded_policy_preference_seconds: float = 5.0,
+    max_policy_lag: int = 0,
     max_lease_wait_seconds: float = 30.0,
+    durable_provider_timeout_seconds: float = 30.0,
     lease_poll_interval_seconds: float = 0.1,
     stale_after_seconds: float = 60.0,
     lease_reaper_interval_seconds: float = 1.0,
@@ -120,14 +148,23 @@ def create_coordinator_app(
     if (
         lease_duration_seconds <= 0
         or max_lease_wait_seconds < 0
+        or durable_provider_timeout_seconds <= 0
         or lease_poll_interval_seconds <= 0
         or lease_reaper_interval_seconds <= 0
         or policy_verification_interval_seconds <= 0
+        or loaded_policy_preference_seconds < 0
+        or max_policy_lag < 0
     ):
         raise ValueError("lease timing values are invalid")
 
     service = CoordinatorService(repository)
-    provider = lease_provider or NoLeaseProvider()
+    provider = lease_provider or CoordinatorScheduler(
+        repository,
+        service.call,
+        lease_duration_seconds=lease_duration_seconds,
+        loaded_preference_seconds=loaded_policy_preference_seconds,
+        max_policy_lag=max_policy_lag,
+    )
     provider_tasks: set[asyncio.Task] = set()
 
     @asynccontextmanager
@@ -171,8 +208,11 @@ def create_coordinator_app(
         finally:
             reaper.cancel()
             verifier.cancel()
-            for task in provider_tasks:
-                task.cancel()
+            if getattr(provider, "durable_mutations", False):
+                await asyncio.gather(*provider_tasks, return_exceptions=True)
+            else:
+                for task in provider_tasks:
+                    task.cancel()
             await asyncio.gather(reaper, verifier, return_exceptions=True)
             service.close()
 
@@ -303,30 +343,54 @@ def create_coordinator_app(
     @app.post("/api/v1/assignments/lease")
     async def lease(request: Request) -> Response:
         lease_request = await parse_control_body(request, LeaseRequest)
-        await service.call(repository.validate_lease_request, lease_request)
+        disposition = await service.call(repository.validate_lease_request, lease_request)
+        if not isinstance(disposition, LeaseRequestDisposition):
+            raise TypeError("repository returned an invalid lease request disposition")
+        if disposition.state == "leased":
+            return _lease_response(disposition.lease)
+        if disposition.state == "no_work":
+            return _no_work_response()
         wait_seconds = min(lease_request.wait_seconds, max_lease_wait_seconds)
         deadline = asyncio.get_running_loop().time() + wait_seconds
         initial_attempt = True
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
             if not initial_attempt and remaining <= 0:
-                return Response(status_code=204, headers={"Retry-After": "1", "Cache-Control": "no-store"})
+                return await _complete_no_work(service, repository, lease_request.request_id)
             provider_timeout = max(0.001, remaining)
             provider_task = asyncio.create_task(provider.try_lease(lease_request))
             provider_tasks.add(provider_task)
             provider_task.add_done_callback(provider_tasks.discard)
-            done, _ = await asyncio.wait({provider_task}, timeout=provider_timeout)
-            if not done:
-                provider_task.cancel()
-                provider_task.add_done_callback(_consume_task_result)
-                return Response(status_code=204, headers={"Retry-After": "1", "Cache-Control": "no-store"})
-            offered = provider_task.result()
+            if getattr(provider, "durable_mutations", False):
+                durable_timeout = min(
+                    durable_provider_timeout_seconds,
+                    max(lease_poll_interval_seconds, remaining),
+                )
+                done, _ = await asyncio.wait({provider_task}, timeout=durable_timeout)
+                if not done:
+                    provider_task.add_done_callback(_consume_task_result)
+                    raise APIError(
+                        503,
+                        "lease_pending",
+                        "durable lease operation is still pending; retry with the same request ID",
+                        {"Retry-After": "1"},
+                    )
+                offered = provider_task.result()
+            else:
+                done, _ = await asyncio.wait({provider_task}, timeout=provider_timeout)
+                if not done:
+                    provider_task.cancel()
+                    provider_task.add_done_callback(_consume_task_result)
+                    return await _complete_no_work(service, repository, lease_request.request_id)
+                offered = provider_task.result()
             if offered is not None:
-                await service.call(repository.validate_offered_lease, lease_request, offered)
-                return JSONResponse(content=offered.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
+                disposition = await service.call(repository.associate_offered_lease, lease_request, offered)
+                if not isinstance(disposition, LeaseRequestDisposition):
+                    raise TypeError("repository returned an invalid lease request disposition")
+                return _lease_response(disposition.lease)
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
-                return Response(status_code=204, headers={"Retry-After": "1", "Cache-Control": "no-store"})
+                return await _complete_no_work(service, repository, lease_request.request_id)
             await asyncio.sleep(min(lease_poll_interval_seconds, remaining))
             initial_attempt = False
 
@@ -343,9 +407,15 @@ def create_coordinator_app(
             duration_seconds=lease_duration_seconds,
             expected_assignment_id=assignment_id,
             sent_at=renewal_request.sent_at,
+            acknowledge_cancellation=True,
         )
+        if isinstance(renewed, str):
+            return LeaseRenewResponse(server_time=repository.clock(), action="stop", reason=renewed)
+        if not isinstance(renewed, AssignmentLease):
+            raise TypeError("repository returned an invalid lease renewal")
         return LeaseRenewResponse(
             server_time=repository.clock(),
+            action="renewed",
             renewal=LeaseRenewal(assignment_id=assignment_id, lease_id=renewed.lease_id, expires_at=renewed.expires_at),
         )
 

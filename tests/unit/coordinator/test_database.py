@@ -175,7 +175,7 @@ def test_pragmas_migrations_and_newer_schema_rejection(tmp_path: Path):
         assert state.connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert state.connection.execute("PRAGMA synchronous").fetchone()[0] == 2
         assert state.connection.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
-        assert state.connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 3
+        assert state.connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 4
         assert not state.connection.execute("PRAGMA foreign_key_check").fetchall()
         with pytest.raises(CoordinatorLockError, match="run lock"):
             repository(tmp_path, clock)
@@ -183,7 +183,7 @@ def test_pragmas_migrations_and_newer_schema_rejection(tmp_path: Path):
     database_path = tmp_path / "newer.sqlite3"
     connection = sqlite3.connect(database_path)
     connection.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at REAL NOT NULL)")
-    connection.execute("INSERT INTO schema_migrations VALUES (4, 0)")
+    connection.execute("INSERT INTO schema_migrations VALUES (5, 0)")
     connection.commit()
     connection.close()
     with pytest.raises(SchemaVersionError, match="newer"):
@@ -195,16 +195,29 @@ def test_pragmas_migrations_and_newer_schema_rejection(tmp_path: Path):
     connection.execute(
         "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY CHECK (version > 0), applied_at REAL NOT NULL)"
     )
-    for statement in MIGRATIONS[1]:
-        connection.execute(statement)
-    connection.execute("INSERT INTO schema_migrations VALUES (1, 0)")
+    for version in range(1, 4):
+        for statement in MIGRATIONS[version]:
+            connection.execute(statement)
+        connection.execute("INSERT INTO schema_migrations VALUES (?, 0)", (version,))
     connection.commit()
     connection.close()
     with CoordinatorRepository(legacy_path, tmp_path / "legacy-run") as upgraded:
-        assert upgraded.connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 3
+        assert upgraded.connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 4
         assert "last_heartbeat_sent_at" in {
             row[1] for row in upgraded.connection.execute("PRAGMA table_info(worker_sessions)").fetchall()
         }
+        assert {
+            "request_id",
+            "worker_session_id",
+            "request_digest",
+            "state",
+            "lease_id",
+            "created_at",
+            "completed_at",
+        } == {row[1] for row in upgraded.connection.execute("PRAGMA table_info(lease_requests)").fetchall()}
+        scheduler_state = upgraded.connection.execute("SELECT * FROM scheduler_state").fetchone()
+        assert scheduler_state["max_policy_lag"] is None
+        assert scheduler_state["loaded_policy_preference_seconds"] is None
 
 
 def test_run_policy_activation_and_worker_registration(tmp_path: Path):

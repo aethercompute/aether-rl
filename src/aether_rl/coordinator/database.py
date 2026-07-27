@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import os
+import secrets
 import sqlite3
 import stat
 import time
+import uuid
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO
+from typing import TYPE_CHECKING, BinaryIO, Literal
 
 from aether_rl.protocol import (
     AssignmentLease,
+    EnvironmentIdentity,
     FailureEnvelope,
     LeaseRenewal,
     LeaseRequest,
@@ -30,6 +34,9 @@ from aether_rl.trainer.policy import verify_lora_policy
 
 from .migrations import MIGRATIONS, SCHEMA_VERSION
 from .spool import AtomicSpool
+
+if TYPE_CHECKING:
+    from .environments import EnvironmentSourceSpec
 
 
 class CoordinatorError(Exception):
@@ -88,6 +95,22 @@ class PendingResult:
     assignment_id: str
     envelope_digest: str
     path: Path
+
+
+@dataclass(frozen=True)
+class CreatedGroup:
+    group_id: str
+    creation_key: str
+    sequence: int
+    source_id: str
+    source_cursor: int
+    assignments: tuple[RolloutAssignment, ...]
+
+
+@dataclass(frozen=True)
+class LeaseRequestDisposition:
+    state: Literal["pending", "no_work", "leased"]
+    lease: AssignmentLease | None = None
 
 
 class CoordinatorRepository:
@@ -267,7 +290,19 @@ class CoordinatorRepository:
             if target["policy_version"] < active["policy_version"]:
                 raise InvalidStateError("policy activation must be monotonic")
             self.connection.execute("UPDATE runs SET active_policy_id = ? WHERE singleton = 1", (policy_id,))
+            self._reconcile_stale_work(self.clock())
         return PolicyManifest.model_validate_json(target["manifest_json"])
+
+    def configure_scheduler(self, *, max_policy_lag: int, loaded_policy_preference_seconds: float) -> None:
+        if max_policy_lag < 0 or loaded_policy_preference_seconds < 0:
+            raise ValueError("scheduler preference and policy lag must be non-negative")
+        with self._transaction():
+            self.connection.execute(
+                "UPDATE scheduler_state SET max_policy_lag = ?, loaded_policy_preference_seconds = ? "
+                "WHERE singleton = 1",
+                (max_policy_lag, loaded_policy_preference_seconds),
+            )
+            self._reconcile_stale_work(self.clock())
 
     def active_policy(self) -> PolicyManifest:
         row = self.connection.execute(
@@ -323,6 +358,7 @@ class CoordinatorRepository:
         renewals: list[LeaseRenewal] = []
         stop_ids: list[str] = []
         with self._transaction():
+            self._reconcile_stale_work(now)
             session = self.connection.execute(
                 "SELECT worker_id, last_heartbeat_sent_at FROM worker_sessions WHERE worker_session_id = ?",
                 (heartbeat.worker_session_id,),
@@ -353,10 +389,29 @@ class CoordinatorRepository:
                 ):
                     raise ConflictError("heartbeat includes a lease owned by another worker session")
 
+            cancelled_lease_ids = (
+                {
+                    row["lease_id"]
+                    for row in self.connection.execute(
+                        "SELECT lease_id FROM lease_cancellations WHERE lease_id IN "
+                        f"({','.join('?' for _ in heartbeat.active_lease_ids)})",
+                        heartbeat.active_lease_ids,
+                    ).fetchall()
+                }
+                if heartbeat.active_lease_ids
+                else set()
+            )
+
             for lease_id in heartbeat.active_lease_ids:
                 lease = leases.get(lease_id)
+                if lease_id in cancelled_lease_ids:
+                    self.connection.execute(
+                        "UPDATE lease_cancellations SET delivered_at = COALESCE(delivered_at, ?) WHERE lease_id = ?",
+                        (now, lease_id),
+                    )
                 if (
                     lease is None
+                    or lease_id in cancelled_lease_ids
                     or lease["state"] != "active"
                     or lease["assignment_state"] != "leased"
                     or lease["expires_at"] <= now
@@ -379,8 +434,16 @@ class CoordinatorRepository:
             )
         return tuple(renewals), tuple(stop_ids)
 
-    def validate_lease_request(self, request: LeaseRequest) -> None:
+    def validate_lease_request(self, request: LeaseRequest) -> LeaseRequestDisposition:
+        request_digest = sha256_digest(canonical_json_bytes(request))
         with self._transaction():
+            existing = self.connection.execute(
+                "SELECT * FROM lease_requests WHERE request_id = ?", (request.request_id,)
+            ).fetchone()
+            if existing is not None:
+                if existing["request_digest"] != request_digest:
+                    raise ConflictError("lease request ID already has different contents")
+                return self._lease_request_disposition(existing)
             session = self.connection.execute(
                 "SELECT * FROM worker_sessions WHERE worker_session_id = ?", (request.worker_session_id,)
             ).fetchone()
@@ -398,18 +461,72 @@ class CoordinatorRepository:
             now = self.clock()
             active_count = self.connection.execute(
                 "SELECT COUNT(*) AS count FROM lease_attempts l JOIN assignments a USING (assignment_id) "
+                "LEFT JOIN lease_cancellations c USING (lease_id) "
                 "WHERE l.worker_id = ? AND l.worker_session_id = ? AND l.state = 'active' AND l.expires_at > ? "
-                "AND (a.deadline_at IS NULL OR a.deadline_at > ?)",
+                "AND (a.deadline_at IS NULL OR a.deadline_at > ?) "
+                "AND (c.lease_id IS NULL OR c.delivered_at IS NULL)",
                 (request.worker_id, request.worker_session_id, now, now),
             ).fetchone()["count"]
             if request.available_slots > capabilities.max_concurrent_assignments - active_count:
                 raise CapacityError("requested slots exceed worker session capacity")
             self.connection.execute(
+                "INSERT INTO lease_requests "
+                "(request_id, worker_session_id, request_digest, state, lease_id, created_at, completed_at) "
+                "VALUES (?, ?, ?, 'pending', NULL, ?, NULL)",
+                (request.request_id, request.worker_session_id, request_digest, now),
+            )
+            self.connection.execute(
                 "UPDATE worker_sessions SET last_lease_request_sent_at = ? WHERE worker_session_id = ?",
                 (request.sent_at, request.worker_session_id),
             )
+        return LeaseRequestDisposition("pending")
+
+    def mark_lease_request_no_work(self, request_id: str) -> LeaseRequestDisposition:
+        with self._transaction():
+            row = self.connection.execute("SELECT * FROM lease_requests WHERE request_id = ?", (request_id,)).fetchone()
+            if row is None:
+                raise InvalidStateError("lease request has not been validated")
+            if row["state"] == "pending":
+                self.connection.execute(
+                    "UPDATE lease_requests SET state = 'no_work', completed_at = ? "
+                    "WHERE request_id = ? AND state = 'pending'",
+                    (self.clock(), request_id),
+                )
+                row = self.connection.execute(
+                    "SELECT * FROM lease_requests WHERE request_id = ?", (request_id,)
+                ).fetchone()
+            return self._lease_request_disposition(row)
+
+    def associate_offered_lease(self, request: LeaseRequest, offered: AssignmentLease) -> LeaseRequestDisposition:
+        with self._transaction():
+            request_row = self.connection.execute(
+                "SELECT * FROM lease_requests WHERE request_id = ?", (request.request_id,)
+            ).fetchone()
+            if request_row is None:
+                raise InvalidStateError("lease request has not been validated")
+            disposition = self._lease_request_disposition(request_row)
+            if disposition.state != "pending":
+                if disposition.lease == offered:
+                    return disposition
+                raise ConflictError("lease request already has a different disposition")
+            self._validate_offered_lease(request, offered)
+            associated = self.connection.execute(
+                "SELECT request_id FROM lease_requests WHERE lease_id = ? AND request_id != ?",
+                (offered.lease_id, request.request_id),
+            ).fetchone()
+            if associated is not None:
+                raise ConflictError("lease is already associated with a different request")
+            self.connection.execute(
+                "UPDATE lease_requests SET state = 'leased', lease_id = ?, completed_at = ? "
+                "WHERE request_id = ? AND state = 'pending'",
+                (offered.lease_id, self.clock(), request.request_id),
+            )
+        return LeaseRequestDisposition("leased", offered)
 
     def validate_offered_lease(self, request: LeaseRequest, offered: AssignmentLease) -> None:
+        self._validate_offered_lease(request, offered)
+
+    def _validate_offered_lease(self, request: LeaseRequest, offered: AssignmentLease) -> None:
         if offered.worker_id != request.worker_id or offered.worker_session_id != request.worker_session_id:
             raise ConflictError("offered lease does not belong to the requesting worker session")
         if offered.assignment.environment not in request.environments:
@@ -435,6 +552,174 @@ class CoordinatorRepository:
             or canonical_json_bytes(offered.assignment) != assignment["assignment_json"]
         ):
             raise ConflictError("offered lease does not match durable coordinator state")
+
+    def register_scheduler_source(self, spec: EnvironmentSourceSpec) -> None:
+        from .environments import EnvironmentSourceSpec
+
+        if not isinstance(spec, EnvironmentSourceSpec):
+            raise TypeError("spec must be an EnvironmentSourceSpec")
+        immutable = (
+            spec.kind,
+            spec.environment.id,
+            spec.environment.revision,
+            spec.weight,
+            canonical_json_bytes(list(spec.tasks)),
+            canonical_json_bytes(spec.sampling),
+            spec.group_size,
+            spec.max_attempts,
+            spec.result_size_limit_bytes,
+            spec.assignment_timeout_seconds,
+            int(spec.enabled),
+        )
+        with self._transaction():
+            existing = self.connection.execute(
+                "SELECT * FROM scheduler_sources WHERE source_id = ?", (spec.source_id,)
+            ).fetchone()
+            if existing is not None:
+                persisted = (
+                    existing["kind"],
+                    existing["environment_id"],
+                    existing["environment_revision"],
+                    existing["weight"],
+                    existing["tasks_json"],
+                    existing["sampling_json"],
+                    existing["group_size"],
+                    existing["max_attempts"],
+                    existing["result_size_limit_bytes"],
+                    existing["assignment_timeout_seconds"],
+                    existing["enabled"],
+                )
+                if persisted == immutable:
+                    return
+                raise ConflictError("scheduler source already has different immutable contents or settings")
+            self.connection.execute(
+                "INSERT INTO scheduler_sources "
+                "(source_id, kind, environment_id, environment_revision, weight, virtual_finish, cursor, "
+                "tasks_json, sampling_json, group_size, max_attempts, result_size_limit_bytes, "
+                "assignment_timeout_seconds, enabled) "
+                "VALUES (?, ?, ?, ?, ?, COALESCE((SELECT MIN(virtual_finish) FROM scheduler_sources "
+                "WHERE enabled = 1), 0), 0, ?, ?, ?, ?, ?, ?, ?)",
+                (spec.source_id, *immutable),
+            )
+
+    def create_next_group(
+        self,
+        kind: str | None,
+        id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
+        *,
+        environments: Sequence[EnvironmentIdentity] | None = None,
+    ) -> CreatedGroup | None:
+        if kind not in {None, "train", "eval"}:
+            raise ValueError("group kind must be train, eval, or None")
+        now = self.clock()
+        with self._transaction():
+            environment_filter = ""
+            environment_values: tuple[object, ...] = ()
+            if environments is not None:
+                identities = tuple(environments)
+                if not identities:
+                    return None
+                environment_filter = (
+                    " AND ("
+                    + " OR ".join("(environment_id = ? AND environment_revision = ?)" for _ in identities)
+                    + ")"
+                )
+                environment_values = tuple(
+                    value for environment in identities for value in (environment.id, environment.revision)
+                )
+            kind_filter = "" if kind is None else " AND kind = ?"
+            kind_values: tuple[object, ...] = () if kind is None else (kind,)
+            source = self.connection.execute(
+                "SELECT * FROM scheduler_sources WHERE enabled = 1 "
+                f"{kind_filter}{environment_filter} ORDER BY virtual_finish, source_id LIMIT 1",
+                (*kind_values, *environment_values),
+            ).fetchone()
+            if source is None:
+                return None
+            policy_row = self.connection.execute(
+                "SELECT p.* FROM runs r JOIN policies p ON p.policy_id = r.active_policy_id WHERE r.singleton = 1"
+            ).fetchone()
+            if policy_row is None:
+                raise InvalidStateError("run has not been initialized")
+            self._verify_policy_row(policy_row)
+            policy = PolicyManifest.model_validate_json(policy_row["manifest_json"])
+            tasks = json.loads(source["tasks_json"])
+            cursor = source["cursor"]
+            task = tasks[cursor % len(tasks)]
+            creation_key = f"source:{source['source_id']}:occurrence:{cursor}"
+            existing = self.connection.execute(
+                "SELECT group_id, sequence FROM rollout_groups WHERE creation_key = ?", (creation_key,)
+            ).fetchone()
+            if existing is not None:
+                rows = self.connection.execute(
+                    "SELECT assignment_json FROM assignments WHERE group_id = ? ORDER BY group_index",
+                    (existing["group_id"],),
+                ).fetchall()
+                if len(rows) != source["group_size"]:
+                    raise ConflictError("existing scheduler group is incomplete")
+                self.connection.execute(
+                    "UPDATE scheduler_sources SET cursor = cursor + 1, "
+                    "virtual_finish = virtual_finish + group_size / weight WHERE source_id = ? AND cursor = ?",
+                    (source["source_id"], cursor),
+                )
+                return CreatedGroup(
+                    existing["group_id"],
+                    creation_key,
+                    existing["sequence"],
+                    source["source_id"],
+                    cursor,
+                    tuple(RolloutAssignment.model_validate_json(row["assignment_json"]) for row in rows),
+                )
+            sequence = self._allocate_group_sequence()
+            group_id = id_factory()
+            deadline = now + source["assignment_timeout_seconds"] if source["assignment_timeout_seconds"] else None
+            environment = {"id": source["environment_id"], "revision": source["environment_revision"]}
+            sampling = json.loads(source["sampling_json"])
+            assignments = tuple(
+                RolloutAssignment(
+                    assignment_id=id_factory(),
+                    group_id=group_id,
+                    group_index=index,
+                    group_size=source["group_size"],
+                    kind=source["kind"],
+                    environment=environment,
+                    task_data=task,
+                    sampling=sampling,
+                    policy=policy,
+                    created_at=now,
+                    deadline_at=deadline,
+                    result_size_limit_bytes=source["result_size_limit_bytes"],
+                )
+                for index in range(source["group_size"])
+            )
+            self.connection.execute(
+                "INSERT INTO rollout_groups "
+                "(group_id, policy_id, kind, environment_id, environment_revision, task_json, sampling_json, "
+                "group_size, state, created_at, creation_key, sequence) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'collecting', ?, ?, ?)",
+                (
+                    group_id,
+                    policy.policy_id,
+                    source["kind"],
+                    source["environment_id"],
+                    source["environment_revision"],
+                    canonical_json_bytes(task),
+                    source["sampling_json"],
+                    source["group_size"],
+                    now,
+                    creation_key,
+                    sequence,
+                ),
+            )
+            for assignment in assignments:
+                self._insert_assignment(assignment, source["max_attempts"])
+            self.connection.execute(
+                "UPDATE scheduler_sources SET cursor = cursor + 1, "
+                "virtual_finish = virtual_finish + group_size / weight "
+                "WHERE source_id = ?",
+                (source["source_id"],),
+            )
+        return CreatedGroup(group_id, creation_key, sequence, source["source_id"], cursor, assignments)
 
     def create_group(self, assignments: Sequence[RolloutAssignment], *, max_attempts: int) -> None:
         if max_attempts < 1:
@@ -484,8 +769,13 @@ class CoordinatorRepository:
             ).fetchone()
             if policy is None or policy["manifest_digest"] != policy_manifest_digest(first.policy):
                 raise ConflictError("assignment policy is not the exact published policy")
+            sequence = self._allocate_group_sequence()
+            creation_key = f"manual:{first.group_id}"
             self.connection.execute(
-                "INSERT INTO rollout_groups VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'collecting', ?)",
+                "INSERT INTO rollout_groups "
+                "(group_id, policy_id, kind, environment_id, environment_revision, task_json, sampling_json, "
+                "group_size, state, created_at, creation_key, sequence) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'collecting', ?, ?, ?)",
                 (
                     first.group_id,
                     first.policy.policy_id,
@@ -496,23 +786,133 @@ class CoordinatorRepository:
                     canonical_json_bytes(first.sampling),
                     first.group_size,
                     first.created_at,
+                    creation_key,
+                    sequence,
                 ),
             )
             for assignment in sorted(assignments, key=lambda item: item.group_index):
-                self.connection.execute(
-                    "INSERT INTO assignments VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?, ?, NULL)",
-                    (
-                        assignment.assignment_id,
-                        assignment.group_id,
-                        assignment.group_index,
-                        canonical_json_bytes(assignment),
-                        assignment.policy.policy_id,
-                        policy_manifest_digest(assignment.policy),
-                        max_attempts,
-                        assignment.created_at,
-                        assignment.deadline_at,
-                    ),
-                )
+                self._insert_assignment(assignment, max_attempts)
+
+    def lease_next_compatible(
+        self,
+        request: LeaseRequest,
+        *,
+        lease_duration_seconds: float,
+        lease_id_factory: Callable[[], str] = lambda: f"lease-{secrets.token_hex(32)}",
+    ) -> AssignmentLease | None:
+        if lease_duration_seconds <= 0:
+            raise ValueError("lease duration must be positive")
+        now = self.clock()
+        with self._transaction():
+            request_row = self.connection.execute(
+                "SELECT * FROM lease_requests WHERE request_id = ?", (request.request_id,)
+            ).fetchone()
+            if request_row is None:
+                raise InvalidStateError("lease request has not been validated")
+            disposition = self._lease_request_disposition(request_row)
+            if disposition.state == "leased":
+                return disposition.lease
+            if disposition.state == "no_work":
+                return None
+            self._expire_leases(now)
+            session = self.connection.execute(
+                "SELECT * FROM worker_sessions WHERE worker_session_id = ?", (request.worker_session_id,)
+            ).fetchone()
+            if session is None or session["worker_id"] != request.worker_id:
+                raise IncompatibleWorkerError("worker session is not registered for this worker")
+            capabilities = WorkerCapabilities.model_validate_json(session["capabilities_json"])
+            requested = set(request.environments)
+            if not requested.issubset(capabilities.environments):
+                raise IncompatibleWorkerError("lease request contains an unsupported environment")
+            self._validate_policy_ids(request.loaded_policy_ids)
+            settings = self._scheduler_settings()
+            if settings["max_policy_lag"] is None or settings["loaded_policy_preference_seconds"] is None:
+                raise InvalidStateError("scheduler settings have not been configured")
+            self._cancel_stale_train_groups(settings["max_policy_lag"], now)
+            active_count = self.connection.execute(
+                "SELECT COUNT(*) AS count FROM lease_attempts l JOIN assignments a USING (assignment_id) "
+                "LEFT JOIN lease_cancellations c USING (lease_id) "
+                "WHERE l.worker_id = ? AND l.worker_session_id = ? AND l.state = 'active' AND l.expires_at > ? "
+                "AND (a.deadline_at IS NULL OR a.deadline_at > ?) "
+                "AND (c.lease_id IS NULL OR c.delivered_at IS NULL)",
+                (request.worker_id, request.worker_session_id, now, now),
+            ).fetchone()["count"]
+            remaining_capacity = capabilities.max_concurrent_assignments - active_count
+            if remaining_capacity < 1:
+                return None
+            environment_clauses = " OR ".join(
+                "(g.environment_id = ? AND g.environment_revision = ?)" for _ in request.environments
+            )
+            environment_values = tuple(
+                value for environment in request.environments for value in (environment.id, environment.revision)
+            )
+            candidates = self.connection.execute(
+                "SELECT a.*, g.sequence, g.environment_id, g.environment_revision "
+                "FROM assignments a JOIN rollout_groups g USING (group_id) "
+                "LEFT JOIN assignment_cancellations c USING (assignment_id) "
+                "WHERE a.state IN ('pending', 'retry_wait') AND a.available_at <= ? "
+                "AND (a.deadline_at IS NULL OR a.deadline_at > ?) AND c.assignment_id IS NULL "
+                f"AND ({environment_clauses}) "
+                "ORDER BY g.sequence, a.group_index, a.assignment_id",
+                (now, now, *environment_values),
+            ).fetchall()
+            if not candidates:
+                return None
+            oldest = candidates[0]
+            chosen = oldest
+            if now - oldest["available_at"] < settings["loaded_policy_preference_seconds"]:
+                loaded = set(request.loaded_policy_ids)
+                chosen = next((candidate for candidate in candidates if candidate["policy_id"] in loaded), oldest)
+            deadline = chosen["deadline_at"]
+            expires_at = (
+                min(now + lease_duration_seconds, deadline) if deadline is not None else now + lease_duration_seconds
+            )
+            attempt = chosen["attempt_count"] + 1
+            lease_id = lease_id_factory()
+            self.connection.execute(
+                "INSERT INTO lease_attempts "
+                "(lease_id, assignment_id, attempt, worker_id, worker_session_id, issued_at, expires_at, state) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'active')",
+                (
+                    lease_id,
+                    chosen["assignment_id"],
+                    attempt,
+                    request.worker_id,
+                    request.worker_session_id,
+                    now,
+                    expires_at,
+                ),
+            )
+            self.connection.execute(
+                "UPDATE assignments SET state = 'leased', attempt_count = ?, current_lease_id = ? "
+                "WHERE assignment_id = ?",
+                (attempt, lease_id, chosen["assignment_id"]),
+            )
+            self.connection.execute(
+                "UPDATE lease_requests SET state = 'leased', lease_id = ?, completed_at = ? "
+                "WHERE request_id = ? AND state = 'pending'",
+                (lease_id, now, request.request_id),
+            )
+        return AssignmentLease(
+            lease_id=lease_id,
+            attempt=attempt,
+            worker_id=request.worker_id,
+            worker_session_id=request.worker_session_id,
+            issued_at=now,
+            expires_at=expires_at,
+            assignment=RolloutAssignment.model_validate_json(chosen["assignment_json"]),
+        )
+
+    def lease_or_create_next_compatible(
+        self, request: LeaseRequest, *, lease_duration_seconds: float
+    ) -> AssignmentLease | None:
+        lease = self.lease_next_compatible(request, lease_duration_seconds=lease_duration_seconds)
+        if lease is not None or not self._lease_request_can_generate(request):
+            return lease
+        created = self.create_next_group(None, environments=request.environments)
+        if created is None:
+            return None
+        return self.lease_next_compatible(request, lease_duration_seconds=lease_duration_seconds)
 
     def create_lease(
         self,
@@ -589,11 +989,13 @@ class CoordinatorRepository:
         duration_seconds: float,
         expected_assignment_id: str | None = None,
         sent_at: float | None = None,
-    ) -> AssignmentLease:
+        acknowledge_cancellation: bool = False,
+    ) -> AssignmentLease | str:
         if duration_seconds <= 0:
             raise ValueError("lease duration must be positive")
         now = self.clock()
         with self._transaction():
+            self._reconcile_stale_work(now)
             lease = self.connection.execute("SELECT * FROM lease_attempts WHERE lease_id = ?", (lease_id,)).fetchone()
             if (
                 lease is not None
@@ -605,6 +1007,17 @@ class CoordinatorRepository:
                 raise InvalidStateError("lease is not active and unexpired")
             if lease["worker_id"] != worker_id or lease["worker_session_id"] != worker_session_id:
                 raise ConflictError("lease worker session does not match")
+            cancellation = self.connection.execute(
+                "SELECT reason FROM lease_cancellations WHERE lease_id = ?", (lease_id,)
+            ).fetchone()
+            if cancellation is not None:
+                if not acknowledge_cancellation:
+                    raise InvalidStateError("lease has been cancelled")
+                self.connection.execute(
+                    "UPDATE lease_cancellations SET delivered_at = COALESCE(delivered_at, ?) WHERE lease_id = ?",
+                    (now, lease_id),
+                )
+                return cancellation["reason"]
             if (
                 sent_at is not None
                 and lease["last_renew_sent_at"] is not None
@@ -754,27 +1167,8 @@ class CoordinatorRepository:
     def expire_leases(self) -> int:
         now = self.clock()
         with self._transaction():
-            leases = self.connection.execute(
-                "SELECT a.*, l.lease_id, l.expires_at FROM lease_attempts l "
-                "JOIN assignments a USING (assignment_id) "
-                "WHERE l.state = 'active' AND (l.expires_at <= ? OR (a.deadline_at IS NOT NULL AND a.deadline_at <= ?)) "
-                "ORDER BY l.expires_at, l.assignment_id",
-                (now, now),
-            ).fetchall()
-            for lease in leases:
-                self.connection.execute(
-                    "UPDATE lease_attempts SET state = 'expired' WHERE lease_id = ?", (lease["lease_id"],)
-                )
-                self._retry_or_terminal(lease, now)
-            overdue = self.connection.execute(
-                "SELECT * FROM assignments WHERE state IN ('pending', 'retry_wait') "
-                "AND deadline_at IS NOT NULL AND deadline_at <= ? ORDER BY deadline_at, assignment_id",
-                (now,),
-            ).fetchall()
-            for assignment in overdue:
-                self._terminalize_without_envelope(assignment, "deadline_exceeded", now)
-            self._recompute_groups()
-        return len(leases)
+            self._reconcile_stale_work(now)
+            return self._expire_leases(now)
 
     def accept_result(self, envelope: ResultEnvelope) -> AcceptanceRecord:
         envelope_bytes = canonical_json_bytes(envelope)
@@ -814,6 +1208,10 @@ class CoordinatorRepository:
                 "UPDATE assignments SET state = 'succeeded', current_lease_id = NULL WHERE assignment_id = ?",
                 (envelope.assignment_id,),
             )
+            self.connection.execute(
+                "UPDATE assignment_cancellations SET terminal = 1 WHERE assignment_id = ?",
+                (envelope.assignment_id,),
+            )
             self._recompute_group(assignment["group_id"])
         return AcceptanceRecord(envelope.assignment_id, envelope_digest, False, True)
 
@@ -832,7 +1230,29 @@ class CoordinatorRepository:
             self.connection.execute(
                 "UPDATE lease_attempts SET state = 'failed' WHERE lease_id = ?", (envelope.lease_id,)
             )
-            terminal = self._retry_or_terminal(assignment, now, envelope=envelope, digest=envelope_digest)
+            cancellation = self.connection.execute(
+                "SELECT 1 FROM lease_cancellations WHERE lease_id = ?", (envelope.lease_id,)
+            ).fetchone()
+            if cancellation is not None:
+                self.connection.execute(
+                    "UPDATE assignments SET state = 'failed', current_lease_id = NULL WHERE assignment_id = ?",
+                    (envelope.assignment_id,),
+                )
+                self.connection.execute(
+                    "UPDATE assignment_cancellations SET terminal = 1 WHERE assignment_id = ?",
+                    (envelope.assignment_id,),
+                )
+                self.connection.execute(
+                    "INSERT INTO assignment_outcomes "
+                    "(assignment_id, outcome, lease_id, envelope_digest, completed_at) "
+                    "VALUES (?, 'failure', ?, ?, ?)",
+                    (envelope.assignment_id, envelope.lease_id, envelope_digest, now),
+                )
+                terminal = True
+            else:
+                terminal = self._retry_or_terminal(
+                    assignment, now, envelope=envelope, digest=envelope_digest, lease_id=envelope.lease_id
+                )
             self.connection.execute(
                 "INSERT INTO failures VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -933,11 +1353,91 @@ class CoordinatorRepository:
             raise NotFoundError("rollout group not found")
         return row["state"]
 
+    def cancellation_state(self, assignment_id: str) -> tuple[str, bool] | None:
+        row = self.connection.execute(
+            "SELECT reason, terminal FROM assignment_cancellations WHERE assignment_id = ?", (assignment_id,)
+        ).fetchone()
+        return None if row is None else (row["reason"], bool(row["terminal"]))
+
     def _run(self) -> sqlite3.Row:
         row = self.connection.execute("SELECT * FROM runs WHERE singleton = 1").fetchone()
         if row is None:
             raise InvalidStateError("run has not been initialized")
         return row
+
+    def _scheduler_settings(self) -> sqlite3.Row:
+        row = self.connection.execute("SELECT * FROM scheduler_state WHERE singleton = 1").fetchone()
+        if row is None:
+            raise InvalidStateError("scheduler state is missing")
+        return row
+
+    def _reconcile_stale_work(self, now: float) -> None:
+        max_policy_lag = self._scheduler_settings()["max_policy_lag"]
+        if max_policy_lag is not None:
+            self._cancel_stale_train_groups(max_policy_lag, now)
+
+    def _lease_request_disposition(self, row: sqlite3.Row) -> LeaseRequestDisposition:
+        lease = self._assignment_lease(row["lease_id"]) if row["state"] == "leased" else None
+        return LeaseRequestDisposition(row["state"], lease)
+
+    def _assignment_lease(self, lease_id: str) -> AssignmentLease:
+        row = self.connection.execute(
+            "SELECT l.*, a.assignment_json FROM lease_attempts l JOIN assignments a USING (assignment_id) "
+            "WHERE l.lease_id = ?",
+            (lease_id,),
+        ).fetchone()
+        if row is None:
+            raise InvalidStateError("persisted lease request references a missing lease")
+        return AssignmentLease(
+            lease_id=row["lease_id"],
+            attempt=row["attempt"],
+            worker_id=row["worker_id"],
+            worker_session_id=row["worker_session_id"],
+            issued_at=row["issued_at"],
+            expires_at=row["expires_at"],
+            assignment=RolloutAssignment.model_validate_json(row["assignment_json"]),
+        )
+
+    def _lease_request_can_generate(self, request: LeaseRequest) -> bool:
+        now = self.clock()
+        with self._transaction():
+            row = self.connection.execute(
+                "SELECT state FROM lease_requests WHERE request_id = ?", (request.request_id,)
+            ).fetchone()
+            if row is None or row["state"] != "pending":
+                return False
+            session = self.connection.execute(
+                "SELECT capabilities_json FROM worker_sessions WHERE worker_session_id = ? AND worker_id = ?",
+                (request.worker_session_id, request.worker_id),
+            ).fetchone()
+            if session is None:
+                return False
+            capabilities = WorkerCapabilities.model_validate_json(session["capabilities_json"])
+            active_count = self.connection.execute(
+                "SELECT COUNT(*) AS count FROM lease_attempts l JOIN assignments a USING (assignment_id) "
+                "LEFT JOIN lease_cancellations c USING (lease_id) "
+                "WHERE l.worker_id = ? AND l.worker_session_id = ? AND l.state = 'active' AND l.expires_at > ? "
+                "AND (a.deadline_at IS NULL OR a.deadline_at > ?) "
+                "AND (c.lease_id IS NULL OR c.delivered_at IS NULL)",
+                (request.worker_id, request.worker_session_id, now, now),
+            ).fetchone()["count"]
+            if active_count >= capabilities.max_concurrent_assignments:
+                return False
+            environment_clauses = " OR ".join(
+                "(g.environment_id = ? AND g.environment_revision = ?)" for _ in request.environments
+            )
+            environment_values = tuple(
+                value for environment in request.environments for value in (environment.id, environment.revision)
+            )
+            pending = self.connection.execute(
+                "SELECT 1 FROM assignments a JOIN rollout_groups g USING (group_id) "
+                "LEFT JOIN assignment_cancellations c USING (assignment_id) "
+                "WHERE a.state IN ('pending', 'retry_wait') AND a.available_at <= ? "
+                "AND (a.deadline_at IS NULL OR a.deadline_at > ?) AND c.assignment_id IS NULL "
+                f"AND ({environment_clauses}) LIMIT 1",
+                (now, now, *environment_values),
+            ).fetchone()
+            return pending is None
 
     def _assignment(self, assignment_id: str) -> sqlite3.Row:
         row = self.connection.execute("SELECT * FROM assignments WHERE assignment_id = ?", (assignment_id,)).fetchone()
@@ -1027,6 +1527,7 @@ class CoordinatorRepository:
         *,
         envelope: FailureEnvelope | None = None,
         digest: str | None = None,
+        lease_id: str | None = None,
     ) -> bool:
         retryable = envelope is None or envelope.retryable
         delay = min(self.retry_max_seconds, self.retry_base_seconds * 2 ** (assignment["attempt_count"] - 1))
@@ -1060,12 +1561,126 @@ class CoordinatorRepository:
             (
                 assignment["assignment_id"],
                 outcome,
-                envelope.lease_id if envelope else assignment["lease_id"],
+                envelope.lease_id if envelope else lease_id,
                 digest,
                 now,
             ),
         )
         return True
+
+    def _expire_leases(self, now: float) -> int:
+        leases = self.connection.execute(
+            "SELECT a.*, l.lease_id, l.expires_at, c.lease_id IS NOT NULL AS cancelled "
+            "FROM lease_attempts l JOIN assignments a USING (assignment_id) "
+            "LEFT JOIN lease_cancellations c USING (lease_id) "
+            "WHERE l.state = 'active' AND (l.expires_at <= ? OR (a.deadline_at IS NOT NULL AND a.deadline_at <= ?)) "
+            "ORDER BY l.expires_at, l.assignment_id",
+            (now, now),
+        ).fetchall()
+        for lease in leases:
+            self.connection.execute(
+                "UPDATE lease_attempts SET state = 'expired' WHERE lease_id = ?", (lease["lease_id"],)
+            )
+            if lease["cancelled"]:
+                self.connection.execute(
+                    "UPDATE assignments SET state = 'failed', current_lease_id = NULL WHERE assignment_id = ?",
+                    (lease["assignment_id"],),
+                )
+                self.connection.execute(
+                    "UPDATE assignment_cancellations SET terminal = 1 WHERE assignment_id = ?",
+                    (lease["assignment_id"],),
+                )
+                self.connection.execute(
+                    "INSERT OR IGNORE INTO assignment_outcomes "
+                    "(assignment_id, outcome, lease_id, envelope_digest, completed_at) "
+                    "VALUES (?, 'failure', ?, NULL, ?)",
+                    (lease["assignment_id"], lease["lease_id"], now),
+                )
+            else:
+                self._retry_or_terminal(lease, now, lease_id=lease["lease_id"])
+        overdue = self.connection.execute(
+            "SELECT * FROM assignments WHERE state IN ('pending', 'retry_wait') "
+            "AND deadline_at IS NOT NULL AND deadline_at <= ? ORDER BY deadline_at, assignment_id",
+            (now,),
+        ).fetchall()
+        for assignment in overdue:
+            self._terminalize_without_envelope(assignment, "deadline_exceeded", now)
+        self._recompute_groups()
+        return len(leases)
+
+    def _cancel_stale_train_groups(self, max_policy_lag: int, now: float) -> None:
+        active_version = self.connection.execute(
+            "SELECT p.policy_version FROM runs r JOIN policies p ON p.policy_id = r.active_policy_id "
+            "WHERE r.singleton = 1"
+        ).fetchone()["policy_version"]
+        groups = self.connection.execute(
+            "SELECT g.group_id FROM rollout_groups g JOIN policies p USING (policy_id) "
+            "WHERE g.kind = 'train' AND ? - p.policy_version > ? ORDER BY g.sequence, g.group_id",
+            (active_version, max_policy_lag),
+        ).fetchall()
+        for group in groups:
+            assignments = self.connection.execute(
+                "SELECT * FROM assignments WHERE group_id = ? AND state IN ('pending', 'retry_wait', 'leased') "
+                "ORDER BY group_index, assignment_id",
+                (group["group_id"],),
+            ).fetchall()
+            for assignment in assignments:
+                terminal = assignment["state"] != "leased"
+                self.connection.execute(
+                    "INSERT OR IGNORE INTO assignment_cancellations "
+                    "(assignment_id, reason, requested_at, terminal) VALUES (?, 'policy_stale', ?, ?)",
+                    (assignment["assignment_id"], now, int(terminal)),
+                )
+                if terminal:
+                    self.connection.execute(
+                        "UPDATE assignments SET state = 'failed', current_lease_id = NULL WHERE assignment_id = ?",
+                        (assignment["assignment_id"],),
+                    )
+                    self.connection.execute(
+                        "UPDATE assignment_cancellations SET terminal = 1 WHERE assignment_id = ?",
+                        (assignment["assignment_id"],),
+                    )
+                    self.connection.execute(
+                        "INSERT OR IGNORE INTO assignment_outcomes "
+                        "(assignment_id, outcome, lease_id, envelope_digest, completed_at) "
+                        "VALUES (?, 'failure', NULL, NULL, ?)",
+                        (assignment["assignment_id"], now),
+                    )
+                elif assignment["current_lease_id"] is not None:
+                    self.connection.execute(
+                        "INSERT OR IGNORE INTO lease_cancellations "
+                        "(lease_id, assignment_id, reason, requested_at, delivered_at) "
+                        "VALUES (?, ?, 'policy_stale', ?, NULL)",
+                        (assignment["current_lease_id"], assignment["assignment_id"], now),
+                    )
+            self._recompute_group(group["group_id"])
+
+    def _allocate_group_sequence(self) -> int:
+        row = self.connection.execute("SELECT next_group_sequence FROM scheduler_state WHERE singleton = 1").fetchone()
+        sequence = row["next_group_sequence"]
+        self.connection.execute(
+            "UPDATE scheduler_state SET next_group_sequence = ? WHERE singleton = 1", (sequence + 1,)
+        )
+        return sequence
+
+    def _insert_assignment(self, assignment: RolloutAssignment, max_attempts: int) -> None:
+        self.connection.execute(
+            "INSERT INTO assignments "
+            "(assignment_id, group_id, group_index, assignment_json, policy_id, policy_manifest_digest, state, "
+            "max_attempts, attempt_count, available_at, deadline_at, current_lease_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?, ?, NULL)",
+            (
+                assignment.assignment_id,
+                assignment.group_id,
+                assignment.group_index,
+                canonical_json_bytes(assignment),
+                assignment.policy.policy_id,
+                policy_manifest_digest(assignment.policy),
+                max_attempts,
+                assignment.created_at,
+                assignment.deadline_at,
+            ),
+        )
 
     def _terminalize_without_envelope(self, assignment: sqlite3.Row, outcome: str, now: float) -> None:
         self.connection.execute(

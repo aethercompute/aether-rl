@@ -69,6 +69,7 @@ async def test_health_readiness_auth_protocol_registration_lease_and_status(tmp_
             assert conflict.status_code == 409
 
             lease_request = LeaseRequest(
+                request_id="request-no-lease",
                 worker_id="worker-1",
                 worker_session_id="session-1",
                 sent_at=clock.now,
@@ -81,6 +82,17 @@ async def test_health_readiness_auth_protocol_registration_lease_and_status(tmp_
             assert no_lease.status_code == 204
             assert no_lease.headers["cache-control"] == "no-store"
             assert no_lease.headers["retry-after"] == "1"
+            no_lease_retry = await client.post(
+                "/api/v1/assignments/lease", headers=JSON_HEADERS, content=canonical_json_bytes(lease_request)
+            )
+            assert no_lease_retry.status_code == 204
+            conflicting_request = lease_request.model_copy(update={"wait_seconds": 1})
+            conflict = await client.post(
+                "/api/v1/assignments/lease",
+                headers=JSON_HEADERS,
+                content=canonical_json_bytes(conflicting_request),
+            )
+            assert conflict.status_code == 409
 
             status = await client.get("/api/v1/status", headers=AUTH)
             assert status.status_code == 200
@@ -138,6 +150,7 @@ async def test_body_validation_limits_and_immediate_injected_lease(tmp_path: Pat
         app = create_coordinator_app(repository, token=TOKEN, lease_provider=Provider())
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             request = LeaseRequest(
+                request_id="request-offered",
                 worker_id="worker-1",
                 worker_session_id="session-1",
                 sent_at=clock.now + 1,
@@ -150,6 +163,14 @@ async def test_body_validation_limits_and_immediate_injected_lease(tmp_path: Pat
             )
             assert response.status_code == 200
             assert response.json()["lease_id"] == "offered"
+            duplicate = await client.post(
+                "/api/v1/assignments/lease",
+                headers=JSON_HEADERS,
+                content=canonical_json_bytes(
+                    request.model_copy(update={"request_id": "request-offered-again", "sent_at": clock.now + 2})
+                ),
+            )
+            assert duplicate.status_code == 409
         app.state.coordinator_service.close()
 
         class SlowProvider:
@@ -163,9 +184,10 @@ async def test_body_validation_limits_and_immediate_injected_lease(tmp_path: Pat
         started = time.monotonic()
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             request = LeaseRequest(
+                request_id="request-slow",
                 worker_id="worker-1",
                 worker_session_id="session-1",
-                sent_at=clock.now + 2,
+                sent_at=clock.now + 3,
                 environments=registration().capabilities.environments,
                 available_slots=1,
                 wait_seconds=30,

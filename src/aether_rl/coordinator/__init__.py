@@ -8,13 +8,17 @@ from .database import (
     CoordinatorLockError,
     CoordinatorRepository,
     CoordinatorState,
+    CreatedGroup,
     IncompatibleWorkerError,
     InvalidStateError,
+    LeaseRequestDisposition,
     NotFoundError,
     PendingResult,
     RegistrationRecord,
     SchemaVersionError,
 )
+from .environments import EnvironmentCatalog, EnvironmentSourceSpec, verifier_v1_task_payloads
+from .scheduler import CoordinatorScheduler
 from .spool import AtomicSpool, ImmutableArtifactConflictError
 
 __all__ = [
@@ -26,15 +30,21 @@ __all__ = [
     "CoordinatorError",
     "CoordinatorLockError",
     "CoordinatorRepository",
+    "CoordinatorScheduler",
     "CoordinatorService",
     "CoordinatorState",
+    "CreatedGroup",
+    "EnvironmentCatalog",
+    "EnvironmentSourceSpec",
     "IncompatibleWorkerError",
     "ImmutableArtifactConflictError",
     "InvalidStateError",
     "LeaseProvider",
+    "LeaseRequestDisposition",
     "NotFoundError",
     "PendingResult",
     "RegistrationRecord",
     "SchemaVersionError",
     "create_coordinator_app",
+    "verifier_v1_task_payloads",
 ]

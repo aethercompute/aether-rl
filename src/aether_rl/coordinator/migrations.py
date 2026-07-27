@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: (
@@ -147,4 +147,92 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         "ALTER TABLE lease_attempts ADD COLUMN last_renew_sent_at REAL",
     ),
     3: ("ALTER TABLE worker_sessions ADD COLUMN last_lease_request_sent_at REAL",),
+    4: (
+        "ALTER TABLE rollout_groups ADD COLUMN creation_key TEXT",
+        "ALTER TABLE rollout_groups ADD COLUMN sequence INTEGER",
+        "UPDATE rollout_groups SET creation_key = 'manual:' || group_id",
+        """
+        UPDATE rollout_groups AS target
+        SET sequence = (
+            SELECT COUNT(*)
+            FROM rollout_groups AS candidate
+            WHERE candidate.created_at < target.created_at
+               OR (candidate.created_at = target.created_at AND candidate.group_id <= target.group_id)
+        )
+        """,
+        "CREATE UNIQUE INDEX rollout_groups_creation_key_idx ON rollout_groups(creation_key) WHERE creation_key IS NOT NULL",
+        "CREATE UNIQUE INDEX rollout_groups_sequence_idx ON rollout_groups(sequence) WHERE sequence IS NOT NULL",
+        "CREATE INDEX rollout_groups_policy_sequence_idx ON rollout_groups(kind, policy_id, sequence)",
+        """
+        CREATE TABLE scheduler_state (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            next_group_sequence INTEGER NOT NULL CHECK (next_group_sequence > 0),
+            max_policy_lag INTEGER CHECK (max_policy_lag IS NULL OR max_policy_lag >= 0),
+            loaded_policy_preference_seconds REAL
+                CHECK (loaded_policy_preference_seconds IS NULL OR loaded_policy_preference_seconds >= 0)
+        )
+        """,
+        """
+        INSERT INTO scheduler_state(singleton, next_group_sequence, max_policy_lag, loaded_policy_preference_seconds)
+        SELECT 1, COALESCE(MAX(sequence), 0) + 1, NULL, NULL FROM rollout_groups
+        """,
+        """
+        CREATE TABLE scheduler_sources (
+            source_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL CHECK (kind IN ('train', 'eval')),
+            environment_id TEXT NOT NULL,
+            environment_revision TEXT NOT NULL,
+            weight REAL NOT NULL CHECK (weight > 0),
+            virtual_finish REAL NOT NULL DEFAULT 0,
+            cursor INTEGER NOT NULL DEFAULT 0 CHECK (cursor >= 0),
+            tasks_json BLOB NOT NULL,
+            sampling_json BLOB NOT NULL,
+            group_size INTEGER NOT NULL CHECK (group_size > 0),
+            max_attempts INTEGER NOT NULL CHECK (max_attempts > 0),
+            result_size_limit_bytes INTEGER NOT NULL CHECK (result_size_limit_bytes > 0),
+            assignment_timeout_seconds REAL,
+            enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+            CHECK (assignment_timeout_seconds IS NULL OR assignment_timeout_seconds > 0)
+        )
+        """,
+        "CREATE INDEX scheduler_sources_pick_idx ON scheduler_sources(kind, enabled, virtual_finish, source_id)",
+        """
+        CREATE TABLE assignment_cancellations (
+            assignment_id TEXT PRIMARY KEY REFERENCES assignments(assignment_id),
+            reason TEXT NOT NULL CHECK (reason IN ('policy_stale', 'cancelled')),
+            requested_at REAL NOT NULL,
+            terminal INTEGER NOT NULL CHECK (terminal IN (0, 1))
+        )
+        """,
+        """
+        CREATE TABLE lease_cancellations (
+            lease_id TEXT PRIMARY KEY,
+            assignment_id TEXT NOT NULL,
+            reason TEXT NOT NULL CHECK (reason IN ('policy_stale', 'cancelled')),
+            requested_at REAL NOT NULL,
+            delivered_at REAL,
+            FOREIGN KEY (assignment_id, lease_id)
+                REFERENCES lease_attempts(assignment_id, lease_id)
+        )
+        """,
+        """
+        CREATE TABLE lease_requests (
+            request_id TEXT PRIMARY KEY,
+            worker_session_id TEXT NOT NULL REFERENCES worker_sessions(worker_session_id),
+            request_digest TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('pending', 'no_work', 'leased')),
+            lease_id TEXT REFERENCES lease_attempts(lease_id),
+            created_at REAL NOT NULL,
+            completed_at REAL,
+            CHECK (length(request_digest) = 71 AND substr(request_digest, 1, 7) = 'sha256:'),
+            CHECK (completed_at IS NULL OR completed_at >= created_at),
+            CHECK ((state = 'pending' AND lease_id IS NULL AND completed_at IS NULL) OR
+                   (state = 'no_work' AND lease_id IS NULL AND completed_at IS NOT NULL) OR
+                   (state = 'leased' AND lease_id IS NOT NULL AND completed_at IS NOT NULL))
+        )
+        """,
+        "CREATE INDEX lease_requests_session_idx ON lease_requests(worker_session_id, created_at)",
+        "CREATE UNIQUE INDEX lease_requests_lease_idx ON lease_requests(lease_id) WHERE lease_id IS NOT NULL",
+        "CREATE INDEX assignments_schedulable_idx ON assignments(state, available_at, group_id, group_index, assignment_id)",
+    ),
 }

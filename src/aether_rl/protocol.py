@@ -226,6 +226,7 @@ class WorkerHeartbeat(ProtocolModel):
 
 class LeaseRequest(ProtocolModel):
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
+    request_id: OpaqueId
     worker_id: OpaqueId
     worker_session_id: OpaqueId
     sent_at: Timestamp
@@ -274,7 +275,17 @@ class WorkerHeartbeatResponse(ProtocolModel):
 class LeaseRenewResponse(ProtocolModel):
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
     server_time: Timestamp
-    renewal: LeaseRenewal
+    action: Literal["renewed", "stop"]
+    renewal: LeaseRenewal | None = None
+    reason: Literal["policy_stale", "cancelled"] | None = None
+
+    @model_validator(mode="after")
+    def validate_action(self) -> LeaseRenewResponse:
+        if self.action == "renewed" and (self.renewal is None or self.reason is not None):
+            raise ValueError("renewed action requires renewal details and no stop reason")
+        if self.action == "stop" and (self.renewal is not None or self.reason is None):
+            raise ValueError("stop action requires a reason and no renewal details")
+        return self
 
 
 class SubmissionResponse(ProtocolModel):
