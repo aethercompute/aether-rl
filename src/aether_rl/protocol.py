@@ -148,6 +148,14 @@ class WorkerRegistration(ProtocolModel):
     capabilities: WorkerCapabilities
 
 
+class WorkerRegistrationResponse(ProtocolModel):
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+    worker_id: OpaqueId
+    worker_session_id: OpaqueId
+    created: bool
+    server_time: Timestamp
+
+
 class RolloutAssignment(ProtocolModel):
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
     assignment_id: OpaqueId
@@ -161,6 +169,7 @@ class RolloutAssignment(ProtocolModel):
     policy: PolicyManifest
     created_at: Timestamp
     deadline_at: Timestamp | None = None
+    result_size_limit_bytes: int = Field(default=64 * 1024 * 1024, ge=1)
 
     @model_validator(mode="after")
     def validate_assignment(self) -> RolloutAssignment:
@@ -210,11 +219,70 @@ class WorkerHeartbeat(ProtocolModel):
 
     @model_validator(mode="after")
     def validate_unique_ids(self) -> WorkerHeartbeat:
-        if len(set(self.active_lease_ids)) != len(self.active_lease_ids):
-            raise ValueError("active_lease_ids must not contain duplicates")
-        if len(set(self.loaded_policy_ids)) != len(self.loaded_policy_ids):
-            raise ValueError("loaded_policy_ids must not contain duplicates")
+        _validate_sorted_unique(self.active_lease_ids, "active_lease_ids")
+        _validate_sorted_unique(self.loaded_policy_ids, "loaded_policy_ids")
         return self
+
+
+class LeaseRequest(ProtocolModel):
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+    worker_id: OpaqueId
+    worker_session_id: OpaqueId
+    sent_at: Timestamp
+    loaded_policy_ids: tuple[OpaqueId, ...] = ()
+    environments: tuple[EnvironmentIdentity, ...] = Field(min_length=1)
+    available_slots: int = Field(ge=1)
+    wait_seconds: float = Field(default=0, ge=0, le=60, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_worker_state(self) -> LeaseRequest:
+        _validate_sorted_unique(self.loaded_policy_ids, "loaded_policy_ids")
+        environment_keys = tuple((environment.id, environment.revision) for environment in self.environments)
+        _validate_sorted_unique(environment_keys, "environments")
+        return self
+
+
+class LeaseRenewRequest(ProtocolModel):
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+    assignment_id: OpaqueId
+    lease_id: OpaqueId
+    worker_id: OpaqueId
+    worker_session_id: OpaqueId
+    sent_at: Timestamp
+
+
+class LeaseRenewal(ProtocolModel):
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+    assignment_id: OpaqueId
+    lease_id: OpaqueId
+    expires_at: Timestamp
+
+
+class WorkerHeartbeatResponse(ProtocolModel):
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+    server_time: Timestamp
+    renewals: tuple[LeaseRenewal, ...] = ()
+    stop_lease_ids: tuple[OpaqueId, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_response_ids(self) -> WorkerHeartbeatResponse:
+        _validate_sorted_unique(tuple(renewal.lease_id for renewal in self.renewals), "renewal lease IDs")
+        _validate_sorted_unique(self.stop_lease_ids, "stop_lease_ids")
+        return self
+
+
+class LeaseRenewResponse(ProtocolModel):
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+    server_time: Timestamp
+    renewal: LeaseRenewal
+
+
+class SubmissionResponse(ProtocolModel):
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+    assignment_id: OpaqueId
+    envelope_digest: Digest
+    duplicate: bool
+    terminal: bool
 
 
 class ResultEnvelope(ProtocolModel):
@@ -280,6 +348,13 @@ class FailureEnvelope(ProtocolModel):
 
 
 TerminalEnvelope: TypeAlias = Annotated[ResultEnvelope | FailureEnvelope, Field(discriminator="type")]
+
+
+def _validate_sorted_unique(values: tuple[object, ...], name: str) -> None:
+    if len(set(values)) != len(values):
+        raise ValueError(f"{name} must not contain duplicates")
+    if tuple(sorted(values)) != values:
+        raise ValueError(f"{name} must be sorted")
 
 
 def canonical_json_bytes(value: BaseModel | JsonValue) -> bytes:

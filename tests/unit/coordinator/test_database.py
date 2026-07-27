@@ -18,6 +18,7 @@ from aether_rl.coordinator import (
     InvalidStateError,
     SchemaVersionError,
 )
+from aether_rl.coordinator.migrations import MIGRATIONS
 from aether_rl.protocol import (
     BaseModelIdentity,
     EnvironmentIdentity,
@@ -174,7 +175,7 @@ def test_pragmas_migrations_and_newer_schema_rejection(tmp_path: Path):
         assert state.connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert state.connection.execute("PRAGMA synchronous").fetchone()[0] == 2
         assert state.connection.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
-        assert state.connection.execute("SELECT version FROM schema_migrations").fetchone()[0] == 1
+        assert state.connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 3
         assert not state.connection.execute("PRAGMA foreign_key_check").fetchall()
         with pytest.raises(CoordinatorLockError, match="run lock"):
             repository(tmp_path, clock)
@@ -182,11 +183,28 @@ def test_pragmas_migrations_and_newer_schema_rejection(tmp_path: Path):
     database_path = tmp_path / "newer.sqlite3"
     connection = sqlite3.connect(database_path)
     connection.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at REAL NOT NULL)")
-    connection.execute("INSERT INTO schema_migrations VALUES (2, 0)")
+    connection.execute("INSERT INTO schema_migrations VALUES (4, 0)")
     connection.commit()
     connection.close()
     with pytest.raises(SchemaVersionError, match="newer"):
         CoordinatorRepository(database_path, tmp_path / "other-run")
+
+    legacy_path = tmp_path / "legacy.sqlite3"
+    connection = sqlite3.connect(legacy_path)
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute(
+        "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY CHECK (version > 0), applied_at REAL NOT NULL)"
+    )
+    for statement in MIGRATIONS[1]:
+        connection.execute(statement)
+    connection.execute("INSERT INTO schema_migrations VALUES (1, 0)")
+    connection.commit()
+    connection.close()
+    with CoordinatorRepository(legacy_path, tmp_path / "legacy-run") as upgraded:
+        assert upgraded.connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 3
+        assert "last_heartbeat_sent_at" in {
+            row[1] for row in upgraded.connection.execute("PRAGMA table_info(worker_sessions)").fetchall()
+        }
 
 
 def test_run_policy_activation_and_worker_registration(tmp_path: Path):

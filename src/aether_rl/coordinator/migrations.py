@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: (
@@ -141,5 +141,10 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         "CREATE INDEX assignments_due_idx ON assignments(state, available_at, deadline_at)",
         "CREATE INDEX leases_active_idx ON lease_attempts(state, expires_at, assignment_id)",
         "CREATE INDEX results_processing_idx ON accepted_results(processing_state, accepted_at)",
-    )
+    ),
+    2: (
+        "ALTER TABLE worker_sessions ADD COLUMN last_heartbeat_sent_at REAL",
+        "ALTER TABLE lease_attempts ADD COLUMN last_renew_sent_at REAL",
+    ),
+    3: ("ALTER TABLE worker_sessions ADD COLUMN last_lease_request_sent_at REAL",),
 }

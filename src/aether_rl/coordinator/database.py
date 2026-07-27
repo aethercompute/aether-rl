@@ -3,19 +3,24 @@ from __future__ import annotations
 import fcntl
 import os
 import sqlite3
+import stat
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 from aether_rl.protocol import (
     AssignmentLease,
     FailureEnvelope,
+    LeaseRenewal,
+    LeaseRequest,
     PolicyManifest,
     ResultEnvelope,
     RolloutAssignment,
     WorkerCapabilities,
+    WorkerHeartbeat,
     WorkerRegistration,
     canonical_json_bytes,
     policy_manifest_digest,
@@ -56,6 +61,10 @@ class CapacityError(CoordinatorError):
 
 
 class ArtifactCorruptionError(CoordinatorError):
+    pass
+
+
+class NotFoundError(CoordinatorError):
     pass
 
 
@@ -101,6 +110,7 @@ class CoordinatorRepository:
         self.clock = clock
         self.retry_base_seconds = retry_base_seconds
         self.retry_max_seconds = retry_max_seconds
+        self._verified_policy_digests: set[str] = set()
         self.run_root.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         control_dir = self.run_root / "control"
@@ -113,7 +123,7 @@ class CoordinatorRepository:
             self._lock_file.close()
             raise CoordinatorLockError(f"another coordinator owns the run lock: {self.run_root}") from error
         try:
-            self.connection = sqlite3.connect(self.database_path, isolation_level=None)
+            self.connection = sqlite3.connect(self.database_path, isolation_level=None, check_same_thread=False)
             self.connection.row_factory = sqlite3.Row
             self.connection.execute("PRAGMA foreign_keys = ON")
             self.connection.execute("PRAGMA journal_mode = WAL")
@@ -217,6 +227,7 @@ class CoordinatorRepository:
         relative_path = self._relative_path(Path(artifact_path))
         manifest_json = canonical_json_bytes(verified)
         digest = policy_manifest_digest(verified)
+        self._verified_policy_digests.add(digest)
         with self._transaction():
             run = self._run()
             if verified.run_id != run["run_id"] or canonical_json_bytes(verified.base_model) != run["base_model_json"]:
@@ -260,15 +271,16 @@ class CoordinatorRepository:
 
     def active_policy(self) -> PolicyManifest:
         row = self.connection.execute(
-            "SELECT p.manifest_json FROM runs r JOIN policies p ON p.policy_id = r.active_policy_id "
-            "WHERE r.singleton = 1"
+            "SELECT p.* FROM runs r JOIN policies p ON p.policy_id = r.active_policy_id WHERE r.singleton = 1"
         ).fetchone()
         if row is None:
             raise InvalidStateError("run has not been initialized")
+        self._verify_policy_row(row)
         return PolicyManifest.model_validate_json(row["manifest_json"])
 
     def register_worker(self, registration: WorkerRegistration) -> RegistrationRecord:
         capabilities_json = canonical_json_bytes(registration.capabilities)
+        received_at = self.clock()
         with self._transaction():
             run = self._run()
             if canonical_json_bytes(registration.capabilities.base_model) != run["base_model_json"]:
@@ -286,19 +298,143 @@ class CoordinatorRepository:
                 return RegistrationRecord(registration.worker_id, registration.worker_session_id, False)
             self.connection.execute(
                 "INSERT OR IGNORE INTO workers VALUES (?, ?)",
-                (registration.worker_id, registration.registered_at),
+                (registration.worker_id, received_at),
             )
             self.connection.execute(
-                "INSERT INTO worker_sessions VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO worker_sessions "
+                "(worker_session_id, worker_id, capabilities_json, registered_at, last_seen_at) "
+                "VALUES (?, ?, ?, ?, ?)",
                 (
                     registration.worker_session_id,
                     registration.worker_id,
                     capabilities_json,
-                    registration.registered_at,
-                    registration.registered_at,
+                    received_at,
+                    received_at,
                 ),
             )
         return RegistrationRecord(registration.worker_id, registration.worker_session_id, True)
+
+    def record_heartbeat(
+        self, heartbeat: WorkerHeartbeat, *, duration_seconds: float
+    ) -> tuple[tuple[LeaseRenewal, ...], tuple[str, ...]]:
+        if duration_seconds <= 0:
+            raise ValueError("lease duration must be positive")
+        now = self.clock()
+        renewals: list[LeaseRenewal] = []
+        stop_ids: list[str] = []
+        with self._transaction():
+            session = self.connection.execute(
+                "SELECT worker_id, last_heartbeat_sent_at FROM worker_sessions WHERE worker_session_id = ?",
+                (heartbeat.worker_session_id,),
+            ).fetchone()
+            if session is None or session["worker_id"] != heartbeat.worker_id:
+                raise IncompatibleWorkerError("worker session is not registered for this worker")
+            if session["last_heartbeat_sent_at"] is not None and heartbeat.sent_at <= session["last_heartbeat_sent_at"]:
+                raise ConflictError("heartbeat sent_at must increase within a worker session")
+            self._validate_policy_ids(heartbeat.loaded_policy_ids)
+
+            leases = (
+                {
+                    row["lease_id"]: row
+                    for row in self.connection.execute(
+                        "SELECT l.*, a.state AS assignment_state, a.deadline_at FROM lease_attempts l "
+                        "JOIN assignments a USING (assignment_id) WHERE l.lease_id IN "
+                        f"({','.join('?' for _ in heartbeat.active_lease_ids)})",
+                        heartbeat.active_lease_ids,
+                    ).fetchall()
+                }
+                if heartbeat.active_lease_ids
+                else {}
+            )
+            for lease in leases.values():
+                if (
+                    lease["worker_id"] != heartbeat.worker_id
+                    or lease["worker_session_id"] != heartbeat.worker_session_id
+                ):
+                    raise ConflictError("heartbeat includes a lease owned by another worker session")
+
+            for lease_id in heartbeat.active_lease_ids:
+                lease = leases.get(lease_id)
+                if (
+                    lease is None
+                    or lease["state"] != "active"
+                    or lease["assignment_state"] != "leased"
+                    or lease["expires_at"] <= now
+                    or (lease["deadline_at"] is not None and lease["deadline_at"] <= now)
+                ):
+                    stop_ids.append(lease_id)
+                    continue
+                expires_at = max(lease["expires_at"], now + duration_seconds)
+                if lease["deadline_at"] is not None:
+                    expires_at = min(expires_at, lease["deadline_at"])
+                self.connection.execute(
+                    "UPDATE lease_attempts SET expires_at = ? WHERE lease_id = ?", (expires_at, lease_id)
+                )
+                renewals.append(
+                    LeaseRenewal(assignment_id=lease["assignment_id"], lease_id=lease_id, expires_at=expires_at)
+                )
+            self.connection.execute(
+                "UPDATE worker_sessions SET last_seen_at = ?, last_heartbeat_sent_at = ? WHERE worker_session_id = ?",
+                (now, heartbeat.sent_at, heartbeat.worker_session_id),
+            )
+        return tuple(renewals), tuple(stop_ids)
+
+    def validate_lease_request(self, request: LeaseRequest) -> None:
+        with self._transaction():
+            session = self.connection.execute(
+                "SELECT * FROM worker_sessions WHERE worker_session_id = ?", (request.worker_session_id,)
+            ).fetchone()
+            if session is None or session["worker_id"] != request.worker_id:
+                raise IncompatibleWorkerError("worker session is not registered for this worker")
+            if (
+                session["last_lease_request_sent_at"] is not None
+                and request.sent_at <= session["last_lease_request_sent_at"]
+            ):
+                raise ConflictError("lease request sent_at must increase within a worker session")
+            capabilities = WorkerCapabilities.model_validate_json(session["capabilities_json"])
+            if not set(request.environments).issubset(capabilities.environments):
+                raise IncompatibleWorkerError("lease request contains an unsupported environment")
+            self._validate_policy_ids(request.loaded_policy_ids)
+            now = self.clock()
+            active_count = self.connection.execute(
+                "SELECT COUNT(*) AS count FROM lease_attempts l JOIN assignments a USING (assignment_id) "
+                "WHERE l.worker_id = ? AND l.worker_session_id = ? AND l.state = 'active' AND l.expires_at > ? "
+                "AND (a.deadline_at IS NULL OR a.deadline_at > ?)",
+                (request.worker_id, request.worker_session_id, now, now),
+            ).fetchone()["count"]
+            if request.available_slots > capabilities.max_concurrent_assignments - active_count:
+                raise CapacityError("requested slots exceed worker session capacity")
+            self.connection.execute(
+                "UPDATE worker_sessions SET last_lease_request_sent_at = ? WHERE worker_session_id = ?",
+                (request.sent_at, request.worker_session_id),
+            )
+
+    def validate_offered_lease(self, request: LeaseRequest, offered: AssignmentLease) -> None:
+        if offered.worker_id != request.worker_id or offered.worker_session_id != request.worker_session_id:
+            raise ConflictError("offered lease does not belong to the requesting worker session")
+        if offered.assignment.environment not in request.environments:
+            raise ConflictError("offered lease environment was not advertised by the worker")
+        lease = self.connection.execute(
+            "SELECT * FROM lease_attempts WHERE lease_id = ?", (offered.lease_id,)
+        ).fetchone()
+        assignment = self._assignment(offered.assignment.assignment_id)
+        now = self.clock()
+        if (
+            lease is None
+            or lease["assignment_id"] != offered.assignment.assignment_id
+            or lease["attempt"] != offered.attempt
+            or lease["worker_id"] != offered.worker_id
+            or lease["worker_session_id"] != offered.worker_session_id
+            or lease["state"] != "active"
+            or lease["expires_at"] <= now
+            or lease["issued_at"] != offered.issued_at
+            or lease["expires_at"] != offered.expires_at
+            or assignment["state"] != "leased"
+            or (assignment["deadline_at"] is not None and assignment["deadline_at"] <= now)
+            or assignment["current_lease_id"] != offered.lease_id
+            or canonical_json_bytes(offered.assignment) != assignment["assignment_json"]
+        ):
+            raise ConflictError("offered lease does not match durable coordinator state")
 
     def create_group(self, assignments: Sequence[RolloutAssignment], *, max_attempts: int) -> None:
         if max_attempts < 1:
@@ -320,6 +456,7 @@ class CoordinatorRepository:
             policy_manifest_digest(first.policy),
             first.created_at,
             first.deadline_at,
+            first.result_size_limit_bytes,
         )
         if any(
             (
@@ -333,6 +470,7 @@ class CoordinatorRepository:
                 policy_manifest_digest(item.policy),
                 item.created_at,
                 item.deadline_at,
+                item.result_size_limit_bytes,
             )
             != common
             for item in assignments
@@ -419,7 +557,9 @@ class CoordinatorRepository:
                 expires_at = min(now + duration_seconds, deadline) if deadline is not None else now + duration_seconds
                 attempt = assignment["attempt_count"] + 1
                 self.connection.execute(
-                    "INSERT INTO lease_attempts VALUES (?, ?, ?, ?, ?, ?, ?, 'active')",
+                    "INSERT INTO lease_attempts "
+                    "(lease_id, assignment_id, attempt, worker_id, worker_session_id, issued_at, expires_at, state) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, 'active')",
                     (lease_id, assignment_id, attempt, worker_id, worker_session_id, now, expires_at),
                 )
                 self.connection.execute(
@@ -447,16 +587,30 @@ class CoordinatorRepository:
         worker_id: str,
         worker_session_id: str,
         duration_seconds: float,
+        expected_assignment_id: str | None = None,
+        sent_at: float | None = None,
     ) -> AssignmentLease:
         if duration_seconds <= 0:
             raise ValueError("lease duration must be positive")
         now = self.clock()
         with self._transaction():
             lease = self.connection.execute("SELECT * FROM lease_attempts WHERE lease_id = ?", (lease_id,)).fetchone()
+            if (
+                lease is not None
+                and expected_assignment_id is not None
+                and lease["assignment_id"] != expected_assignment_id
+            ):
+                raise ConflictError("lease does not belong to the assignment path")
             if lease is None or lease["state"] != "active" or lease["expires_at"] <= now:
                 raise InvalidStateError("lease is not active and unexpired")
             if lease["worker_id"] != worker_id or lease["worker_session_id"] != worker_session_id:
                 raise ConflictError("lease worker session does not match")
+            if (
+                sent_at is not None
+                and lease["last_renew_sent_at"] is not None
+                and sent_at <= lease["last_renew_sent_at"]
+            ):
+                raise ConflictError("renewal sent_at must increase for a lease")
             assignment = self._assignment(lease["assignment_id"])
             deadline = assignment["deadline_at"]
             if deadline is not None and now >= deadline:
@@ -464,7 +618,9 @@ class CoordinatorRepository:
             requested_expiry = max(lease["expires_at"], now + duration_seconds)
             expires_at = min(requested_expiry, deadline) if deadline is not None else requested_expiry
             self.connection.execute(
-                "UPDATE lease_attempts SET expires_at = ? WHERE lease_id = ?", (expires_at, lease_id)
+                "UPDATE lease_attempts SET expires_at = ?, last_renew_sent_at = COALESCE(?, last_renew_sent_at) "
+                "WHERE lease_id = ?",
+                (expires_at, sent_at, lease_id),
             )
         model = RolloutAssignment.model_validate_json(assignment["assignment_json"])
         return AssignmentLease(
@@ -476,6 +632,124 @@ class CoordinatorRepository:
             expires_at=expires_at,
             assignment=model,
         )
+
+    def get_policy(self, policy_id: str) -> PolicyManifest:
+        row = self.connection.execute("SELECT * FROM policies WHERE policy_id = ?", (policy_id,)).fetchone()
+        if row is None:
+            raise NotFoundError("policy not found")
+        self._verify_policy_row(row)
+        return PolicyManifest.model_validate_json(row["manifest_json"])
+
+    def resolve_policy_file(self, policy_id: str, name: str) -> tuple[Path, int, str]:
+        row = self.connection.execute("SELECT * FROM policies WHERE policy_id = ?", (policy_id,)).fetchone()
+        if row is None:
+            raise NotFoundError("policy not found")
+        self._verify_policy_row(row)
+        manifest = PolicyManifest.model_validate_json(row["manifest_json"])
+        listed = (
+            next((item for item in manifest.adapter.files if item.name == name), None) if manifest.adapter else None
+        )
+        if listed is None:
+            raise NotFoundError("policy file not found")
+        raw_path = self.run_root / row["artifact_path"] / name
+        if raw_path.is_symlink():
+            raise ArtifactCorruptionError("published policy file is a symlink")
+        try:
+            path = raw_path.resolve()
+            path.relative_to(self.run_root)
+            if not path.is_file() or path.stat().st_size != listed.size_bytes:
+                raise ValueError("policy file size does not match manifest")
+            if self.spool.file_digest(path) != listed.digest:
+                raise ValueError("policy file digest does not match manifest")
+        except (OSError, ValueError) as error:
+            raise ArtifactCorruptionError("published policy file is corrupt") from error
+        return path, listed.size_bytes, listed.digest
+
+    def open_policy_file(self, policy_id: str, name: str) -> tuple[BinaryIO, int, str]:
+        row = self.connection.execute("SELECT * FROM policies WHERE policy_id = ?", (policy_id,)).fetchone()
+        if row is None:
+            raise NotFoundError("policy not found")
+        self._verify_policy_row(row)
+        manifest = PolicyManifest.model_validate_json(row["manifest_json"])
+        listed = (
+            next((item for item in manifest.adapter.files if item.name == name), None) if manifest.adapter else None
+        )
+        if listed is None:
+            raise NotFoundError("policy file not found")
+        raw_path = self.run_root / row["artifact_path"] / name
+        try:
+            descriptor = os.open(raw_path, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError as error:
+            raise ArtifactCorruptionError("published policy file cannot be opened safely") from error
+        file: BinaryIO | None = None
+        try:
+            file_stat = os.fstat(descriptor)
+            if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size != listed.size_bytes:
+                raise ValueError("policy file size does not match manifest")
+            file = os.fdopen(descriptor, "rb")
+            descriptor = -1
+            return file, listed.size_bytes, listed.digest
+        except (OSError, ValueError) as error:
+            if descriptor >= 0:
+                os.close(descriptor)
+            if file is not None:
+                file.close()
+            raise ArtifactCorruptionError("published policy file is corrupt") from error
+
+    def assignment_result_size_limit(self, assignment_id: str) -> int:
+        assignment = RolloutAssignment.model_validate_json(self._assignment(assignment_id)["assignment_json"])
+        return assignment.result_size_limit_bytes
+
+    def verify_ready(self) -> None:
+        run = self._run()
+        row = self.connection.execute(
+            "SELECT * FROM policies WHERE policy_id = ?", (run["active_policy_id"],)
+        ).fetchone()
+        if row is None:
+            raise ArtifactCorruptionError("active policy is missing")
+        self._verify_policy_row(row)
+
+    def status_snapshot(self, *, stale_after_seconds: float) -> dict[str, object]:
+        if stale_after_seconds < 0:
+            raise ValueError("stale_after_seconds must be non-negative")
+        now = self.clock()
+        with self._transaction():
+            run = self._run()
+            active_policy_version = self.connection.execute(
+                "SELECT policy_version FROM policies WHERE policy_id = ?", (run["active_policy_id"],)
+            ).fetchone()["policy_version"]
+            workers = self.connection.execute("SELECT COUNT(*) AS count FROM workers").fetchone()["count"]
+            sessions = self.connection.execute("SELECT COUNT(*) AS count FROM worker_sessions").fetchone()["count"]
+            stale_sessions = self.connection.execute(
+                "SELECT COUNT(*) AS count FROM worker_sessions WHERE last_seen_at < ?", (now - stale_after_seconds,)
+            ).fetchone()["count"]
+            active_leases = self.connection.execute(
+                "SELECT COUNT(*) AS count FROM lease_attempts WHERE state = 'active' AND expires_at > ?", (now,)
+            ).fetchone()["count"]
+            counts: dict[str, dict[str, int]] = {}
+            for table, name, state_column in (
+                ("assignments", "assignments", "state"),
+                ("rollout_groups", "groups", "state"),
+                ("accepted_results", "results", "processing_state"),
+            ):
+                counts[name] = {
+                    row["state"]: row["count"]
+                    for row in self.connection.execute(
+                        f"SELECT {state_column} AS state, COUNT(*) AS count FROM {table} GROUP BY {state_column}"
+                    ).fetchall()
+                }
+        return {
+            "run_id": run["run_id"],
+            "active_policy_id": run["active_policy_id"],
+            "active_policy_version": active_policy_version,
+            "workers": workers,
+            "worker_sessions": sessions,
+            "stale_worker_sessions": stale_sessions,
+            "active_leases": active_leases,
+            **counts,
+            "stale_cutoff": now - stale_after_seconds,
+            "server_time": now,
+        }
 
     def expire_leases(self) -> int:
         now = self.clock()
@@ -656,7 +930,7 @@ class CoordinatorRepository:
     def group_state(self, group_id: str) -> str:
         row = self.connection.execute("SELECT state FROM rollout_groups WHERE group_id = ?", (group_id,)).fetchone()
         if row is None:
-            raise KeyError(group_id)
+            raise NotFoundError("rollout group not found")
         return row["state"]
 
     def _run(self) -> sqlite3.Row:
@@ -668,7 +942,7 @@ class CoordinatorRepository:
     def _assignment(self, assignment_id: str) -> sqlite3.Row:
         row = self.connection.execute("SELECT * FROM assignments WHERE assignment_id = ?", (assignment_id,)).fetchone()
         if row is None:
-            raise KeyError(assignment_id)
+            raise NotFoundError("assignment not found")
         return row
 
     def _compatible_session(self, worker_id: str, worker_session_id: str, assignment: sqlite3.Row) -> sqlite3.Row:
@@ -682,6 +956,15 @@ class CoordinatorRepository:
         if model.environment not in capabilities.environments:
             raise IncompatibleWorkerError("worker does not support the assignment environment")
         return session
+
+    def _validate_policy_ids(self, policy_ids: Sequence[str]) -> None:
+        if not policy_ids:
+            return
+        rows = self.connection.execute(
+            f"SELECT policy_id FROM policies WHERE policy_id IN ({','.join('?' for _ in policy_ids)})", policy_ids
+        ).fetchall()
+        if {row["policy_id"] for row in rows} != set(policy_ids):
+            raise IncompatibleWorkerError("worker reported an unknown policy ID")
 
     def _validate_active_envelope(
         self,
@@ -833,7 +1116,16 @@ class CoordinatorRepository:
                 raise ValueError("policy artifact directory must not be a symlink")
             artifact_path = raw_path.resolve()
             artifact_path.relative_to(self.run_root)
+            if row["manifest_digest"] in self._verified_policy_digests:
+                if manifest.adapter is None:
+                    raise ValueError("trained policy is missing an adapter manifest")
+                for file in manifest.adapter.files:
+                    file_path = artifact_path / file.name
+                    if file_path.is_symlink() or not file_path.is_file() or file_path.stat().st_size != file.size_bytes:
+                        raise ValueError("policy artifact file no longer matches its manifest")
+                return
             verify_lora_policy(artifact_path, expected=manifest)
+            self._verified_policy_digests.add(row["manifest_digest"])
         except (OSError, ValueError) as error:
             raise ArtifactCorruptionError(f"published policy artifact is corrupt: {row['policy_id']}") from error
 

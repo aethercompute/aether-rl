@@ -1,3 +1,4 @@
+from .api import CoordinatorService, LeaseProvider, create_coordinator_app
 from .database import (
     AcceptanceRecord,
     ArtifactCorruptionError,
@@ -9,6 +10,7 @@ from .database import (
     CoordinatorState,
     IncompatibleWorkerError,
     InvalidStateError,
+    NotFoundError,
     PendingResult,
     RegistrationRecord,
     SchemaVersionError,
@@ -24,11 +26,15 @@ __all__ = [
     "CoordinatorError",
     "CoordinatorLockError",
     "CoordinatorRepository",
+    "CoordinatorService",
     "CoordinatorState",
     "IncompatibleWorkerError",
     "ImmutableArtifactConflictError",
     "InvalidStateError",
+    "LeaseProvider",
+    "NotFoundError",
     "PendingResult",
     "RegistrationRecord",
     "SchemaVersionError",
+    "create_coordinator_app",
 ]
