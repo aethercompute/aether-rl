@@ -1,4 +1,5 @@
 import shutil
+import stat
 import time
 from pathlib import Path
 from typing import Literal
@@ -67,40 +68,44 @@ class FileSystemWeightBroadcast(WeightBroadcast):
 
             # TODO: Broadcast ready to update in sync, then we dont need to gather on not ready
             if self.world.is_master:
+                run_dir = self.multi_run_manager.get_run_dir(idx)
+                config_path = run_dir / "control" / "orch.toml"
                 try:
-                    # pack() already advanced progress to the next step, so the model we just
-                    # trained — policy v(step-1) — broadcasts to broadcasts/step_{step-1}.
-                    save_dir = get_step_path(
-                        get_broadcast_dir(self.multi_run_manager.get_run_dir(idx)),
-                        self.multi_run_manager.progress[idx].step - 1,
-                    )
-                    save_dir.mkdir(parents=True, exist_ok=True)
-
-                    self.logger.debug(f"Saving weights for run {idx} to {save_dir}")
-                    save_state_dict(state_dict, save_dir, self.save_format, self.save_sharded, adapter=adapter_only)
-                    if adapter_only:
-                        orch_lora = self.multi_run_manager.config[idx].model.lora
-                        save_lora_config(
-                            model,
-                            save_dir,
-                            rank=orch_lora.rank,
-                            alpha=orch_lora.alpha,
-                            dropout=self.lora_config.dropout,
-                        )
-
-                    self._notify_orchestrator(save_dir)
-
-                    # If the run is deleted, remove the run directory
-                    # This is avoid the creation of zombie runs when the directory is deleted while we are broadcasting which recreates the directory
-                    if self.multi_run_manager.get_orchestrator_config(self.multi_run_manager.idx_2_id[idx]) is None:
-                        shutil.rmtree(self.multi_run_manager.get_run_dir(idx))
-
+                    config_mode = config_path.stat().st_mode
                 except FileNotFoundError:
                     self.logger.warning(f"Run {idx} is deleted, skipping")
-                except Exception as e:
-                    self.logger.error(f"Error broadcasting weights for run {idx}: {e}")
-                finally:
                     self.multi_run_manager.ready_to_update[idx] = False
+                    continue
+                if not stat.S_ISREG(config_mode):
+                    raise ValueError(f"Run {idx} config is not a regular file: {config_path}")
+                # pack() already advanced progress to the next step, so the model we just
+                # trained — policy v(step-1) — broadcasts to broadcasts/step_{step-1}.
+                save_dir = get_step_path(
+                    get_broadcast_dir(run_dir),
+                    self.multi_run_manager.progress[idx].step - 1,
+                )
+                save_dir.mkdir(parents=True, exist_ok=True)
+
+                self.logger.debug(f"Saving weights for run {idx} to {save_dir}")
+                save_state_dict(state_dict, save_dir, self.save_format, self.save_sharded, adapter=adapter_only)
+                if adapter_only:
+                    orch_lora = self.multi_run_manager.config[idx].model.lora
+                    save_lora_config(
+                        model,
+                        save_dir,
+                        rank=orch_lora.rank,
+                        alpha=orch_lora.alpha,
+                        dropout=self.lora_config.dropout,
+                    )
+
+                self._notify_orchestrator(save_dir)
+
+                # Avoid recreating a run deleted while its weights were being written.
+                try:
+                    config_path.stat()
+                except FileNotFoundError:
+                    shutil.rmtree(run_dir)
+                self.multi_run_manager.ready_to_update[idx] = False
 
         if self.world.is_master:
             self.logger.debug(f"Weights broadcasted in {time.perf_counter() - start_time:.2f}s")

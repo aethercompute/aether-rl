@@ -123,12 +123,25 @@ def setup_optimizer(
         named_params = multi_run_manager.get_named_parameters_for_run(0)
 
     optimizer = _create_optimizer(config, named_params, parallel_dims)
+    if lora:
+        _validate_lora_optimizer_parameters(optimizer, named_params)
 
     if cpu_offload:
         get_logger().info("Wrapping optimizer with CPUOffloadOptimizer for optimizer state CPU offloading")
         return CPUOffloadOptimizer(optimizer)
 
     return optimizer
+
+
+def _validate_lora_optimizer_parameters(optimizer: Optimizer, named_params: list[tuple[str, nn.Parameter]]) -> None:
+    expected = {id(parameter): name for name, parameter in named_params if parameter.requires_grad}
+    actual = [parameter for group in optimizer.param_groups for parameter in group["params"]]
+    actual_ids = [id(parameter) for parameter in actual]
+    if len(actual_ids) != len(set(actual_ids)):
+        raise ValueError("LoRA optimizer contains duplicate parameters")
+    if set(actual_ids) != set(expected):
+        missing = sorted(expected[parameter_id] for parameter_id in set(expected) - set(actual_ids))
+        raise ValueError(f"LoRA optimizer parameters do not match published adapter parameters; missing={missing}")
 
 
 def _create_optimizer(
@@ -288,6 +301,7 @@ class MultiLoRAOptimizer:
 
         lr = self.multi_run_manager.config[idx].optim.lr
         self.optimizers[idx] = _create_optimizer(self.config, named_params, self.parallel_dims, lr)
+        _validate_lora_optimizer_parameters(self.optimizers[idx], named_params)
 
         # Call post-creation callbacks in order
         for callback in self._post_creation_callbacks:

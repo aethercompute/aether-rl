@@ -201,6 +201,13 @@ class MultiRunManager:
 
         if self._adapter_state_dict_converter is not None:
             state_dict = self._adapter_state_dict_converter(state_dict)
+        optimized_numel = sum(parameter.numel() for _, parameter in self.get_named_parameters_for_run(idx))
+        published_numel = sum(tensor.numel() for tensor in state_dict.values())
+        if published_numel != optimized_numel:
+            raise ValueError(
+                "Published adapter tensors do not match optimized parameters: "
+                f"published={published_numel}, optimized={optimized_numel}"
+            )
         return state_dict
 
     def reset_run_parameters(self, idx: int) -> None:
