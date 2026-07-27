@@ -16,7 +16,7 @@ This page covers the specialized features layered on top of the core training st
 
 ## Custom Modeling
 
-`prime-rl` ships custom optimized model implementations for several MoE families. With `model.impl = "auto"` (default) the trainer picks the custom path when the HF config type is registered, falling back to plain HF otherwise. To force one:
+`aether-rl` ships custom optimized model implementations for several MoE families. With `model.impl = "auto"` (default) the trainer picks the custom path when the HF config type is registered, falling back to plain HF otherwise. To force one:
 
 ```toml
 [trainer.model]
@@ -98,7 +98,7 @@ reduce_dtype = "bfloat16"
 
 The weight-broadcast key prefix is derived as `{language_model_attr}.layers.` automatically.
 
-VLM training requires a registered custom PrimeRL implementation.
+VLM training requires a registered custom AetherRL implementation.
 
 ### Limitations
 
@@ -142,7 +142,7 @@ LoRA pairs naturally with [multi-tenant training](#multi-tenant-training) — ea
 
 ## Multi-Tenant Training
 
-Multi-tenant training lets a single trainer + inference deployment serve many concurrent LoRA "tenants" — each a fully isolated run with its own orchestrator, LoRA adapter, optimizer, scheduler, checkpoints, and progress tracking — sharing the same backbone weights and the same vLLM server. This is the topology behind hosted training on the [Prime Intellect platform (Lab)](https://app.primeintellect.ai). The trainer-side implementation is the `MultiRunManager` singleton, enabled by setting `trainer.max_concurrent_runs > 1`. For the full API surface, see [`src/prime_rl/trainer/runs.py`](https://github.com/PrimeIntellect-ai/prime-rl/blob/main/src/prime_rl/trainer/runs.py).
+Multi-tenant training lets a single trainer + inference deployment serve many concurrent LoRA "tenants" — each a fully isolated run with its own orchestrator, LoRA adapter, optimizer, scheduler, checkpoints, and progress tracking — sharing the same backbone weights and the same vLLM server. This is the topology behind hosted training on the [Prime Intellect platform (Lab)](https://app.primeintellect.ai). The trainer-side implementation is the `MultiRunManager` singleton, enabled by setting `trainer.max_concurrent_runs > 1`. For the full API surface, see [`src/aether_rl/trainer/runs.py`](https://github.com/aethercompute/aether-rl/blob/main/src/aether_rl/trainer/runs.py).
 
 ## Disaggregated Prefill/Decode Inference
 
@@ -153,7 +153,7 @@ For large MoE serving, splitting prefill and decode onto separate vLLM groups ca
 | Agentic (SWE, Lean) | 3:1 | Long growing contexts → prefill-heavy |
 | Non-agentic (math, chat) | 1:2 | Short prompts, long generations → decode-heavy |
 
-Example config: [`examples/advanced/glm-5.2/swe.toml`](https://github.com/PrimeIntellect-ai/prime-rl/blob/main/examples/advanced/glm-5.2/swe.toml) — full RL run on `GLM-5` with P/D disaggregation behind a `vllm-router`, FP8 inference, and NCCL weight broadcast, paired with an inference config from [`examples/advanced/glm-5.2/infer/`](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/advanced/glm-5.2/infer).
+Example config: [`examples/advanced/glm-5.2/swe.toml`](https://github.com/aethercompute/aether-rl/blob/main/examples/advanced/glm-5.2/swe.toml) — full RL run on `GLM-5` with P/D disaggregation behind a `vllm-router`, FP8 inference, and NCCL weight broadcast, paired with an inference config from [`examples/advanced/glm-5.2/infer/`](https://github.com/aethercompute/aether-rl/tree/main/examples/advanced/glm-5.2/infer).
 
 Monitor live queue depths to detect imbalance:
 

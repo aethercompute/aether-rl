@@ -1,7 +1,7 @@
 """Export a verifiers v1 eval run (traces.jsonl) as an SFT dataset for `uv run sft`.
 
 Reads a finished run's saved traces and reshapes them into the dataset shape the SFT trainer
-consumes directly (see `prime_rl.trainer.sft.data`): a `messages` column (OpenAI chat wire
+consumes directly (see `aether_rl.trainer.sft.data`): a `messages` column (OpenAI chat wire
 shape) plus a `tools` column (the tools the model was shown, from `Trace.tools`,
 JSON-encoded — heterogeneous JSON-schema dicts don't fit a fixed Arrow schema). One row per
 branch: a linear rollout contributes one sample, a compacted/subagent rollout one per branch
@@ -12,7 +12,7 @@ transcript is not a sample. A scoring-only error keeps the generation outcome as
 condition and a complete conversation, so it stays; its reward may be partial/zero, which
 `--min-reward` handles.
 
-Usage (from the prime-rl repo):
+Usage (from the aether-rl repo):
     uv run python scripts/export_sft.py <run-dir> [--min-reward 1.0] [--drop-truncated]
                                         [-o OUT_DIR] [--push HF_REPO_ID]
 

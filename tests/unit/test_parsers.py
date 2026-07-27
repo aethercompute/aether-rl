@@ -1,7 +1,7 @@
 import pytest
 
-from prime_rl.configs.inference import InferenceConfig
-from prime_rl.utils.parsers import resolve_reasoning_parser, resolve_tool_call_parser
+from aether_rl.configs.inference import InferenceConfig
+from aether_rl.utils.parsers import resolve_reasoning_parser, resolve_tool_call_parser
 
 # (model_name, expected_tool_call_parser, expected_reasoning_parser)
 EXPECTED_PARSERS: list[tuple[str, str | None, str | None]] = [

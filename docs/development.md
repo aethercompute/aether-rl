@@ -1,6 +1,6 @@
 # Development
 
-This page covers workflows for developing on `prime-rl` itself — running the test suite, contributing changes, and adding new model architectures with the small-scale tooling we use to iterate on MoE families without booting up a 100B+ run.
+This page covers workflows for developing on `aether-rl` itself — running the test suite, contributing changes, and adding new model architectures with the small-scale tooling we use to iterate on MoE families without booting up a 100B+ run.
 
 ## Table of Contents
 
@@ -24,7 +24,7 @@ The test suite is split into three tiers, each with its own CI workflow.
 
 - **`tests/unit/`** — fast-running, hermetic tests for isolated logic: config parsing and validation, advantage / loss / scheduler / packer math, individual dataset paths, model-conversion roundtrips, etc. Tests that need a GPU are tagged with the `gpu` marker.
 - **`tests/integration/`** — full-stack RL/SFT runs on a tiny model end-to-end through inference + orchestrator + trainer.
-- **`tests/nightly/`** — runs the configs in [`examples/`](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples) every night to catch regressions in the shipped examples.
+- **`tests/nightly/`** — runs the configs in [`examples/`](https://github.com/aethercompute/aether-rl/tree/main/examples) every night to catch regressions in the shipped examples.
 
 ### Running Tests Locally
 
@@ -41,9 +41,9 @@ uv run pytest tests/integration/test_reverse_text.py -vvs  # one specific scenar
 
 | Workflow | Trigger | What runs | Where |
 |---|---|---|---|
-| [`cpu_tests.yaml`](https://github.com/PrimeIntellect-ai/prime-rl/blob/main/.github/workflows/cpu_tests.yaml) | every PR + push to `main` | `pytest tests/unit -m "not gpu"`, plus a slim-wheel install check that `prime-rl-configs` imports cleanly without heavy deps (no torch / vllm / transformers / wandb / verifiers / datasets / liger / loguru in `sys.modules`) | `ubuntu-latest` |
-| [`gpu_tests.yaml`](https://github.com/PrimeIntellect-ai/prime-rl/blob/main/.github/workflows/gpu_tests.yaml) | every non-draft PR + push to `main` | `pytest tests/unit -m gpu`, plus a matrix of named integration scenarios (`reverse_text`, `reverse_text_sft`, `reverse_text_lora`, `reverse_text_moe`, `reverse_text_multi_run`, `reverse_text_rl_opd`, `reverse_text_rl_sft`, `reverse_text_sft_lora`, `alphabet_sort`, `benchmark_regression`) | self-hosted GPU runners (`vm`, `4xa6000`) |
-| [`nightly_tests.yaml`](https://github.com/PrimeIntellect-ai/prime-rl/blob/main/.github/workflows/nightly_tests.yaml) | 03:00 PST daily + manual `workflow_dispatch` (single-file filter optional) | every file in `tests/nightly/`, one matrix job per file | `research-cluster` |
+| [`cpu_tests.yaml`](https://github.com/aethercompute/aether-rl/blob/main/.github/workflows/cpu_tests.yaml) | every PR + push to `main` | `pytest tests/unit -m "not gpu"`, plus a slim-wheel install check that `aether-rl-configs` imports cleanly without heavy deps (no torch / vllm / transformers / wandb / verifiers / datasets / liger / loguru in `sys.modules`) | `ubuntu-latest` |
+| [`gpu_tests.yaml`](https://github.com/aethercompute/aether-rl/blob/main/.github/workflows/gpu_tests.yaml) | every non-draft PR + push to `main` | `pytest tests/unit -m gpu`, plus a matrix of named integration scenarios (`reverse_text`, `reverse_text_sft`, `reverse_text_lora`, `reverse_text_moe`, `reverse_text_multi_run`, `reverse_text_rl_opd`, `reverse_text_rl_sft`, `reverse_text_sft_lora`, `alphabet_sort`, `benchmark_regression`) | self-hosted GPU runners (`vm`, `4xa6000`) |
+| [`nightly_tests.yaml`](https://github.com/aethercompute/aether-rl/blob/main/.github/workflows/nightly_tests.yaml) | 03:00 PST daily + manual `workflow_dispatch` (single-file filter optional) | every file in `tests/nightly/`, one matrix job per file | `research-cluster` |
 
 The GPU + Nightly workflows skip drafts — open the PR as **Draft** until you're ready to consume CI compute, then mark it ready for review to trigger the GPU matrix.
 
@@ -68,11 +68,11 @@ Bringing up a new model family is three steps: implement the modeling code, regi
 
 ### Implement the Modeling Code
 
-Drop the modeling code under `src/prime_rl/trainer/models/<arch>/` (HF-compatible config, modeling, and weight conversion). Mirror the layout of an existing family — `glm4_moe/` or `qwen3_moe/` are good starting points.
+Drop the modeling code under `src/aether_rl/trainer/models/<arch>/` (HF-compatible config, modeling, and weight conversion). Mirror the layout of an existing family — `glm4_moe/` or `qwen3_moe/` are good starting points.
 
 ### Register a Mini Preset
 
-Add an entry to [`scripts/mini_moe.py`](https://github.com/PrimeIntellect-ai/prime-rl/blob/main/scripts/mini_moe.py) so the smoke-test workflow can build a ~0.5B test model in your architecture. The preset names the config class, picks small dimensions, and wires up the HF + prime-rl model classes plus a tokenizer source:
+Add an entry to [`scripts/mini_moe.py`](https://github.com/aethercompute/aether-rl/blob/main/scripts/mini_moe.py) so the smoke-test workflow can build a ~0.5B test model in your architecture. The preset names the config class, picks small dimensions, and wires up the HF + aether-rl model classes plus a tokenizer source:
 
 ```python
 ARCH_PRESETS = {
@@ -80,7 +80,7 @@ ARCH_PRESETS = {
         "config_class": Glm4MoeConfig,
         "config_kwargs": dict(hidden_size=1024, num_hidden_layers=24, n_routed_experts=8, ...),
         "hf_model_class": HFGlm4MoeForCausalLM,
-        "prime_model_class": PrimeRLGlm4MoeForCausalLM,
+        "prime_model_class": AetherRLGlm4MoeForCausalLM,
         "tokenizer_source": "THUDM/GLM-4-9B-0414",
     },
     # add your arch here
@@ -89,7 +89,7 @@ ARCH_PRESETS = {
 
 ### Run the Smoke Test
 
-Build the mini model. This creates a ~543M-parameter GLM-4 MoE (1024 hidden, 24 layers, 8 experts) with random weights, copies the tokenizer from the original GLM-4 model, and verifies the HF↔prime-rl roundtrip is lossless:
+Build the mini model. This creates a ~543M-parameter GLM-4 MoE (1024 hidden, 24 layers, 8 experts) with random weights, copies the tokenizer from the original GLM-4 model, and verifies the HF↔aether-rl roundtrip is lossless:
 
 ```bash
 uv run python scripts/mini_moe.py --arch glm4_moe --output-dir ./mini-glm-moe
@@ -141,7 +141,7 @@ Include a table covering KL mismatch across 20 steps on the `math` environment w
 
 ## Adding a Custom VLM Implementation
 
-VLM training (any run with `[model.vlm]` set, SFT or RL) is custom-implementation-only: `get_model` rejects models without a custom PrimeRL VLM class at load time. To make a new VLM family trainable, extend a custom text model with a composite VLM body — the Qwen3.5 dense (`models/qwen3_5/`) and MoE (`models/qwen3_5_moe/`) implementations are the reference. The pieces, in dependency order:
+VLM training (any run with `[model.vlm]` set, SFT or RL) is custom-implementation-only: `get_model` rejects models without a custom AetherRL VLM class at load time. To make a new VLM family trainable, extend a custom text model with a composite VLM body — the Qwen3.5 dense (`models/qwen3_5/`) and MoE (`models/qwen3_5_moe/`) implementations are the reference. The pieces, in dependency order:
 
 1. **Custom text model first.** The VLM body wraps a custom `*ForCausalLM` (see [Adding a New Model](#adding-a-new-model)), so the text side — including its state-dict conversion and KL-mismatch table — comes first.
 2. **Composite VLM body.** A `*VLMModel` that holds the HF vision encoder and the custom text model, with a `prepare_inputs_embeds_and_position_ids` step: embed tokens, run the vision encoder, scatter image embeddings over placeholder tokens, and build MRoPE 3D positions from `mm_token_type_ids` (the renderer owns the token→modality mapping). The unified `*ForCausalLM` dispatches on the config: composite config → VLM path, text config → text path.

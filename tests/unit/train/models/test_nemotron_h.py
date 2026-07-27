@@ -10,11 +10,11 @@ from transformers.models.nemotron_h.modeling_nemotron_h import (
     NemotronHForCausalLM as HFNemotronHForCausalLM,
 )
 
-from prime_rl.trainer.models.layers.lm_head import inject_prime_lm_head
-from prime_rl.trainer.models.nemotron_h import NemotronHConfig, NemotronHForCausalLM
-from prime_rl.trainer.models.nemotron_h.modeling_nemotron_h import NemotronHAttentionLayer, NemotronHMambaLayer
-from prime_rl.utils.cp import setup_model_cp
-from prime_rl.utils.utils import default_dtype
+from aether_rl.trainer.models.layers.lm_head import inject_prime_lm_head
+from aether_rl.trainer.models.nemotron_h import NemotronHConfig, NemotronHForCausalLM
+from aether_rl.trainer.models.nemotron_h.modeling_nemotron_h import NemotronHAttentionLayer, NemotronHMambaLayer
+from aether_rl.utils.cp import setup_model_cp
+from aether_rl.utils.utils import default_dtype
 
 pytestmark = [pytest.mark.gpu]
 
@@ -52,7 +52,7 @@ def _seq_lens(input_ids: torch.Tensor) -> torch.Tensor:
 
 
 def get_model_pairs():
-    """Create an HF model and a PrimeRL model with shared weights."""
+    """Create an HF model and an AetherRL model with shared weights."""
     hf_config = HFNemotronHConfig(**_BASE, hybrid_override_pattern="ME*E")
     hf_config._attn_implementation = "flash_attention_2"
 
@@ -111,7 +111,7 @@ def test_nemotron_h_mamba_moe_only():
 
 @pytest.mark.xfail(reason="HF NemotronH now uses fused expert tensors; convert_to_hf produces individual expert format")
 def test_nemotron_h_reverse():
-    """Test reverse: PrimeRL weights loaded into HF model produce identical outputs."""
+    """Test reverse: AetherRL weights loaded into HF model produce identical outputs."""
     prime_config = NemotronHConfig(
         **_BASE,
         layers_block_type=["mamba", "moe", "attention", "moe"],
@@ -201,7 +201,7 @@ def test_nemotron_h_backward():
 
 
 def test_nemotron_h_weight_conversion_roundtrip():
-    """Verify PrimeRL -> HF -> PrimeRL conversion preserves all weights."""
+    """Verify AetherRL -> HF -> AetherRL conversion preserves all weights."""
     prime_config = NemotronHConfig(
         **_BASE,
         layers_block_type=["mamba", "moe", "attention", "moe"],

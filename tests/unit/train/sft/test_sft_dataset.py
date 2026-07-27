@@ -7,9 +7,9 @@ from renderers import create_renderer
 from renderers.base import MultiModalData, PlaceholderRange, RenderedTokens, RenderedTrainingSample
 from transformers import AutoTokenizer
 
-import prime_rl.trainer.sft.data as sft_data
-from prime_rl.trainer.sft.data import CatDataset, SFTDataset, _drop_null_fields
-from prime_rl.trainer.utils import print_sample
+import aether_rl.trainer.sft.data as sft_data
+from aether_rl.trainer.sft.data import CatDataset, SFTDataset, _drop_null_fields
+from aether_rl.trainer.utils import print_sample
 
 _BOS_TOKEN_ID = 0
 _STOP_TOKEN_ID = 1

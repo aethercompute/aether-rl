@@ -6,11 +6,11 @@ import torch
 from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5Config, Qwen3_5TextConfig, Qwen3_5VisionConfig
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5ForCausalLM as HFQwen3_5ForCausalLM
 
-from prime_rl.trainer.models.layers.attn import FlashAttention, substitute_ring_attn
-from prime_rl.trainer.models.qwen3_5 import Qwen3_5ForCausalLM, Qwen3_5Model
-from prime_rl.trainer.models.qwen3_5.modeling_qwen3_5 import Qwen3_5GatedFlashAttention
-from prime_rl.trainer.models.qwen3_5_moe import Qwen3_5MoeConfig
-from prime_rl.utils.cp import setup_model_cp
+from aether_rl.trainer.models.layers.attn import FlashAttention, substitute_ring_attn
+from aether_rl.trainer.models.qwen3_5 import Qwen3_5ForCausalLM, Qwen3_5Model
+from aether_rl.trainer.models.qwen3_5.modeling_qwen3_5 import Qwen3_5GatedFlashAttention
+from aether_rl.trainer.models.qwen3_5_moe import Qwen3_5MoeConfig
+from aether_rl.utils.cp import setup_model_cp
 
 
 def _tiny_text_config(attn_impl: str = "flash_attention_2") -> Qwen3_5TextConfig:
@@ -105,7 +105,7 @@ def test_qwen3_5_full_attention_uses_custom_class(attn_impl: str):
 
 
 def test_qwen3_5_moe_full_attention_normalizes_fa3_hub_alias():
-    from prime_rl.trainer.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+    from aether_rl.trainer.models.qwen3_5_moe.modeling_qwen3_5_moe import (
         Qwen3_5MoeGatedFlashAttention,
         Qwen3_5MoeModel,
     )
@@ -160,8 +160,8 @@ def test_setup_model_cp_requires_hook_only_for_hybrid_models():
 
 
 def test_qwen3_5_ring_patches_dense_flash_attention():
-    from prime_rl.trainer.models.afmoe.modeling_afmoe import AfmoeFlashAttention
-    from prime_rl.trainer.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeGatedFlashAttention
+    from aether_rl.trainer.models.afmoe.modeling_afmoe import AfmoeFlashAttention
+    from aether_rl.trainer.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeGatedFlashAttention
 
     originals = {
         cls: cls._compute_attention

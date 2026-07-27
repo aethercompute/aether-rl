@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 from verifiers.v1.clients.config import EvalClientConfig
 
-from prime_rl.configs.shared import ClientConfig
-from prime_rl.utils.client import _is_retryable_lora_error, load_lora_adapter, setup_clients
+from aether_rl.configs.shared import ClientConfig
+from aether_rl.utils.client import _is_retryable_lora_error, load_lora_adapter, setup_clients
 
 
 def test_is_retryable_lora_error_returns_true_for_404():

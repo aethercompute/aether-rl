@@ -8,7 +8,7 @@ from typing import Callable, Generator
 import httpx
 import pytest
 
-from prime_rl.utils.process import cleanup_process
+from aether_rl.utils.process import cleanup_process
 from tests.conftest import ProcessResult
 from tests.utils import check_final_eval_reward_above, check_no_error, strip_escape_codes
 

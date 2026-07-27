@@ -1,6 +1,6 @@
 ---
 name: monitor-run
-description: Monitor an ongoing prime-rl training run — find the output directory, tail logs, check key metrics, inspect SLURM jobs, and restart safely. Use when asked to check on a run, debug training, or investigate performance.
+description: Monitor an ongoing aether-rl training run — find the output directory, tail logs, check key metrics, inspect SLURM jobs, and restart safely. Use when asked to check on a run, debug training, or investigate performance.
 ---
 
 # Monitor a run
@@ -170,13 +170,13 @@ A few warnings are normal. Escalate when errors are persistent, growing, or hit 
 All processes use `setproctitle` so they're visible in `ps`/`htop`/`pstree`:
 
 ```
-PRIME-RL::Launcher
-├── PRIME-RL::Inference          (vLLM server, GPU 0)
-├── PRIME-RL::Orchestrator       (CPU-only)
+AETHER-RL::Launcher
+├── AETHER-RL::Inference         (vLLM server, GPU 0)
+├── AETHER-RL::Orchestrator      (CPU-only)
 │   └── Verifiers::EnvServer     (ZMQ env server per environment)
 │       └── Verifiers::EnvWorker0..N
 ├── torchrun
-│   └── PRIME-RL::Trainer        (GPU 1+)
+│   └── AETHER-RL::Trainer       (GPU 1+)
 └── tail trainer.log
 ```
 

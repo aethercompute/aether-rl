@@ -7,13 +7,13 @@ import tomli_w
 import torch
 import torch.distributed as dist
 
-import prime_rl.trainer.runs as runs
-from prime_rl.configs.shared import FileSystemTransportConfig
-from prime_rl.trainer.rl.packer import MultiPacker
-from prime_rl.trainer.runs import setup_multi_run_manager
-from prime_rl.trainer.utils import build_bin_cost
-from prime_rl.trainer.world import reset_world
-from prime_rl.transport.types import EncodedTensor, TrainingSample
+import aether_rl.trainer.runs as runs
+from aether_rl.configs.shared import FileSystemTransportConfig
+from aether_rl.trainer.rl.packer import MultiPacker
+from aether_rl.trainer.runs import setup_multi_run_manager
+from aether_rl.trainer.utils import build_bin_cost
+from aether_rl.trainer.world import reset_world
+from aether_rl.transport.types import EncodedTensor, TrainingSample
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -102,8 +102,8 @@ def _packer_with_two_runs(tmp_path, monkeypatch, dp_world_size, seq_len):
         def send(self, micro_batch_grid):
             sent.append(micro_batch_grid)
 
-    monkeypatch.setattr("prime_rl.trainer.rl.packer.setup_training_batch_receiver", lambda _c: DummyReceiver())
-    monkeypatch.setattr("prime_rl.trainer.rl.packer.setup_micro_batch_sender", lambda *a, **k: DummySender())
+    monkeypatch.setattr("aether_rl.trainer.rl.packer.setup_training_batch_receiver", lambda _c: DummyReceiver())
+    monkeypatch.setattr("aether_rl.trainer.rl.packer.setup_micro_batch_sender", lambda *a, **k: DummySender())
     packer = MultiPacker(
         dp_world_size=dp_world_size,
         seq_len=seq_len,
@@ -148,8 +148,8 @@ def test_packer_progress_updates_once_per_run(tmp_path: Path, monkeypatch: pytes
         sender_holder["sender"] = sender
         return sender
 
-    monkeypatch.setattr("prime_rl.trainer.rl.packer.setup_training_batch_receiver", fake_receiver)
-    monkeypatch.setattr("prime_rl.trainer.rl.packer.setup_micro_batch_sender", fake_sender)
+    monkeypatch.setattr("aether_rl.trainer.rl.packer.setup_training_batch_receiver", fake_receiver)
+    monkeypatch.setattr("aether_rl.trainer.rl.packer.setup_micro_batch_sender", fake_sender)
 
     packer = MultiPacker(
         dp_world_size=1,
@@ -181,7 +181,7 @@ def test_packer_progress_updates_once_per_run(tmp_path: Path, monkeypatch: pytes
 
 def test_multipacker_pack_preserves_mm_kwargs_modality_and_run_tagging(tmp_path, monkeypatch):
     """MultiPacker keeps multimodal and text microbatches aligned across ranks."""
-    from prime_rl.trainer.batch import _is_multimodal_sample
+    from aether_rl.trainer.batch import _is_multimodal_sample
 
     manager, packer, sent = _packer_with_two_runs(tmp_path, monkeypatch, dp_world_size=2, seq_len=5)
     malformed = _mm_sample(0.0)
@@ -217,7 +217,7 @@ def test_multipacker_pack_preserves_mm_kwargs_modality_and_run_tagging(tmp_path,
 
 def test_multipacker_packs_mm_kwargs_within_each_run(tmp_path, monkeypatch):
     """Compatible eager multimodal samples pack within a run but never across runs."""
-    from prime_rl.trainer.batch import _is_multimodal_sample
+    from aether_rl.trainer.batch import _is_multimodal_sample
 
     manager, packer, sent = _packer_with_two_runs(tmp_path, monkeypatch, dp_world_size=1, seq_len=12)
     a, b = manager.id_2_idx["run_a"], manager.id_2_idx["run_b"]

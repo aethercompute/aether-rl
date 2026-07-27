@@ -3,10 +3,10 @@ import torch
 from transformers import AutoModelForCausalLM
 from transformers.models.llama.configuration_llama import LlamaConfig
 
-from prime_rl.trainer.models import cast_float_and_contiguous
-from prime_rl.trainer.models.layers.lm_head import FusedOutputLinear, VanillaOutputLinear, inject_prime_lm_head
-from prime_rl.trainer.rl.loss import compute_entropy, selective_log_softmax, shift_tensor_left, shift_tensor_right
-from prime_rl.utils.utils import default_dtype
+from aether_rl.trainer.models import cast_float_and_contiguous
+from aether_rl.trainer.models.layers.lm_head import FusedOutputLinear, VanillaOutputLinear, inject_prime_lm_head
+from aether_rl.trainer.rl.loss import compute_entropy, selective_log_softmax, shift_tensor_left, shift_tensor_right
+from aether_rl.utils.utils import default_dtype
 
 
 def _baseline_logprobs_and_entropy(

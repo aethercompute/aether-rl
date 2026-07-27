@@ -7,8 +7,8 @@ from contextlib import closing
 
 import pytest
 
-from prime_rl.configs.shared import MetricsServerConfig
-from prime_rl.utils.metrics_server import HealthServer, MetricsServer, RunStats
+from aether_rl.configs.shared import MetricsServerConfig
+from aether_rl.utils.metrics_server import HealthServer, MetricsServer, RunStats
 
 
 def find_free_port() -> int:

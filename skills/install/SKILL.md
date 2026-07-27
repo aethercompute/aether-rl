@@ -1,17 +1,17 @@
 ---
 name: install
-description: How to install prime-rl and its optional dependencies. Use when setting up the project, installing extras like DeepEP for multi-node expert parallelism, or troubleshooting dependency issues.
+description: How to install aether-rl and its optional dependencies. Use when setting up the project, installing extras like DeepEP for multi-node expert parallelism, or troubleshooting dependency issues.
 ---
 
 # Install
 
 ## Clone + submodules
 
-prime-rl is a monorepo with submodules. From the directory where the repository should be cloned, run:
+aether-rl is a monorepo with submodules. From the directory where the repository should be cloned, run:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/PrimeIntellect-ai/prime-rl/main/scripts/install.sh | bash
-cd prime-rl
+curl -sSL https://raw.githubusercontent.com/aethercompute/aether-rl/main/scripts/install.sh | bash
+cd aether-rl
 ```
 
 The installer initializes submodules, installs `uv`, and runs `uv sync --all-extras`. To run it inside an existing clone, use `SKIP_CLONE=1 bash scripts/install.sh`.
@@ -19,7 +19,7 @@ The installer initializes submodules, installs `uv`, and runs `uv sync --all-ext
 On aarch64, the installer builds `flash-attn` after the final exact sync. Preserve that build when adding an environment package:
 
 ```bash
-uv sync --inexact --all-extras --package prime-rl --package reverse-text-v1
+uv sync --inexact --all-extras --package aether-rl --package reverse-text-v1
 uv run --no-sync rl @ examples/basic/reverse-text/rl.toml
 ```
 
@@ -42,10 +42,10 @@ uv sync                                    # core only
 uv sync --group dev                        # + pytest, ruff, pre-commit
 uv sync --all-extras                       # + extras (flash-attn, flash-attn-cute, …)
 uv sync --all-extras --all-packages        # + all env packages (needed to train on them)
-uv sync --all-extras --package prime-rl --package reverse-text-v1  # extras + one env
+uv sync --all-extras --package aether-rl --package reverse-text-v1  # extras + one env
 ```
 
-Environment packages under `deps/research-environments/environments/*/*` and `deps/verifiers/environments/*` are auto-discovered uv workspace members. They are opt-in: `uv sync` and `uv sync --all-extras` do not install them and remove environment packages not selected by the command. Prefer repeated `--package <env>` arguments for the environments a run needs, and include `--package prime-rl`. Add `--all-extras` when the core extras must remain installed. Use `--all-packages` only when every workspace environment is required; incompatible workspace pins may prevent an all-package sync.
+Environment packages under `deps/research-environments/environments/*/*` and `deps/verifiers/environments/*` are auto-discovered uv workspace members. They are opt-in: `uv sync` and `uv sync --all-extras` do not install them and remove environment packages not selected by the command. Prefer repeated `--package <env>` arguments for the environments a run needs, and include `--package aether-rl`. Add `--all-extras` when the core extras must remain installed. Use `--all-packages` only when every workspace environment is required; incompatible workspace pins may prevent an all-package sync.
 
 When bumping a package past the workspace-wide `exclude-newer = "7 days"` window, add it (and any newly-required transitives) to `[tool.uv.exclude-newer-package]` before refreshing `uv.lock`.
 
@@ -79,7 +79,7 @@ Multi-node / disaggregated deployments can route through the upstream llm-d Endp
 bash scripts/install_llmd.sh   # builds epp + pd-sidecar from a pinned llm-d-router commit (vendored Go), fetches envoy
 ```
 
-Binaries land in `third_party/llmd/bin/{epp,envoy,pd-sidecar}` (a shared path, so SLURM nodes see them). `epp` is pinned to the commit that includes the `vllmhttp-parser` (PR #1248) so prime-rl's renderer/TITO `/inference/v1/generate` path routes correctly. Override the pin with `LLMD_ROUTER_REF=<sha>`. The EPP + Envoy + endpoints configs are rendered from `templates/llmd/*.yaml.j2` (included into the SLURM script); only the per-node IPv4 addresses are filled in inline at launch time.
+Binaries land in `third_party/llmd/bin/{epp,envoy,pd-sidecar}` (a shared path, so SLURM nodes see them). `epp` is pinned to the commit that includes the `vllmhttp-parser` (PR #1248) so aether-rl's renderer/TITO `/inference/v1/generate` path routes correctly. Override the pin with `LLMD_ROUTER_REF=<sha>`. The EPP + Envoy + endpoints configs are rendered from `templates/llmd/*.yaml.j2` (included into the SLURM script); only the per-node IPv4 addresses are filled in inline at launch time.
 
 ## Key files
 

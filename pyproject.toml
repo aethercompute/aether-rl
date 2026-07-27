@@ -1,11 +1,11 @@
 [project]
-name = "prime-rl"
+name = "aether-rl"
 version = "0.7.0"
 description = "Async RL Training at Scale"
 readme = "README.md"
 requires-python = "~=3.12.0"
 dependencies = [
-    "prime-rl-configs",
+    "aether-rl-configs",
     "prime-pydantic-config",
     "beartype>=0.21.0",
     "datasets>=4.0.0",
@@ -47,15 +47,15 @@ dependencies = [
 ]
 
 [project.scripts]
-rl = "prime_rl.entrypoints.rl:main"
-sft = "prime_rl.entrypoints.sft:main"
-inference = "prime_rl.entrypoints.inference:main"
-trainer = "prime_rl.entrypoints.trainer:main"
-orchestrator = "prime_rl.entrypoints.orchestrator:main"
-env-server = "prime_rl.orchestrator.env_server.env_server:main"
+rl = "aether_rl.entrypoints.rl:main"
+sft = "aether_rl.entrypoints.sft:main"
+inference = "aether_rl.entrypoints.inference:main"
+trainer = "aether_rl.entrypoints.trainer:main"
+orchestrator = "aether_rl.entrypoints.orchestrator:main"
+env-server = "aether_rl.orchestrator.env_server.env_server:main"
 
 [project.entry-points."vllm.general_plugins"]
-prime_rl = "prime_rl.inference.patches:apply_shared_vllm_patches"
+aether_rl = "aether_rl.inference.patches:apply_shared_vllm_patches"
 
 [project.optional-dependencies]
 flash-attn = [
@@ -80,11 +80,11 @@ quack = [
     "quack-kernels>=0.4.1",
 ]
 all = [
-    "prime-rl[flash-attn]",
-    "prime-rl[disagg]",
-    "prime-rl[quack]",
-    "prime-rl[flash-attn-3]",
-    "prime-rl[flash-attn-cute]",
+    "aether-rl[flash-attn]",
+    "aether-rl[disagg]",
+    "aether-rl[quack]",
+    "aether-rl[flash-attn-3]",
+    "aether-rl[flash-attn-cute]",
 ]
 
 [dependency-groups]
@@ -179,8 +179,8 @@ nixl-cu12 = false
 torchao = false
 
 [tool.uv.sources]
-prime-rl-configs = { path = "packages/prime-rl-configs", editable = true }
-# prime-rl depends on the one `verifiers` package (v0 + v1 + the legacy bridge + the built-in v1
+aether-rl-configs = { path = "packages/aether-rl-configs", editable = true }
+# aether-rl depends on the one `verifiers` package (v0 + v1 + the legacy bridge + the built-in v1
 # harnesses/tasksets, now bundled in verifiers.v1). v0 envs resolve from
 # deps/{verifiers,research-environments}/environments; v1 tasksets (`-v1`) and the `compact`
 # example live under deps/{verifiers,research-environments}/environments.
@@ -237,10 +237,10 @@ select = ["F", "I"]
 ignore = ["F722", "F821"] # Need to ignore for jaxtyping (https://docs.kidger.site/jaxtyping/faq/)
 
 [tool.ruff.lint.isort]
-# `prime_rl` is split across two editable wheels (prime-rl + prime-rl-configs).
-# Without this, ruff classifies prime_rl.configs.* as third-party because it
+# `aether_rl` is split across two editable wheels (aether-rl + aether-rl-configs).
+# Without this, ruff classifies aether_rl.configs.* as third-party because it
 # doesn't live under src/.
-known-first-party = ["prime_rl"]
+known-first-party = ["aether_rl"]
 
 [tool.ruff]
 line-length = 120
@@ -258,7 +258,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/prime_rl"]
+packages = ["src/aether_rl"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

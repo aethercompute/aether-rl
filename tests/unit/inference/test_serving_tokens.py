@@ -1,7 +1,7 @@
-"""Sanity tests for the prime-RL ``ServingTokens`` subclass.
+"""Sanity tests for the AetherRL ``ServingTokens`` subclass.
 
 The full happy-path is owned upstream by vLLM 0.20's
-``vllm/entrypoints/serve/disagg`` test suite. We only cover the prime-RL
+``vllm/entrypoints/serve/disagg`` test suite. We only cover the AetherRL
 deltas here:
     * ``serialize_routed_experts`` round-trips a compact raw-byte payload.
     * The subclass attaches its overrides without monkey-patching the parent.
@@ -17,11 +17,11 @@ import pybase64
 from vllm.entrypoints.openai.engine.protocol import UsageInfo
 from vllm.entrypoints.serve.disagg.protocol import GenerateResponse, GenerateResponseChoice
 
-from prime_rl.inference.vllm.routed_experts import serialize_routed_experts
-from prime_rl.inference.vllm.serving_tokens import (
-    PrimeRlGenerateResponse,
-    PrimeRlGenerateResponseChoice,
-    PrimeRlServingTokens,
+from aether_rl.inference.vllm.routed_experts import serialize_routed_experts
+from aether_rl.inference.vllm.serving_tokens import (
+    AetherRlGenerateResponse,
+    AetherRlGenerateResponseChoice,
+    AetherRlServingTokens,
     _build_usage,
     _client_set_max_tokens,
     _FinalOutputCapture,
@@ -53,10 +53,10 @@ async def _empty_request_outputs():
 
 
 def test_subclass_only_overrides_serve_tokens():
-    assert PrimeRlServingTokens.serve_tokens is not PrimeRlServingTokens.__mro__[1].serve_tokens
+    assert AetherRlServingTokens.serve_tokens is not AetherRlServingTokens.__mro__[1].serve_tokens
     assert (
-        PrimeRlServingTokens.serve_tokens_full_generator
-        is not PrimeRlServingTokens.__mro__[1].serve_tokens_full_generator
+        AetherRlServingTokens.serve_tokens_full_generator
+        is not AetherRlServingTokens.__mro__[1].serve_tokens_full_generator
     )
 
 
@@ -130,14 +130,14 @@ class _FakeRequestOutput:
         self.num_cached_tokens = num_cached_tokens
 
 
-def test_prime_rl_generate_response_serializes_usage_block():
-    # Regression for prime-rl PR #2408: parent ``GenerateResponse`` doesn't
+def test_aether_rl_generate_response_serializes_usage_block():
+    # Regression for aether-rl PR #2408: parent ``GenerateResponse`` doesn't
     # declare ``usage``, so the field must be declared on the subclass for
     # Pydantic to emit it in JSON. Without this the router can't extract
     # per-run token / cache counts for billing.
-    response = PrimeRlGenerateResponse(
+    response = AetherRlGenerateResponse(
         request_id="req-1",
-        choices=[PrimeRlGenerateResponseChoice(index=0, token_ids=[1, 2, 3])],
+        choices=[AetherRlGenerateResponseChoice(index=0, token_ids=[1, 2, 3])],
         usage=UsageInfo(prompt_tokens=4, completion_tokens=3, total_tokens=7),
     )
     payload = response.model_dump(mode="json")
@@ -173,7 +173,7 @@ def test_build_usage_includes_encoder_prompt_tokens():
 
 
 def test_build_usage_reports_cached_tokens_unconditionally():
-    # Unlike upstream's ``enable_prompt_tokens_details`` gate, prime-rl always
+    # Unlike upstream's ``enable_prompt_tokens_details`` gate, aether-rl always
     # surfaces cached tokens — the cache-discount billing pipeline needs them.
     final_res = _FakeRequestOutput(
         prompt_token_ids=[1, 2, 3, 4],

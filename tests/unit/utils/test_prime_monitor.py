@@ -5,8 +5,8 @@ from unittest.mock import Mock
 import pyarrow.parquet as pq
 import verifiers.v1 as vf
 
-from prime_rl.orchestrator.types import Rollout
-from prime_rl.utils.monitor.prime import PrimeMonitor
+from aether_rl.orchestrator.types import Rollout
+from aether_rl.utils.monitor.prime import PrimeMonitor
 
 
 def _new_monitor() -> PrimeMonitor:

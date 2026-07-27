@@ -5,7 +5,7 @@ import pytest
 import tomli_w
 import torch.distributed as dist
 
-from prime_rl.trainer.runs import MultiRunManager
+from aether_rl.trainer.runs import MultiRunManager
 
 
 @pytest.fixture(autouse=True, scope="module")

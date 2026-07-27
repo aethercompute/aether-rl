@@ -1,31 +1,24 @@
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/40c36e38-c5bd-4c5a-9cb3-f7b902cd155d#gh-light-mode-only" alt="Prime Intellect" width="312">
-  <img src="https://github.com/user-attachments/assets/6414bc9b-126b-41ca-9307-9e982430cde8#gh-dark-mode-only" alt="Prime Intellect" width="312">
-</p>
-
----
-
 <h3 align="center">
-prime-rl: Async RL Training at Scale
+aether-rl: Async RL Training at Scale
 </h3>
 
 ---
 
 <p align="center">
-  <a href="https://github.com/PrimeIntellect-ai/prime-rl/actions/workflows/style.yaml">
-    <img src="https://github.com/PrimeIntellect-ai/prime-rl/actions/workflows/style.yaml/badge.svg" alt="Style" />
+  <a href="https://github.com/aethercompute/aether-rl/actions/workflows/style.yaml">
+    <img src="https://github.com/aethercompute/aether-rl/actions/workflows/style.yaml/badge.svg" alt="Style" />
   </a>
-  <a href="https://github.com/PrimeIntellect-ai/prime-rl/actions/workflows/cpu_tests.yaml">
-    <img src="https://github.com/PrimeIntellect-ai/prime-rl/actions/workflows/cpu_tests.yaml/badge.svg" alt="Test" />
+  <a href="https://github.com/aethercompute/aether-rl/actions/workflows/cpu_tests.yaml">
+    <img src="https://github.com/aethercompute/aether-rl/actions/workflows/cpu_tests.yaml/badge.svg" alt="Test" />
   </a>
-  <a href="https://github.com/PrimeIntellect-ai/prime-rl/actions/workflows/gpu_tests.yaml">
-    <img src="https://github.com/PrimeIntellect-ai/prime-rl/actions/workflows/gpu_tests.yaml/badge.svg" alt="Test" />
+  <a href="https://github.com/aethercompute/aether-rl/actions/workflows/gpu_tests.yaml">
+    <img src="https://github.com/aethercompute/aether-rl/actions/workflows/gpu_tests.yaml/badge.svg" alt="Test" />
   </a>
 </p>
 
 ## Overview
 
-prime-rl is a framework for asynchronous reinforcement learning and supervised fine-tuning of language models.
+aether-rl is a framework for asynchronous reinforcement learning and supervised fine-tuning of language models.
 
 1. Fully asynchronous RL for high-throughput agentic training at scale.
 2. FSDP2 training and [vLLM](https://github.com/vllm-project/vllm) inference, with FP8 inference, P/D disaggregation, expert parallelism (EP), and context parallelism (CP).
@@ -37,7 +30,7 @@ prime-rl is a framework for asynchronous reinforcement learning and supervised f
 8. SLURM examples for frontier models, including [`GLM-5` with P/D disaggregation, the `llm-d` router, and Mooncake KV offload](examples/advanced/glm-5.2/).
 ## Model support
 
-The trainer works with Hugging Face models and custom PrimeRL `ModelForCausalLM` implementations. The custom implementations under `src/prime_rl/trainer/models/` add optimized MoE training, EP, and CP where shown below.
+The trainer works with Hugging Face models and custom AetherRL `ModelForCausalLM` implementations. The custom implementations under `src/aether_rl/trainer/models/` add optimized MoE training, EP, and CP where shown below.
 
 With `[trainer.model] impl = "auto"` in a unified RL config (or `[model]` for standalone SFT), the trainer selects that custom stack when the Hugging Face config type is registered.
 
@@ -59,32 +52,32 @@ With `[trainer.model] impl = "auto"` in a unified RL config (or `[model]` for st
 | Other HF causal LMs | Mistral, … (`impl = "hf"`) | varies | ❌ | no |
 ## Setup
 
-> *We develop and test on NVIDIA RTX 3090/4090/5090, A100, H100, H200, and B200. If your setup fails, please create an [issue](https://github.com/PrimeIntellect-ai/prime-rl/issues).*
+> *We develop and test on NVIDIA RTX 3090/4090/5090, A100, H100, H200, and B200. If your setup fails, please create an [issue](https://github.com/aethercompute/aether-rl/issues).*
 
 ### Prerequisites
 
-prime-rl requires NVIDIA GPUs. Standalone SFT or inference can run on one GPU. The default local RL launcher places the trainer and inference server on separate GPUs, so its default configuration requires two visible GPUs.
+aether-rl requires NVIDIA GPUs. Standalone SFT or inference can run on one GPU. The default local RL launcher places the trainer and inference server on separate GPUs, so its default configuration requires two visible GPUs.
 
 ### Quick Setup
 
 Run the installer from the directory where you want the repository cloned:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/PrimeIntellect-ai/prime-rl/main/scripts/install.sh | bash
-cd prime-rl
+curl -sSL https://raw.githubusercontent.com/aethercompute/aether-rl/main/scripts/install.sh | bash
+cd aether-rl
 ```
 
 The installer runs `uv sync --all-extras`. Environment packages are opt-in workspace members; install the package needed by an example before running it. For the quick start:
 
 ```bash
-uv sync --all-extras --package prime-rl --package reverse-text-v1
+uv sync --all-extras --package aether-rl --package reverse-text-v1
 uv run rl @ examples/basic/reverse-text/rl.toml
 ```
 
 On aarch64, preserve the installer-built `flash-attn`:
 
 ```bash
-uv sync --inexact --all-extras --package prime-rl --package reverse-text-v1
+uv sync --inexact --all-extras --package aether-rl --package reverse-text-v1
 uv run --no-sync rl @ examples/basic/reverse-text/rl.toml
 ```
 
@@ -96,8 +89,8 @@ Manual Setup
 1. Clone the repository
 
 ```bash
-git clone https://github.com/PrimeIntellect-ai/prime-rl.git
-cd prime-rl
+git clone https://github.com/aethercompute/aether-rl.git
+cd aether-rl
 ```
 
 2. Initialize submodules
@@ -119,10 +112,10 @@ source $HOME/.local/bin/env
 uv sync --all-extras
 ```
 
-Environment packages are opt-in workspace members. Install only the packages needed for a run, keeping `prime-rl` in the sync set:
+Environment packages are opt-in workspace members. Install only the packages needed for a run, keeping `aether-rl` in the sync set:
 
 ```bash
-uv sync --all-extras --package prime-rl --package reverse-text-v1
+uv sync --all-extras --package aether-rl --package reverse-text-v1
 ```
 
 Use `uv sync --all-extras --all-packages` only when you need every workspace environment.
@@ -176,7 +169,7 @@ uv run inference --model.name Qwen/Qwen3-0.6B
 6. Install the quick-start environment and check the full RL stack (*the default deployment requires 2 GPUs*)
 
 ```bash
-uv sync --all-extras --package prime-rl --package reverse-text-v1
+uv sync --all-extras --package aether-rl --package reverse-text-v1
 uv run rl @ examples/basic/reverse-text/rl.toml
 ```
 
@@ -225,7 +218,7 @@ These configs target SLURM clusters and cover large reasoning and agentic runs.
 
 ## Docs
 
-Check out the [docs](docs) directory for in-depth guides on how to use prime-rl.
+Check out the [docs](docs) directory for in-depth guides on how to use aether-rl.
 
 - [**Overview**](docs/overview.md) - Architecture, install, and a copy-pasteable end-to-end RL run
 - [**Configuration**](docs/configuration.md) - TOML composition, CLI overrides, env vars, validation
@@ -238,7 +231,7 @@ Check out the [docs](docs) directory for in-depth guides on how to use prime-rl.
 
 ## Contributing
 
-Use [issues](https://github.com/PrimeIntellect-ai/prime-rl/issues) for bug reports and feature requests.
+Use [issues](https://github.com/aethercompute/aether-rl/issues) for bug reports and feature requests.
 
 Contributions are welcome via PR. Please follow these guidelines:
 
@@ -270,13 +263,13 @@ This project is licensed under the Apache 2.0 license, as found in the [License]
 
 ## Citation
 
-Cite prime-rl with:
+Cite aether-rl with:
 
 ```tex
-@misc{primeintellect2025prime-rl,
+@misc{primeintellect2025aether-rl,
   author = {Prime Intellect},
-  title = {prime-rl},
-  url = {https://github.com/PrimeIntellect-ai/prime-rl},
+  title = {aether-rl},
+  url = {https://github.com/aethercompute/aether-rl},
   year = {2025}
 }
 ```

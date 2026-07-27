@@ -5,7 +5,7 @@ This example applies an SFT warmup and multi-turn RL to `Qwen3-1.7B`. The shippe
 ## Setup
 
 ```bash
-uv sync --all-extras --package prime-rl --package wordle-v1
+uv sync --all-extras --package aether-rl --package wordle-v1
 bash scripts/tmux.sh
 ```
 

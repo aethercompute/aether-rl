@@ -9,7 +9,7 @@ on:
                 required: false
                 default: ""
             image_tag:
-                description: "prime-rl image tag to pin (e.g. v0.7.1.dev58). Leave empty to auto-resolve the newest v*.dev* with a published manifest."
+                description: "aether-rl image tag to pin (e.g. v0.7.1.dev58). Leave empty to auto-resolve the newest v*.dev* with a published manifest."
                 required: false
                 default: ""
 
@@ -74,10 +74,11 @@ jobs:
               with:
                   submodules: false
 
-            - name: Resolve prime-rl image tag
+            - name: Resolve aether-rl image tag
               id: image
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  IMAGE_OWNER: ${{ github.repository_owner }}
                   # Pass the dispatch input through env so a malicious value
                   # cannot break out of shell context via $(...) or embedded
                   # quotes — the GitHub expression is substituted before Bash
@@ -97,18 +98,18 @@ jobs:
                           exit 1
                       fi
                       registry_token=$(curl -fsSL \
-                          "https://ghcr.io/token?scope=repository:primeintellect-ai/prime-rl:pull" \
+                          "https://ghcr.io/token?scope=repository:$IMAGE_OWNER/aether-rl:pull" \
                           | jq -r .token)
                       code=$(curl -sS -o /dev/null -w '%{http_code}' \
                           -H "Authorization: Bearer $registry_token" \
                           -H 'Accept: application/vnd.oci.image.index.v1+json' \
                           -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
-                          "https://ghcr.io/v2/primeintellect-ai/prime-rl/manifests/$requested")
+                          "https://ghcr.io/v2/$IMAGE_OWNER/aether-rl/manifests/$requested")
                       if [ "$code" != "200" ]; then
                           echo "Requested image_tag '$requested' has no published manifest (HTTP $code)." >&2
                           exit 1
                       fi
-                      echo "Using pinned prime-rl image tag: $requested"
+                      echo "Using pinned aether-rl image tag: $requested"
                       echo "tag=$requested" >> "$GITHUB_OUTPUT"
                       exit 0
                   fi
@@ -126,7 +127,7 @@ jobs:
                   # explicit no-candidates guard below runs.
                   set +o pipefail
                   candidates=$(gh api --paginate \
-                      "/orgs/primeintellect-ai/packages/container/prime-rl/versions" \
+                      "/orgs/$IMAGE_OWNER/packages/container/aether-rl/versions" \
                       --jq '.[].metadata.container.tags[]' \
                       | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]+$' \
                       | sort -Vru | head -n 10)
@@ -136,7 +137,7 @@ jobs:
                       exit 1
                   fi
                   registry_token=$(curl -fsSL \
-                      "https://ghcr.io/token?scope=repository:primeintellect-ai/prime-rl:pull" \
+                      "https://ghcr.io/token?scope=repository:$IMAGE_OWNER/aether-rl:pull" \
                       | jq -r .token)
                   tag=""
                   for cand in $candidates; do
@@ -144,7 +145,7 @@ jobs:
                           -H "Authorization: Bearer $registry_token" \
                           -H 'Accept: application/vnd.oci.image.index.v1+json' \
                           -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
-                          "https://ghcr.io/v2/primeintellect-ai/prime-rl/manifests/$cand")
+                          "https://ghcr.io/v2/$IMAGE_OWNER/aether-rl/manifests/$cand")
                       if [ "$code" = "200" ]; then
                           tag="$cand"
                           break
@@ -155,7 +156,7 @@ jobs:
                       echo "None of the top v*.dev* tags have a published manifest." >&2
                       exit 1
                   fi
-                  echo "Latest published prime-rl image tag on GHCR: $tag"
+                  echo "Latest published aether-rl image tag on GHCR: $tag"
                   echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
             - name: Install uv

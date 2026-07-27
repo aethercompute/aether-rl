@@ -3,15 +3,15 @@ import torch
 from torch import nn
 from transformers import Glm4MoeForCausalLM as HFGlm4MoeForCausalLM
 
-from prime_rl.trainer.models.glm4_moe import Glm4MoeConfig
-from prime_rl.trainer.models.glm4_moe import Glm4MoeForCausalLM as PrimeRLGlm4MoeForCausalLM
-from prime_rl.trainer.models.layers.lm_head import inject_prime_lm_head
-from prime_rl.utils.utils import default_dtype
+from aether_rl.trainer.models.glm4_moe import Glm4MoeConfig
+from aether_rl.trainer.models.glm4_moe import Glm4MoeForCausalLM as AetherRLGlm4MoeForCausalLM
+from aether_rl.trainer.models.layers.lm_head import inject_prime_lm_head
+from aether_rl.utils.utils import default_dtype
 
 pytestmark = [pytest.mark.gpu]
 
 
-def get_model_pairs() -> tuple[HFGlm4MoeForCausalLM, PrimeRLGlm4MoeForCausalLM]:
+def get_model_pairs() -> tuple[HFGlm4MoeForCausalLM, AetherRLGlm4MoeForCausalLM]:
     hf_config = Glm4MoeConfig(
         hidden_size=1024,
         intermediate_size=2048,
@@ -32,7 +32,7 @@ def get_model_pairs() -> tuple[HFGlm4MoeForCausalLM, PrimeRLGlm4MoeForCausalLM]:
     hf_config._attn_implementation = "flash_attention_2"
     with torch.device("cuda"), default_dtype(torch.bfloat16):
         hf_model = HFGlm4MoeForCausalLM._from_config(hf_config)
-        prime_model = PrimeRLGlm4MoeForCausalLM._from_config(hf_config)
+        prime_model = AetherRLGlm4MoeForCausalLM._from_config(hf_config)
     with torch.no_grad():
         state_dict = hf_model.state_dict()
         prime_state_keys = prime_model.state_dict().keys()

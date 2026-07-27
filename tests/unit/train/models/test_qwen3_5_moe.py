@@ -2,11 +2,11 @@ import pytest
 import torch
 from transformers import Qwen3_5MoeForCausalLM as HFQwen3_5MoeForCausalLM
 
-from prime_rl.trainer.models.layers.lm_head import inject_prime_lm_head
-from prime_rl.trainer.models.qwen3_5_moe import Qwen3_5MoeConfig
-from prime_rl.trainer.models.qwen3_5_moe import Qwen3_5MoeForCausalLM as PrimeRLQwen3_5MoeForCausalLM
-from prime_rl.utils.cp import setup_model_cp
-from prime_rl.utils.utils import default_dtype
+from aether_rl.trainer.models.layers.lm_head import inject_prime_lm_head
+from aether_rl.trainer.models.qwen3_5_moe import Qwen3_5MoeConfig
+from aether_rl.trainer.models.qwen3_5_moe import Qwen3_5MoeForCausalLM as AetherRLQwen3_5MoeForCausalLM
+from aether_rl.utils.cp import setup_model_cp
+from aether_rl.utils.utils import default_dtype
 
 pytestmark = [pytest.mark.gpu]
 
@@ -35,7 +35,7 @@ def get_model_pairs():
     config._attn_implementation = "flash_attention_2"
     with torch.device("cuda"), default_dtype(torch.bfloat16):
         hf_model = HFQwen3_5MoeForCausalLM._from_config(config)
-        prime_model = PrimeRLQwen3_5MoeForCausalLM._from_config(config)
+        prime_model = AetherRLQwen3_5MoeForCausalLM._from_config(config)
     with torch.no_grad():
         state_dict = hf_model.state_dict()
         prime_state_keys = prime_model.state_dict().keys()
@@ -71,19 +71,19 @@ def test_qwen3_5_moe():
 
 
 def test_qwen3_5_moe_roundtrip():
-    """Verify HF → PrimeRL → HF weight conversion is lossless at the state_dict level."""
+    """Verify HF → AetherRL → HF weight conversion is lossless at the state_dict level."""
     hf_model, prime_model = get_model_pairs()
 
-    # Get original HF state_dict and the PrimeRL-converted version
+    # Get original HF state_dict and the AetherRL-converted version
     original_hf_sd = hf_model.state_dict()
     prime_sd = prime_model.state_dict()
 
-    # Convert PrimeRL → per-expert HF format
+    # Convert AetherRL → per-expert HF format
     converted_hf_sd = prime_model.convert_to_hf(dict(prime_sd))
 
     # Also convert original HF (fused) to per-expert format for comparison
 
-    # First convert original HF → PrimeRL, then back to per-expert HF
+    # First convert original HF → AetherRL, then back to per-expert HF
     orig_prime_sd = dict(original_hf_sd)
     prime_model.convert_to_prime(orig_prime_sd)
     orig_roundtripped = dict(orig_prime_sd)
@@ -128,9 +128,9 @@ def test_qwen3_5_moe_cp_patching():
     """Verify substitute_ring_attn patches Qwen3_5MoeGatedFlashAttention._compute_attention."""
     from unittest.mock import MagicMock
 
-    from prime_rl.trainer.models.afmoe.modeling_afmoe import AfmoeFlashAttention
-    from prime_rl.trainer.models.layers.attn import FlashAttention, substitute_ring_attn
-    from prime_rl.trainer.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeGatedFlashAttention
+    from aether_rl.trainer.models.afmoe.modeling_afmoe import AfmoeFlashAttention
+    from aether_rl.trainer.models.layers.attn import FlashAttention, substitute_ring_attn
+    from aether_rl.trainer.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeGatedFlashAttention
 
     # substitute_ring_attn rewrites _compute_attention on all three classes;
     # snapshot every one so the patch can't leak into later tests via the
@@ -172,7 +172,7 @@ def test_qwen3_5_moe_context_parallel_setup_hook():
     )
     config._attn_implementation = "flash_attention_2"
     with torch.device("meta"):
-        model = PrimeRLQwen3_5MoeForCausalLM(config)
+        model = AetherRLQwen3_5MoeForCausalLM(config)
 
     linear_layer = model.model.layers[0]
     model.model.layers[0] = torch.nn.Sequential(linear_layer)

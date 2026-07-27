@@ -11,7 +11,7 @@ from typing import Annotated
 
 from pydantic import Field
 
-from prime_rl.utils.config import BaseConfig, cli
+from aether_rl.utils.config import BaseConfig, cli
 
 SHORTENED_ATTN_MAPPING = {
     "flash_attention_2": "FA2",
@@ -131,7 +131,7 @@ def generate_markdown(
     lines = [
         "# Performance Benchmarks",
         "",
-        "Automated benchmark results for prime-rl using `--bench` flag.",
+        "Automated benchmark results for aether-rl using `--bench` flag.",
         "",
         f"**Last Updated:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  ",
         f"**Commit:** `{commit}`  ",
@@ -225,7 +225,7 @@ def main():
     print(f"\nSummary: {successful} successful, {len(results) - successful} failed benchmarks", file=sys.stderr)
 
     if has_regressions:
-        Path("/tmp/prime-rl-benchmark-aggregate-has-regressions").touch()
+        Path("/tmp/aether-rl-benchmark-aggregate-has-regressions").touch()
         print("WARNING: Performance regressions detected!", file=sys.stderr)
 
 

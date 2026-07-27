@@ -4,9 +4,9 @@ import pytest
 import torch
 from transformers import AutoTokenizer
 
-from prime_rl.configs.sft import FakeDataConfig
-from prime_rl.trainer.sft.data import setup_dataloader, setup_dataset
-from prime_rl.trainer.world import reset_world
+from aether_rl.configs.sft import FakeDataConfig
+from aether_rl.trainer.sft.data import setup_dataloader, setup_dataset
+from aether_rl.trainer.world import reset_world
 
 pytestmark = [pytest.mark.gpu]
 

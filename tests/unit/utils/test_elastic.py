@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 from verifiers.v1.clients.config import TrainClientConfig
 
-from prime_rl.utils.elastic import (
+from aether_rl.utils.elastic import (
     AdapterState,
     ElasticInferencePool,
     check_server_model,
@@ -108,8 +108,8 @@ def test_check_server_model_returns_false_on_http_error():
 
 def test_discover_ready_servers_returns_servers_with_model_when_any_have_it():
     with (
-        patch("prime_rl.utils.elastic.discover_server_ips") as mock_discover,
-        patch("prime_rl.utils.elastic.check_server_model") as mock_check,
+        patch("aether_rl.utils.elastic.discover_server_ips") as mock_discover,
+        patch("aether_rl.utils.elastic.check_server_model") as mock_check,
     ):
         mock_discover.return_value = ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
 
@@ -130,8 +130,8 @@ def test_discover_ready_servers_returns_servers_with_model_when_any_have_it():
 
 def test_discover_ready_servers_returns_empty_when_none_have_model():
     with (
-        patch("prime_rl.utils.elastic.discover_server_ips") as mock_discover,
-        patch("prime_rl.utils.elastic.check_server_model") as mock_check,
+        patch("aether_rl.utils.elastic.discover_server_ips") as mock_discover,
+        patch("aether_rl.utils.elastic.check_server_model") as mock_check,
     ):
         mock_discover.return_value = ["10.0.0.1", "10.0.0.2"]
         mock_check.return_value = (False, True)  # no model, but healthy
@@ -142,7 +142,7 @@ def test_discover_ready_servers_returns_empty_when_none_have_model():
 
 
 def test_discover_ready_servers_returns_empty_when_no_dns_records():
-    with patch("prime_rl.utils.elastic.discover_server_ips") as mock_discover:
+    with patch("aether_rl.utils.elastic.discover_server_ips") as mock_discover:
         mock_discover.return_value = []
 
         result = asyncio.run(discover_ready_servers("test.hostname", 8000, "my-lora"))
@@ -152,8 +152,8 @@ def test_discover_ready_servers_returns_empty_when_no_dns_records():
 
 def test_discover_ready_servers_only_returns_servers_with_model():
     with (
-        patch("prime_rl.utils.elastic.discover_server_ips") as mock_discover,
-        patch("prime_rl.utils.elastic.check_server_model") as mock_check,
+        patch("aether_rl.utils.elastic.discover_server_ips") as mock_discover,
+        patch("aether_rl.utils.elastic.check_server_model") as mock_check,
     ):
         mock_discover.return_value = ["10.0.0.1", "10.0.0.2"]
 
@@ -185,7 +185,7 @@ def test_adapter_state_creation():
 
 
 def test_adapter_matches_when_no_adapter_desired():
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("aether_rl.utils.elastic.get_logger"):
         mock_config = MagicMock()
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
@@ -198,7 +198,7 @@ def test_adapter_matches_when_no_adapter_desired():
 
 
 def test_adapter_matches_by_path():
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("aether_rl.utils.elastic.get_logger"):
         mock_config = MagicMock()
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
@@ -216,7 +216,7 @@ def test_adapter_matches_by_path():
 
 
 def test_adapter_matches_by_step_when_nonzero():
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("aether_rl.utils.elastic.get_logger"):
         mock_config = MagicMock()
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
@@ -232,7 +232,7 @@ def test_adapter_matches_by_step_when_nonzero():
 
 
 def test_adapter_does_not_match_by_zero_step():
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("aether_rl.utils.elastic.get_logger"):
         mock_config = MagicMock()
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
@@ -248,7 +248,7 @@ def test_adapter_does_not_match_by_zero_step():
 
 
 def test_adapter_returns_false_when_no_adapter_loaded():
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("aether_rl.utils.elastic.get_logger"):
         mock_config = MagicMock()
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
@@ -266,7 +266,7 @@ def test_adapter_returns_false_when_no_adapter_loaded():
 
 def test_get_loaded_adapter_finds_correct_adapter_when_multiple_loaded():
     """Test that _get_loaded_adapter returns the adapter matching desired name, not the first one."""
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("aether_rl.utils.elastic.get_logger"):
         mock_config = MagicMock()
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
@@ -317,7 +317,7 @@ def test_get_loaded_adapter_finds_correct_adapter_when_multiple_loaded():
 
 def test_get_loaded_adapter_returns_none_when_desired_adapter_not_found():
     """Test that _get_loaded_adapter returns None when desired adapter is not in the list."""
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("aether_rl.utils.elastic.get_logger"):
         mock_config = MagicMock()
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
@@ -348,7 +348,7 @@ def test_get_loaded_adapter_returns_none_when_desired_adapter_not_found():
 
 def test_get_loaded_adapter_parses_step_from_path():
     """Test that _get_loaded_adapter correctly parses step number from path."""
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("aether_rl.utils.elastic.get_logger"):
         mock_config = MagicMock()
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
@@ -377,7 +377,7 @@ def test_get_loaded_adapter_parses_step_from_path():
 
 def test_get_loaded_adapter_handles_step_dash_format():
     """Test that _get_loaded_adapter parses step-N format (with dash)."""
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("aether_rl.utils.elastic.get_logger"):
         mock_config = MagicMock()
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
@@ -405,7 +405,7 @@ def test_get_loaded_adapter_handles_step_dash_format():
 
 
 def test_elastic_clients_preserve_renderer_model_name_when_model_name_updates():
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("aether_rl.utils.elastic.get_logger"):
         client_config = MagicMock()
         client_config.elastic.hostname = "test.hostname"
         client_config.elastic.port = 8000

@@ -2,7 +2,7 @@
 """
 Run a single benchmark configuration and output JSON results.
 
-This script wraps the prime-rl training with --bench.output-json to get
+This script wraps the aether-rl training with --bench.output-json to get
 metrics directly without parsing console output.
 """
 
@@ -19,7 +19,7 @@ from typing import Annotated, Literal
 import torch
 from pydantic import Field
 
-from prime_rl.utils.config import BaseConfig, cli
+from aether_rl.utils.config import BaseConfig, cli
 
 MAX_LORAS = 4
 
@@ -119,9 +119,9 @@ def build_command(config: BenchmarkConfig) -> list[str]:
     """Build the benchmark command from config."""
     # Determine training script
     if config.type == "rl":
-        script = "src/prime_rl/trainer/rl/train.py"
+        script = "src/aether_rl/trainer/rl/train.py"
     elif config.type == "sft":
-        script = "src/prime_rl/trainer/sft/train.py"
+        script = "src/aether_rl/trainer/sft/train.py"
     else:
         raise ValueError(f"Invalid training type: {config.type}")
 

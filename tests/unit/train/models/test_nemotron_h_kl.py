@@ -8,16 +8,16 @@ verifies KL mismatch through the loss pipeline.
 import pytest
 import torch
 
-from prime_rl.configs.trainer import DefaultLossConfig
-from prime_rl.trainer.models.layers.lm_head import inject_prime_lm_head
-from prime_rl.trainer.models.nemotron_h import NemotronHConfig, NemotronHForCausalLM
-from prime_rl.trainer.rl.loss import (
+from aether_rl.configs.trainer import DefaultLossConfig
+from aether_rl.trainer.models.layers.lm_head import inject_prime_lm_head
+from aether_rl.trainer.models.nemotron_h import NemotronHConfig, NemotronHForCausalLM
+from aether_rl.trainer.rl.loss import (
     LossInputs,
     default_loss_fn,
     selective_log_softmax,
     shift_tensor_right,
 )
-from prime_rl.utils.utils import default_dtype
+from aether_rl.utils.utils import default_dtype
 
 pytestmark = [pytest.mark.gpu]
 

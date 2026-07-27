@@ -178,7 +178,7 @@ The defaults already cover: fused LM head chunking (`1024`), `torch.compile` (fu
 
 The `rl`, `sft`, and `inference` entrypoints all submit to SLURM when a `[slurm]` table is present — there's no separate entrypoint.
 
-> **The prime-rl checkout and its `uv` venv must live on a shared filesystem** visible to every node. The generated sbatch script runs a single `uv sync --all-extras --all-packages` on the batch node (not once per node), so all ranks share that one environment — a node-local venv would leave the other nodes stale.
+> **The aether-rl checkout and its `uv` venv must live on a shared filesystem** visible to every node. The generated sbatch script runs a single `uv sync --all-extras --all-packages` on the batch node (not once per node), so all ranks share that one environment — a node-local venv would leave the other nodes stale.
 
 ### Activation
 
@@ -223,10 +223,10 @@ gpus_per_node = 8
 
 ### Examples
 
-Full multi-node configs ship under [`examples/advanced/`](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/advanced):
+Full multi-node configs ship under [`examples/advanced/`](https://github.com/aethercompute/aether-rl/tree/main/examples/advanced):
 
-- [`nemotron-3-super/swe.toml`](https://github.com/PrimeIntellect-ai/prime-rl/blob/main/examples/advanced/nemotron-3-super/swe.toml) — 4 trainer + 1 inference node RL on a 120B hybrid-Mamba MoE with NCCL weight broadcast.
-- [`glm-5.2/`](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/advanced/glm-5.2) — large-scale and P/D-disaggregated inference across the GLM-5 family.
+- [`nemotron-3-super/swe.toml`](https://github.com/aethercompute/aether-rl/blob/main/examples/advanced/nemotron-3-super/swe.toml) — 4 trainer + 1 inference node RL on a 120B hybrid-Mamba MoE with NCCL weight broadcast.
+- [`glm-5.2/`](https://github.com/aethercompute/aether-rl/tree/main/examples/advanced/glm-5.2) — large-scale and P/D-disaggregated inference across the GLM-5 family.
 
 For inference-only multi-node, set `[deployment] type = "multi_node"` on an inference TOML — each node runs an independent vLLM replica (TP and DP must fit within one node), and the launcher prints one URL per node. Front the URLs with a router or point clients at any of them.
 
@@ -238,7 +238,7 @@ For unusual partitions, module loads, or environment setup, supply your own Jinj
 uv run rl @ my_config.toml --slurm.template-path path/to/my_template.sbatch.j2
 ```
 
-The default templates live under [`src/prime_rl/templates/`](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/src/prime_rl/templates) — copy one as a starting point.
+The default templates live under [`src/aether_rl/templates/`](https://github.com/aethercompute/aether-rl/tree/main/src/aether_rl/templates) — copy one as a starting point.
 
 ## Benchmarking
 

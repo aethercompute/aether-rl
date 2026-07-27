@@ -19,7 +19,7 @@ This page covers vLLM configuration, deployment shapes, routing, and KV-cache of
 
 ## Overview
 
-`prime-rl` uses vLLM for policy inference and exposes its configuration through `InferenceConfig`.
+`aether-rl` uses vLLM for policy inference and exposes its configuration through `InferenceConfig`.
 
 Three deployment shapes are available:
 

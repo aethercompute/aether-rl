@@ -4,9 +4,9 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeTextRotaryEmbedding as HFQwen3_5MoeRotaryEmbedding,
 )
 
-from prime_rl.trainer.models.qwen3_5_moe import Qwen3_5MoeConfig
-from prime_rl.trainer.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeRotaryEmbedding
-from prime_rl.trainer.models.qwen3_5_moe.mrope import build_qwen3_5_mrope_position_ids
+from aether_rl.trainer.models.qwen3_5_moe import Qwen3_5MoeConfig
+from aether_rl.trainer.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeRotaryEmbedding
+from aether_rl.trainer.models.qwen3_5_moe.mrope import build_qwen3_5_mrope_position_ids
 
 
 def _tiny_config() -> Qwen3_5MoeConfig:

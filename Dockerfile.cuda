@@ -2,8 +2,8 @@
 
 # Build stage - multi-arch base (supports amd64 + arm64)
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04 AS builder
-LABEL maintainer="prime intellect"
-LABEL repository="prime-rl"
+LABEL maintainer="aethercompute"
+LABEL repository="aether-rl"
 
 # Set en_US.UTF-8 locale by default
 RUN echo "LC_ALL=en_US.UTF-8" >> /etc/environment

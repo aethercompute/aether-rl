@@ -3,9 +3,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from prime_rl.trainer.batch import pad_micro_batch, prepare_batch, prepare_sample
-from prime_rl.trainer.utils import build_bin_cost
-from prime_rl.transport.types import EncodedTensor, MicroBatch, RoutedExperts, TrainingSample
+from aether_rl.trainer.batch import pad_micro_batch, prepare_batch, prepare_sample
+from aether_rl.trainer.utils import build_bin_cost
+from aether_rl.transport.types import EncodedTensor, MicroBatch, RoutedExperts, TrainingSample
 
 
 def _routed_experts(data, dtype=np.uint8):

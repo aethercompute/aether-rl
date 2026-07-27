@@ -5,10 +5,10 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeForConditionalGeneration as HFQwen3_5MoeVLM,
 )
 
-from prime_rl.trainer.model import can_reinit_empty_buffers
-from prime_rl.trainer.models.layers.lm_head import inject_prime_lm_head
-from prime_rl.trainer.models.qwen3_5_moe import Qwen3_5MoeForCausalLM
-from prime_rl.utils.utils import default_dtype
+from aether_rl.trainer.model import can_reinit_empty_buffers
+from aether_rl.trainer.models.layers.lm_head import inject_prime_lm_head
+from aether_rl.trainer.models.qwen3_5_moe import Qwen3_5MoeForCausalLM
+from aether_rl.utils.utils import default_dtype
 
 pytestmark = [pytest.mark.gpu]
 
@@ -144,7 +144,7 @@ def test_vlm_weight_load_from_hf():
         hf_model = HFQwen3_5MoeVLM._from_config(config)
         prime_model = Qwen3_5MoeForCausalLM(config)
 
-    # Copy weights: HF -> PrimeRL (with MoE conversion)
+    # Copy weights: HF -> AetherRL (with MoE conversion)
     with torch.no_grad():
         hf_sd = hf_model.state_dict()
         prime_model.convert_to_prime(hf_sd)
@@ -165,7 +165,7 @@ def test_vlm_weight_load_from_hf():
 
 
 def test_vlm_weight_roundtrip():
-    """HF -> PrimeRL -> HF weight conversion is lossless (vision keys untouched, text keys converted)."""
+    """HF -> AetherRL -> HF weight conversion is lossless (vision keys untouched, text keys converted)."""
     config = _tiny_vlm_config()
     with torch.device("cuda"), default_dtype(torch.bfloat16):
         hf_model = HFQwen3_5MoeVLM._from_config(config)
@@ -175,13 +175,13 @@ def test_vlm_weight_roundtrip():
     original_vision_key = "model.visual.blocks.0.mlp.linear_fc1.weight"
     original_vision_weight = hf_sd[original_vision_key].clone()
 
-    # HF -> PrimeRL
+    # HF -> AetherRL
     prime_sd = dict(hf_sd)
     prime_model.convert_to_prime(prime_sd)
     assert any("language_model" in k and "mlp.experts.w1" in k for k in prime_sd)
     assert original_vision_key in prime_sd
 
-    # PrimeRL -> HF
+    # AetherRL -> HF
     roundtripped = dict(prime_sd)
     prime_model.convert_to_hf(roundtripped)
 

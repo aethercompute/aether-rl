@@ -1,9 +1,9 @@
 import pytest
 import torch
 
-from prime_rl.configs.trainer import AttnImplementation, ModelConfig
-from prime_rl.trainer.model import get_model
-from prime_rl.trainer.models.layers.lm_head import inject_prime_lm_head
+from aether_rl.configs.trainer import AttnImplementation, ModelConfig
+from aether_rl.trainer.model import get_model
+from aether_rl.trainer.models.layers.lm_head import inject_prime_lm_head
 
 BS = 1
 SEQ_LEN = 8

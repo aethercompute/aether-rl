@@ -144,7 +144,7 @@ def start_inference_and_trainer(
                 "--nproc-per-node",
                 "2",
                 "-m",
-                "prime_rl.trainer.rl.train",
+                "aether_rl.trainer.rl.train",
                 "@",
                 "configs/ci/integration/reverse-text-multi-run/trainer.toml",
                 "--output-dir",
@@ -243,7 +243,7 @@ def multi_run_result(
     """
     Test multi-run RL with LoRA adapters.
     """
-    tmp_path: Path = tmp_path_factory.mktemp("prime_rl_test_rl_multi_run_lora")
+    tmp_path: Path = tmp_path_factory.mktemp("aether_rl_test_rl_multi_run_lora")
     log_dir = output_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 

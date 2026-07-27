@@ -49,5 +49,5 @@ jobs:
           token: ${{ secrets.DOCS_SYNC_PAT }}
           repository: PrimeIntellect-ai/public-docs
           event-type: docs-updated
-          client-payload: '{"repo": "prime-rl", "ref": "${{ github.sha }}"}'
+          client-payload: '{"repo": "aether-rl", "ref": "${{ github.sha }}"}'
 

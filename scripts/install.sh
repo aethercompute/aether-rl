@@ -11,7 +11,7 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
-REPO_ID="prime-rl"
+REPO_ID="aether-rl"
 
 # Flag defaults (can be overridden via env)
 SKIP_CLONE=${SKIP_CLONE:-0}
@@ -23,7 +23,7 @@ assert_supported_platform() {
 
   if [ "$os" != "Linux" ]; then
     log_error "Unsupported platform: ${os}/${arch}."
-    log_error "prime-rl currently supports Linux on x86_64 or aarch64 only."
+    log_error "aether-rl currently supports Linux on x86_64 or aarch64 only."
     exit 1
   fi
 
@@ -31,7 +31,7 @@ assert_supported_platform() {
   x86_64 | aarch64) ;;
   *)
     log_error "Unsupported architecture: ${arch}."
-    log_error "prime-rl currently supports Linux on x86_64 or aarch64 only."
+    log_error "aether-rl currently supports Linux on x86_64 or aarch64 only."
     exit 1
     ;;
   esac
@@ -103,10 +103,10 @@ main() {
     log_info "Determining best way to clone (SSH vs HTTPS)..."
     if has_ssh_access; then
       log_info "SSH access to GitHub works. Cloning via SSH."
-      git clone git@github.com:PrimeIntellect-ai/${REPO_ID}.git
+      git clone git@github.com:aethercompute/${REPO_ID}.git
     else
       log_warn "SSH auth to GitHub not available. Cloning via HTTPS."
-      git clone https://github.com/PrimeIntellect-ai/${REPO_ID}.git
+      git clone https://github.com/aethercompute/${REPO_ID}.git
     fi
 
     log_info "Entering project directory..."

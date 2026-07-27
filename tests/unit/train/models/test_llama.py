@@ -4,9 +4,9 @@ from torch import nn
 from transformers import LlamaForCausalLM as HFLlamaForCausalLM
 from transformers.models.llama.configuration_llama import LlamaConfig
 
-from prime_rl.trainer.models.layers.lm_head import inject_prime_lm_head
-from prime_rl.trainer.models.llama import LlamaForCausalLM as PrimeRLLlamaForCausalLM
-from prime_rl.utils.utils import default_dtype
+from aether_rl.trainer.models.layers.lm_head import inject_prime_lm_head
+from aether_rl.trainer.models.llama import LlamaForCausalLM as AetherRLLlamaForCausalLM
+from aether_rl.utils.utils import default_dtype
 
 pytestmark = [pytest.mark.gpu]
 
@@ -28,7 +28,7 @@ def get_model_pairs():
     hf_config._attn_implementation = "flash_attention_2"
     with torch.device("cuda"), default_dtype(torch.bfloat16):
         hf_model = HFLlamaForCausalLM._from_config(hf_config)
-        prime_model = PrimeRLLlamaForCausalLM._from_config(hf_config)
+        prime_model = AetherRLLlamaForCausalLM._from_config(hf_config)
     with torch.no_grad():
         state_dict = hf_model.state_dict()
         prime_state_keys = prime_model.state_dict().keys()

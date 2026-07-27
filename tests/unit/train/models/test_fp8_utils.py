@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from prime_rl.trainer.models.kernels.fp8_utils import (
+from aether_rl.trainer.models.kernels.fp8_utils import (
     per_block_cast_to_fp8_tp_triton,
     per_block_cast_to_fp8_triton,
     per_token_cast_to_fp8_tp_triton,

@@ -1,6 +1,6 @@
 import pytest
 
-from prime_rl.utils.pathing import validate_output_dir
+from aether_rl.utils.pathing import validate_output_dir
 
 
 def test_nonexistent_dir_passes(tmp_path):

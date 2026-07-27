@@ -1,8 +1,8 @@
 # Configuration
 
-Every `prime-rl` entrypoint uses [`pydantic-config`](https://github.com/PrimeIntellect-ai/pydantic-config): TOML files for reproducible base configs, CLI flags for one-off overrides.
+Every `aether-rl` entrypoint uses [`pydantic-config`](https://github.com/PrimeIntellect-ai/pydantic-config): TOML files for reproducible base configs, CLI flags for one-off overrides.
 
-> **AI agents working in this repo:** the equivalent runbook is at [`skills/configs/SKILL.md`](https://github.com/PrimeIntellect-ai/prime-rl/blob/main/skills/configs/SKILL.md), with extra runtime hints (where config classes live, validator conventions, the trainer-side `enable_token_export` flag) that aren't surfaced here.
+> **AI agents working in this repo:** the equivalent runbook is at [`skills/configs/SKILL.md`](https://github.com/aethercompute/aether-rl/blob/main/skills/configs/SKILL.md), with extra runtime hints (where config classes live, validator conventions, the trainer-side `enable_token_export` flag) that aren't surfaced here.
 
 ## Table of Contents
 
@@ -204,24 +204,24 @@ For standalone `sft` and `inference` configs, `[env_vars]` applies to that entry
 
 ## Examples
 
-The shipped end-to-end examples in [`examples/`](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples) are the canonical, kept-up-to-date references — the rest of the repo's TOMLs (under `configs/`) are CI- and debug-internal and may drift. Each basic example directory has its own README with the full launch story; the advanced examples are config-only.
+The shipped end-to-end examples in [`examples/`](https://github.com/aethercompute/aether-rl/tree/main/examples) are the canonical, kept-up-to-date references — the rest of the repo's TOMLs (under `configs/`) are CI- and debug-internal and may drift. Each basic example directory has its own README with the full launch story; the advanced examples are config-only.
 
 **Basic** (1–8 GPUs):
 
-- [**Reverse Text**](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/basic/reverse-text) — `Qwen3-0.6B` reversing a chunk of text with single-turn SFT and RL.
-- [**Wordle**](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/basic/wordle) — `Qwen3-1.7B` playing Wordle with multi-turn SFT and RL; the shipped RL config uses eight GPUs.
-- [**Alphabet Sort**](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/basic/alphabet-sort) — `Qwen3-4B-Instruct-2507` sorting names with multi-turn LoRA RL and no SFT warmup.
-- [**Wiki Search**](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/basic/wiki-search) — `Qwen3-4B-Instruct-2507` answering trivia by searching a Wikipedia corpus. Multi-turn with tool use.
-- [**Hendrycks Sanity**](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/basic/hendrycks-sanity) — `DeepSeek-R1-Distill-Qwen-1.5B` on a filtered MATH subset. Useful for algorithm ablations.
+- [**Reverse Text**](https://github.com/aethercompute/aether-rl/tree/main/examples/basic/reverse-text) — `Qwen3-0.6B` reversing a chunk of text with single-turn SFT and RL.
+- [**Wordle**](https://github.com/aethercompute/aether-rl/tree/main/examples/basic/wordle) — `Qwen3-1.7B` playing Wordle with multi-turn SFT and RL; the shipped RL config uses eight GPUs.
+- [**Alphabet Sort**](https://github.com/aethercompute/aether-rl/tree/main/examples/basic/alphabet-sort) — `Qwen3-4B-Instruct-2507` sorting names with multi-turn LoRA RL and no SFT warmup.
+- [**Wiki Search**](https://github.com/aethercompute/aether-rl/tree/main/examples/basic/wiki-search) — `Qwen3-4B-Instruct-2507` answering trivia by searching a Wikipedia corpus. Multi-turn with tool use.
+- [**Hendrycks Sanity**](https://github.com/aethercompute/aether-rl/tree/main/examples/basic/hendrycks-sanity) — `DeepSeek-R1-Distill-Qwen-1.5B` on a filtered MATH subset. Useful for algorithm ablations.
 
 **Advanced** (SLURM):
 
-- [**Qwen3-30B-A3B**](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/advanced/qwen3-30b-a3b) — `Qwen3-30B-A3B` on math, SWE, and tool use.
-- [**GLM-4.5-Air**](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/advanced/glm-4.5-air) — `GLM-4.5-Air` on search, SWE, and terminal.
-- [**Nemotron-3-Super**](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/advanced/nemotron-3-super) — `Nemotron-3-Super-120B` hybrid-Mamba MoE on SWE at 131k context.
-- [**MiniMax-M2.5 SWE**](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/advanced/minimax-m2.5) — `MiniMax-M2.5` on agentic SWE.
-- [**INTELLECT-3.1**](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/advanced/intellect-3.1) — reproduces our INTELLECT-3.1 training run.
-- [**High-throughput GLM-5**](https://github.com/PrimeIntellect-ai/prime-rl/tree/main/examples/advanced/glm-5.2) — large-scale `GLM-5`/`GLM-5.2` inference with P/D disaggregation and FP8.
+- [**Qwen3-30B-A3B**](https://github.com/aethercompute/aether-rl/tree/main/examples/advanced/qwen3-30b-a3b) — `Qwen3-30B-A3B` on math, SWE, and tool use.
+- [**GLM-4.5-Air**](https://github.com/aethercompute/aether-rl/tree/main/examples/advanced/glm-4.5-air) — `GLM-4.5-Air` on search, SWE, and terminal.
+- [**Nemotron-3-Super**](https://github.com/aethercompute/aether-rl/tree/main/examples/advanced/nemotron-3-super) — `Nemotron-3-Super-120B` hybrid-Mamba MoE on SWE at 131k context.
+- [**MiniMax-M2.5 SWE**](https://github.com/aethercompute/aether-rl/tree/main/examples/advanced/minimax-m2.5) — `MiniMax-M2.5` on agentic SWE.
+- [**INTELLECT-3.1**](https://github.com/aethercompute/aether-rl/tree/main/examples/advanced/intellect-3.1) — reproduces our INTELLECT-3.1 training run.
+- [**High-throughput GLM-5**](https://github.com/aethercompute/aether-rl/tree/main/examples/advanced/glm-5.2) — large-scale `GLM-5`/`GLM-5.2` inference with P/D disaggregation and FP8.
 
 ### Worked Example: Compose, Override, Dry-Run
 

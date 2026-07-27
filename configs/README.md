@@ -1,6 +1,6 @@
 # Configs
 
-Configurations for running prime-rl.
+Configurations for running aether-rl.
 
 - **[`basic/`](basic)** — small, 2-GPU (1 trainer + 1 inference) configs for the core
   environments, sized to run on a single dev machine. Each mirrors the matching

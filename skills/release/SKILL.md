@@ -1,6 +1,6 @@
 ---
 name: release
-description: How to prepare and publish GitHub releases for prime-rl. Use when drafting release notes, tagging versions, or publishing releases.
+description: How to prepare and publish GitHub releases for aether-rl. Use when drafting release notes, tagging versions, or publishing releases.
 ---
 
 # Releases
@@ -18,7 +18,7 @@ Release notes live on the GitHub Release, not in the repo. Prime-rl is **not** o
 ```bash
 git fetch origin --tags
 grep '^version' pyproject.toml
-gh release list --repo PrimeIntellect-ai/prime-rl --limit 5
+gh release list --repo aethercompute/aether-rl --limit 5
 ```
 
 SemVer (`MAJOR.MINOR.PATCH`). Confirm with the user before continuing.
@@ -37,7 +37,7 @@ gh pr list --base main --state merged --search \
 ```
 
 Tips:
-- PR refs: `[#1234](https://github.com/PrimeIntellect-ai/prime-rl/pull/1234)`.
+- PR refs: `[#1234](https://github.com/aethercompute/aether-rl/pull/1234)`.
 - Contributors: order by commit count, use the GH `@username` from the API (not git author names).
 - Verify any TOML field names against the actual config classes.
 
@@ -59,7 +59,7 @@ git switch -c chore/release-$NEW
 git add pyproject.toml
 git commit -m "chore: release $NEW"
 git push -u origin "chore/release-$NEW"
-gh pr create --draft --title "chore: release $NEW" --body "Bumps version to ${NEW#v}. Draft release: https://github.com/PrimeIntellect-ai/prime-rl/releases/tag/$NEW"
+gh pr create --draft --title "chore: release $NEW" --body "Bumps version to ${NEW#v}. Draft release: https://github.com/aethercompute/aether-rl/releases/tag/$NEW"
 ```
 
 Stop. Do not tag, push tags, or flip the draft to published — the workflow does that on merge.

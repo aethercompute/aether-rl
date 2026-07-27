@@ -7,9 +7,9 @@ from typing import Callable, Generator
 
 import pytest
 
-from prime_rl.trainer.world import reset_world
-from prime_rl.utils.logger import reset_logger, setup_logger
-from prime_rl.utils.process import cleanup_process
+from aether_rl.trainer.world import reset_world
+from aether_rl.utils.logger import reset_logger, setup_logger
+from aether_rl.utils.process import cleanup_process
 
 
 @pytest.fixture(autouse=True)

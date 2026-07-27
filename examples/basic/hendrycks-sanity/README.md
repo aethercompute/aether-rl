@@ -11,7 +11,7 @@ Because our trainer is asynchronous, we perform only one gradient step per batch
 The config uses `math-env-v1` for training and `aime24-v1` for evaluation. Install both workspace packages:
 
 ```bash
-uv sync --all-extras --package prime-rl --package math-env-v1 --package aime24-v1
+uv sync --all-extras --package aether-rl --package math-env-v1 --package aime24-v1
 ```
 
 ## Training

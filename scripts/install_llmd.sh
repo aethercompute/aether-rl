@@ -7,7 +7,7 @@
 #
 # epp/pd-sidecar are built from a pinned llm-d-router commit. We currently build
 # from a small fork that adds P/D disaggregation for vLLM's token-in
-# /inference/v1/generate endpoint (prime-rl's renderer / TITO rollout path) —
+# /inference/v1/generate endpoint (aether-rl's renderer / TITO rollout path) —
 # upstream's pd-sidecar only disaggregates the OpenAI endpoints, so token-in P/D
 # silently runs decode-only. The fork is pending upstream PR
 # llm-d/llm-d-router#1458; switch LLMD_ROUTER_REPO back to the upstream repo and

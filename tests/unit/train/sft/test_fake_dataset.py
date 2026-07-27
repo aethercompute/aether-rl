@@ -1,4 +1,4 @@
-from prime_rl.trainer.sft.data import FakeDataset
+from aether_rl.trainer.sft.data import FakeDataset
 
 
 def test_init_fake_dataset():

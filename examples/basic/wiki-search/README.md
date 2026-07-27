@@ -7,7 +7,7 @@ The taskset provides tools to search page titles, list page sections, and read a
 ## Setup
 
 ```bash
-uv sync --all-extras --package prime-rl --package wiki-search-v1
+uv sync --all-extras --package aether-rl --package wiki-search-v1
 export OPENAI_API_KEY="your-api-key"
 bash scripts/tmux.sh
 ```

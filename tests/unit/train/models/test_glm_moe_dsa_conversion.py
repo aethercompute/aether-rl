@@ -1,6 +1,6 @@
 import torch
 
-from prime_rl.trainer.models.glm_moe_dsa.converting_glm_moe_dsa import convert_tt_layer_to_vllm_kernel
+from aether_rl.trainer.models.glm_moe_dsa.converting_glm_moe_dsa import convert_tt_layer_to_vllm_kernel
 
 
 def _build_prime_layer_state(layer_idx: int = 0) -> dict[str, torch.Tensor]:

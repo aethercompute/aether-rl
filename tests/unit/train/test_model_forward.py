@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
-from prime_rl.trainer.model import forward
+from aether_rl.trainer.model import forward
 
 
 class _CaptureModel(nn.Module):

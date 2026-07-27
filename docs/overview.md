@@ -1,10 +1,10 @@
 # Overview
 
-`prime-rl` supports asynchronous reinforcement learning and supervised fine-tuning of language models.
+`aether-rl` supports asynchronous reinforcement learning and supervised fine-tuning of language models.
 
 ## Architecture
 
-A `prime-rl` RL run is three cooperating processes:
+A `aether-rl` RL run is three cooperating processes:
 
 ![Architecture](assets/architecture.png)
 
@@ -17,10 +17,10 @@ The three processes communicate through configurable transports — by default t
 ## Installation
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/PrimeIntellect-ai/prime-rl/main/scripts/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/aethercompute/aether-rl/main/scripts/install.sh | bash
 ```
 
-The script clones the repo, initializes the submodules, installs `uv`, and runs `uv sync --all-extras`. Environment packages are separate workspace members and are not installed by that command. For manual setup, see the [README](https://github.com/PrimeIntellect-ai/prime-rl#setup).
+The script clones the repo, initializes the submodules, installs `uv`, and runs `uv sync --all-extras`. Environment packages are separate workspace members and are not installed by that command. For manual setup, see the [README](https://github.com/aethercompute/aether-rl#setup).
 
 Standalone SFT or inference requires at least one NVIDIA GPU. The default local RL deployment assigns separate trainer and inference GPUs and therefore requires two visible GPUs.
 
@@ -29,7 +29,7 @@ Standalone SFT or inference requires at least one NVIDIA GPU. The default local 
 Install the `reverse-text-v1` workspace package, then train the shipped SFT-warmed `Qwen3-0.6B` on two GPUs:
 
 ```bash
-uv sync --all-extras --package prime-rl --package reverse-text-v1
+uv sync --all-extras --package aether-rl --package reverse-text-v1
 uv run rl @ examples/basic/reverse-text/rl.toml
 ```
 

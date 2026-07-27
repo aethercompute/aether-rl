@@ -5120,7 +5120,7 @@ dev = [
 ]
 
 [[package]]
-name = "prime-rl"
+name = "aether-rl"
 version = "0.7.0"
 source = { editable = "." }
 dependencies = [
@@ -5141,7 +5141,7 @@ dependencies = [
     { name = "pandas" },
     { name = "prime" },
     { name = "prime-pydantic-config" },
-    { name = "prime-rl-configs" },
+    { name = "aether-rl-configs" },
     { name = "pyarrow" },
     { name = "pybase64" },
     { name = "pyzmq" },
@@ -5251,12 +5251,12 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.0" },
     { name = "prime", specifier = ">=0.6.19" },
     { name = "prime-pydantic-config", editable = "deps/pydantic-config" },
-    { name = "prime-rl", extras = ["disagg"], marker = "extra == 'all'" },
-    { name = "prime-rl", extras = ["flash-attn"], marker = "extra == 'all'" },
-    { name = "prime-rl", extras = ["flash-attn-3"], marker = "extra == 'all'" },
-    { name = "prime-rl", extras = ["flash-attn-cute"], marker = "extra == 'all'" },
-    { name = "prime-rl", extras = ["quack"], marker = "extra == 'all'" },
-    { name = "prime-rl-configs", editable = "packages/prime-rl-configs" },
+    { name = "aether-rl", extras = ["disagg"], marker = "extra == 'all'" },
+    { name = "aether-rl", extras = ["flash-attn"], marker = "extra == 'all'" },
+    { name = "aether-rl", extras = ["flash-attn-3"], marker = "extra == 'all'" },
+    { name = "aether-rl", extras = ["flash-attn-cute"], marker = "extra == 'all'" },
+    { name = "aether-rl", extras = ["quack"], marker = "extra == 'all'" },
+    { name = "aether-rl-configs", editable = "packages/aether-rl-configs" },
     { name = "pyarrow", specifier = ">=21.0.0" },
     { name = "pybase64", specifier = ">=1.4.2" },
     { name = "pyzmq", specifier = ">=27.1.0" },
@@ -5300,9 +5300,9 @@ dev = [
 mamba-ssm = [{ name = "mamba-ssm", specifier = ">=2.3.0" }]
 
 [[package]]
-name = "prime-rl-configs"
+name = "aether-rl-configs"
 version = "0.4.0"
-source = { editable = "packages/prime-rl-configs" }
+source = { editable = "packages/aether-rl-configs" }
 dependencies = [
     { name = "prime-pydantic-config" },
     { name = "pydantic" },

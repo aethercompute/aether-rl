@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from prime_rl.orchestrator.metrics import EvalRollouts, Stat, TrainRollouts
-from prime_rl.orchestrator.utils import compute_pass_metrics
+from aether_rl.orchestrator.metrics import EvalRollouts, Stat, TrainRollouts
+from aether_rl.orchestrator.utils import compute_pass_metrics
 
 
 def mk(

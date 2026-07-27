@@ -5,7 +5,7 @@ This example trains `Qwen3-4B-Instruct-2507` with LoRA on the multi-turn `alphab
 ## Setup
 
 ```bash
-uv sync --all-extras --package prime-rl --package alphabet-sort-v1
+uv sync --all-extras --package aether-rl --package alphabet-sort-v1
 bash scripts/tmux.sh
 ```
 

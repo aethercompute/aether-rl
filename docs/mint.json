@@ -2,7 +2,7 @@
     "$schema": "https://mintlify.com/docs.json",
     "navigation": [
         {
-            "group": "prime-rl",
+            "group": "aether-rl",
             "pages": [
                 "overview",
                 "configuration",

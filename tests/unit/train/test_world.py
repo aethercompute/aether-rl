@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from prime_rl.trainer.world import get_world
+from aether_rl.trainer.world import get_world
 
 ENV_VARS = ["RANK", "WORLD_SIZE", "LOCAL_RANK", "LOCAL_WORLD_SIZE"]
 

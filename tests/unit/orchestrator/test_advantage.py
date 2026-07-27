@@ -3,15 +3,15 @@ import asyncio
 import pytest
 import verifiers.v1 as vf
 
-from prime_rl.configs.algorithm import (
+from aether_rl.configs.algorithm import (
     GRPOAlgoConfig,
     LinearLengthPenaltyConfig,
     MaxRLAlgoConfig,
 )
-from prime_rl.orchestrator.algo.grpo import GRPOAlgorithm
-from prime_rl.orchestrator.algo.max_rl import MaxRLAlgorithm
-from prime_rl.orchestrator.trajectories import trace_to_samples
-from prime_rl.orchestrator.types import Rollout
+from aether_rl.orchestrator.algo.grpo import GRPOAlgorithm
+from aether_rl.orchestrator.algo.max_rl import MaxRLAlgorithm
+from aether_rl.orchestrator.trajectories import trace_to_samples
+from aether_rl.orchestrator.types import Rollout
 
 
 def _build_rollout(

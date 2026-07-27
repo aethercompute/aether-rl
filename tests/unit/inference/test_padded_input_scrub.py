@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import torch
 
-import prime_rl.inference.vllm.padded_input_scrub as padded_input_scrub
-from prime_rl.inference.vllm.padded_input_scrub import (
+import aether_rl.inference.vllm.padded_input_scrub as padded_input_scrub
+from aether_rl.inference.vllm.padded_input_scrub import (
     _zero_padded_model_inputs,
     monkey_patch_vllm_padded_input_scrub,
 )
@@ -39,7 +39,7 @@ def test_monkey_patch_preprocess_matches_vllm_preprocess_signature(monkeypatch):
     monkeypatch.setattr(GPUModelRunner, "_preprocess", fake_preprocess)
     monkeypatch.setattr(
         GPUModelRunner,
-        "_prime_rl_padded_input_scrub",
+        "_aether_rl_padded_input_scrub",
         False,
         raising=False,
     )

@@ -6,13 +6,13 @@ import tomli_w
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_config import ConfigFileError
 
-from prime_rl.configs.inference import InferenceConfig
-from prime_rl.configs.orchestrator import OrchestratorConfig
-from prime_rl.configs.rl import RLConfig
-from prime_rl.configs.sft import SFTConfig
-from prime_rl.configs.trainer import ModelConfig as TrainerModelConfig
-from prime_rl.configs.trainer import TrainerConfig
-from prime_rl.utils.config import BaseConfig, cli, to_toml_dict
+from aether_rl.configs.inference import InferenceConfig
+from aether_rl.configs.orchestrator import OrchestratorConfig
+from aether_rl.configs.rl import RLConfig
+from aether_rl.configs.sft import SFTConfig
+from aether_rl.configs.trainer import ModelConfig as TrainerModelConfig
+from aether_rl.configs.trainer import TrainerConfig
+from aether_rl.utils.config import BaseConfig, cli, to_toml_dict
 
 # All config config classes
 CONFIG_CLASSES = [

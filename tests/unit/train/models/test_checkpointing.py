@@ -1,11 +1,11 @@
 import torch.nn as nn
 
-from prime_rl.trainer.models.layers.checkpointing import (
+from aether_rl.trainer.models.layers.checkpointing import (
     get_supported_targets,
     set_selective_activation_checkpointing,
 )
 
-_PATCHED_METHODS_ATTR = "_prime_rl_selective_ac_patched_methods"
+_PATCHED_METHODS_ATTR = "_aether_rl_selective_ac_patched_methods"
 
 
 class DummySelfAttention(nn.Module):

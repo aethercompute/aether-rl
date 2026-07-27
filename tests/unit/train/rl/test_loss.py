@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from prime_rl.configs.trainer import CustomLossConfig, DefaultLossConfig
-from prime_rl.trainer.rl.loss import LossInputs, LossOutputs, compute_entropy, compute_loss, setup_rl_loss_fn
+from aether_rl.configs.trainer import CustomLossConfig, DefaultLossConfig
+from aether_rl.trainer.rl.loss import LossInputs, LossOutputs, compute_entropy, compute_loss, setup_rl_loss_fn
 
 pytestmark = [pytest.mark.gpu]
 

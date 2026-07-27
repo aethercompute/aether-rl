@@ -3,10 +3,10 @@ import torch
 from torch import nn
 from transformers import Qwen3MoeForCausalLM as HFQwen3MoeForCausalLM
 
-from prime_rl.trainer.models.layers.lm_head import inject_prime_lm_head
-from prime_rl.trainer.models.qwen3_moe import Qwen3MoeConfig
-from prime_rl.trainer.models.qwen3_moe import Qwen3MoeForCausalLM as PrimeRLQwen3MoeForCausalLM
-from prime_rl.utils.utils import default_dtype
+from aether_rl.trainer.models.layers.lm_head import inject_prime_lm_head
+from aether_rl.trainer.models.qwen3_moe import Qwen3MoeConfig
+from aether_rl.trainer.models.qwen3_moe import Qwen3MoeForCausalLM as AetherRLQwen3MoeForCausalLM
+from aether_rl.utils.utils import default_dtype
 
 pytestmark = [pytest.mark.gpu]
 
@@ -31,7 +31,7 @@ def get_model_pairs():
     hf_config._attn_implementation = "flash_attention_2"
     with torch.device("cuda"), default_dtype(torch.bfloat16):
         hf_model = HFQwen3MoeForCausalLM._from_config(hf_config)
-        prime_model = PrimeRLQwen3MoeForCausalLM._from_config(hf_config)
+        prime_model = AetherRLQwen3MoeForCausalLM._from_config(hf_config)
     with torch.no_grad():
         state_dict = hf_model.state_dict()
         prime_state_keys = prime_model.state_dict().keys()

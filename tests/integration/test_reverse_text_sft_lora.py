@@ -3,7 +3,7 @@ from typing import Callable
 
 import pytest
 
-from prime_rl.trainer.weights import load_state_dict
+from aether_rl.trainer.weights import load_state_dict
 from tests.conftest import ProcessResult
 from tests.utils import check_loss_goes_down, strip_escape_codes
 

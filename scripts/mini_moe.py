@@ -1,7 +1,7 @@
 """Create and verify a mini MoE model for testing.
 
 Creates a small MoE model with random weights, saves it with a tokenizer,
-and verifies the HF <-> PrimeRL weight conversion roundtrip.
+and verifies the HF <-> AetherRL weight conversion roundtrip.
 
 Usage:
     # Create and verify
@@ -21,16 +21,16 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
     Qwen3_5MoeForConditionalGeneration as HFQwen3_5MoeVLM,
 )
 
-from prime_rl.trainer.models.glm4_moe import Glm4MoeConfig
-from prime_rl.trainer.models.glm4_moe import Glm4MoeForCausalLM as PrimeRLGlm4MoeForCausalLM
-from prime_rl.trainer.models.laguna import LagunaConfig
-from prime_rl.trainer.models.laguna import LagunaForCausalLM as PrimeRLLagunaForCausalLM
-from prime_rl.trainer.models.layers.lm_head import inject_prime_lm_head
-from prime_rl.trainer.models.minimax_m2 import MiniMaxM2Config
-from prime_rl.trainer.models.minimax_m2 import MiniMaxM2ForCausalLM as PrimeRLMiniMaxM2ForCausalLM
-from prime_rl.trainer.models.qwen3_5_moe import Qwen3_5MoeForCausalLM as PrimeRLQwen3_5MoeVLM
-from prime_rl.utils.logger import setup_logger
-from prime_rl.utils.utils import default_dtype
+from aether_rl.trainer.models.glm4_moe import Glm4MoeConfig
+from aether_rl.trainer.models.glm4_moe import Glm4MoeForCausalLM as AetherRLGlm4MoeForCausalLM
+from aether_rl.trainer.models.laguna import LagunaConfig
+from aether_rl.trainer.models.laguna import LagunaForCausalLM as AetherRLLagunaForCausalLM
+from aether_rl.trainer.models.layers.lm_head import inject_prime_lm_head
+from aether_rl.trainer.models.minimax_m2 import MiniMaxM2Config
+from aether_rl.trainer.models.minimax_m2 import MiniMaxM2ForCausalLM as AetherRLMiniMaxM2ForCausalLM
+from aether_rl.trainer.models.qwen3_5_moe import Qwen3_5MoeForCausalLM as AetherRLQwen3_5MoeVLM
+from aether_rl.utils.logger import setup_logger
+from aether_rl.utils.utils import default_dtype
 
 setup_logger("info")
 
@@ -101,7 +101,7 @@ ARCH_PRESETS = {
             eos_token_id=[151329, 151336, 151338],
         ),
         "hf_model_class": HFGlm4MoeForCausalLM,
-        "prime_model_class": PrimeRLGlm4MoeForCausalLM,
+        "prime_model_class": AetherRLGlm4MoeForCausalLM,
         "tokenizer_source": "THUDM/GLM-4-9B-0414",
     },
     "minimax_m2": {
@@ -129,7 +129,7 @@ ARCH_PRESETS = {
             auto_map={"AutoModelForCausalLM": "MiniMaxAI/MiniMax-M2.1--modeling_minimax_m2.MiniMaxM2ForCausalLM"},
         ),
         "hf_model_class": None,  # uses AutoModelForCausalLM with trust_remote_code
-        "prime_model_class": PrimeRLMiniMaxM2ForCausalLM,
+        "prime_model_class": AetherRLMiniMaxM2ForCausalLM,
         "tokenizer_source": "MiniMaxAI/MiniMax-M2.1",
     },
     "laguna": {
@@ -182,13 +182,13 @@ ARCH_PRESETS = {
             },
         ),
         "hf_model_class": None,  # uses Poolside remote modeling code
-        "prime_model_class": PrimeRLLagunaForCausalLM,
+        "prime_model_class": AetherRLLagunaForCausalLM,
         "tokenizer_source": "poolside/Laguna-XS.2",
     },
     "qwen3_5_moe_vlm": {
         "config_fn": _qwen3_5_moe_vlm_config,
         "hf_model_class": HFQwen3_5MoeVLM,
-        "prime_model_class": PrimeRLQwen3_5MoeVLM,
+        "prime_model_class": AetherRLQwen3_5MoeVLM,
         "tokenizer_source": "Qwen/Qwen3.5-35B-A3B",
         "is_vlm": True,
     },
@@ -245,7 +245,7 @@ def create(arch: str, output_dir: Path) -> None:
 def verify(arch: str, model_dir: Path) -> None:
     preset = ARCH_PRESETS[arch]
     is_vlm = preset.get("is_vlm", False)
-    print(f"Verifying HF <-> PrimeRL roundtrip for {model_dir}...")
+    print(f"Verifying HF <-> AetherRL roundtrip for {model_dir}...")
 
     trust_remote_code = preset["hf_model_class"] is None
     config = AutoConfig.from_pretrained(str(model_dir), trust_remote_code=trust_remote_code)
@@ -278,16 +278,16 @@ def verify(arch: str, model_dir: Path) -> None:
 
     if is_vlm:
         # HF GatedDeltaNet has a dtype bug in float32 mode; just verify non-NaN output
-        assert not torch.isnan(prime_output["logits"]).any(), "PrimeRL VLM output contains NaN"
+        assert not torch.isnan(prime_output["logits"]).any(), "AetherRL VLM output contains NaN"
         assert prime_output["logits"].shape == hf_output.logits.shape
         print("  VLM forward pass verified (shape match, no NaN)")
     else:
         logits_diff = prime_output["logits"] - hf_output.logits
         max_diff = logits_diff.abs().max().item()
-        print(f"  HF vs PrimeRL max logits diff: {max_diff:.6f}")
-        assert max_diff < 0.1, f"HF vs PrimeRL logits mismatch: max diff {max_diff}"
+        print(f"  HF vs AetherRL max logits diff: {max_diff:.6f}")
+        assert max_diff < 0.1, f"HF vs AetherRL logits mismatch: max diff {max_diff}"
 
-    # Roundtrip weight conversion: HF -> PrimeRL -> HF
+    # Roundtrip weight conversion: HF -> AetherRL -> HF
     # Normalize both through the same roundtrip to handle expert format differences
     with torch.no_grad():
         roundtrip_sd = prime_model.convert_to_hf(dict(prime_model.state_dict()))
@@ -298,7 +298,7 @@ def verify(arch: str, model_dir: Path) -> None:
     for key in orig_sd:
         assert key in roundtrip_sd, f"Missing key after roundtrip: {key}"
         assert torch.equal(orig_sd[key], roundtrip_sd[key]), f"Roundtrip mismatch at {key}"
-    print("  HF -> PrimeRL -> HF weight roundtrip verified")
+    print("  HF -> AetherRL -> HF weight roundtrip verified")
 
     print("  Verification passed.")
 

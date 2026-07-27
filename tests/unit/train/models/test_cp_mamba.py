@@ -4,7 +4,7 @@ import types
 import pytest
 import torch
 
-from prime_rl.trainer.models.layers import cp_mamba
+from aether_rl.trainer.models.layers import cp_mamba
 
 
 class _FakeMixer(torch.nn.Module):

@@ -1,6 +1,6 @@
 ---
 name: training
-description: Launch and monitor prime-rl training runs. Use when starting, supervising, or debugging an RL/SFT run. Routes to `start-run` (entrypoints + how to launch) and `monitor-run` (logs, metrics, check-ins).
+description: Launch and monitor aether-rl training runs. Use when starting, supervising, or debugging an RL/SFT run. Routes to `start-run` (entrypoints + how to launch) and `monitor-run` (logs, metrics, check-ins).
 ---
 
 # Training

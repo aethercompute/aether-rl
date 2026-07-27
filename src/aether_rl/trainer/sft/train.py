@@ -1,0 +1,668 @@
+import aether_rl._compat  # noqa: F401 — patch ring_flash_attn compat before import
+
+import time
+from contextlib import nullcontext
+from datetime import timedelta
+
+from renderers.base import create_renderer
+from ring_flash_attn import substitute_hf_flash_attn
+from torch.nn import CrossEntropyLoss
+
+# Import environment before any other imports
+# ruff: noqa: I001
+
+from aether_rl.trainer.models.layers.attn import substitute_ring_attn
+from aether_rl.utils.act_offloading import maybe_activation_offloading
+import torch
+from torch.profiler import profile, ProfilerActivity, record_function
+from aether_rl.trainer.ckpt import setup_ckpt_managers
+from aether_rl.utils.pathing import resolve_latest_ckpt_step
+from aether_rl.configs.sft import SFTConfig
+from aether_rl.utils.cp import setup_cp_params, shard_for_cp
+from aether_rl.trainer.runs import Progress, get_multi_run_manager, setup_multi_run_manager
+from aether_rl.trainer.models.layers.lora import set_lora_num_tokens
+from aether_rl.utils.logger import format_time, setup_logger
+from aether_rl.trainer.optim import setup_optimizer
+from aether_rl.trainer.scheduler import setup_scheduler
+from aether_rl.trainer.model import (
+    forward,
+    get_load_balance_stats,
+    is_tt_moe_model,
+    setup_processor,
+    setup_tokenizer,
+    resolve_auto_attn,
+    setup_model,
+)
+from aether_rl.trainer.parallel_dims import get_parallel_dims, resolve_ep
+from aether_rl.trainer.perf import get_perf_counter
+from aether_rl.trainer.sft.data import load_sft_dataset, setup_dataloader, setup_dataset
+from aether_rl.trainer.utils import (
+    GarbageCollection,
+    MemoryProfiler,
+    export_benchmark_json,
+    get_zero_gradient_ratio,
+    get_ckpt_disk_metrics,
+    print_sample,
+    setup_torch_distributed,
+    print_benchmark,
+)
+from aether_rl.trainer.world import get_world
+from aether_rl.utils.heartbeat import Heartbeat
+from aether_rl.utils.monitor import setup_monitor
+from aether_rl.utils.config import cli
+from aether_rl.utils.process import set_proc_title
+from aether_rl.utils.utils import clean_exit, to_col_format
+import torch.distributed as dist
+
+from torchtitan.distributed.utils import clip_grad_norm_
+
+
+@clean_exit
+def train(config: SFTConfig):
+    # Setup world and logger
+    world = get_world()
+    logger = setup_logger(
+        config.log.level,
+        json_logging=config.log.json_logging,
+    )
+    logger.info(f"Starting SFT trainer in {world}")
+
+    # Print warning if running in benchmark mode
+    if config.bench is not None:
+        logger.warning(f"Running in benchmark mode (max_steps={config.max_steps})")
+
+    # Setup the monitor
+    logger.info(f"Initializing monitor ({config.wandb})")
+    monitor = setup_monitor(
+        config.wandb, file_config=config.file_monitor, output_dir=config.output_dir, run_config=config
+    )
+
+    # Setup heartbeat (only on rank 0)
+    heart = None
+    if config.heartbeat is not None and world.rank == 0:
+        logger.info("Initializing heartbeat")
+        heart = Heartbeat(config.heartbeat.url)
+
+    # Set precision
+    setup_torch_distributed(
+        timeout=timedelta(seconds=config.dist_timeout_seconds), enable_gloo=config.model.fsdp_cpu_offload
+    )
+    # Configurable to support ROCm/AMD GPUs where reduced precision
+    # matmul corrupts softmax over large vocabularies. Override via config
+    # (e.g. matmul_precision = "highest") on ROCm.
+    torch.set_float32_matmul_precision(config.matmul_precision)
+
+    if config.model.lora is not None:
+        setup_multi_run_manager(config.output_dir, 1, torch.device("cuda", world.local_rank), config.model.lora)
+
+    # Resolve ep="auto" to a concrete integer before creating parallel dims
+    resolve_ep(config.model)
+
+    # Initialize parallel dimensions
+    parallel_dims = get_parallel_dims(config.model, config.data.seq_len)
+
+    total_micro_batches = config.data.batch_size * config.model.cp
+    micro_batches_per_step = world.world_size * config.data.micro_batch_size
+    assert total_micro_batches % micro_batches_per_step == 0, (
+        f"batch_size * cp ({total_micro_batches}) must be divisible by "
+        f"world_size * micro_batch_size ({micro_batches_per_step})"
+    )
+    grad_accum_steps = total_micro_batches // micro_batches_per_step
+
+    # Resolve attn='auto' before CP setup so ring/ulysses patches use the correct kernel
+    resolve_auto_attn(config.model)
+
+    if parallel_dims.cp_enabled:
+        assert config.data.seq_len % parallel_dims.cp == 0, "Sequence length must be divisible by CP degree"
+        cp_group = parallel_dims.world_mesh["cp"].get_group()
+        cp_rank = parallel_dims.world_mesh["cp"].get_local_rank()
+        if config.model.cp_style == "ring":
+            substitute_hf_flash_attn(cp_group, heads_k_stride=1)
+            substitute_ring_attn(cp_group, heads_k_stride=1, attn_impl=config.model.attn)
+        else:
+            from aether_rl.trainer.models.layers.ulysses_attn import (
+                substitute_hf_ulysses_attn,
+                substitute_ulysses_attn,
+            )
+
+            substitute_hf_ulysses_attn(cp_group)
+            substitute_ulysses_attn(cp_group, attn_impl=config.model.attn)
+        from aether_rl.utils.cp import setup_model_cp, setup_sparse_mla_cp
+
+    # Set up checkpoint manager
+    logger.info(f"Initializing checkpoint managers ({config.ckpt})")
+    ckpt_manager, weight_ckpt_manager = setup_ckpt_managers(config.output_dir, config.ckpt, config.model.lora)
+
+    checkpoint_step = None
+    if config.ckpt and config.ckpt.resume_step is not None and ckpt_manager is not None:
+        if config.ckpt.resume_step == -1:
+            checkpoint_step = resolve_latest_ckpt_step(ckpt_manager.ckpt_dir)
+        else:
+            checkpoint_step = config.ckpt.resume_step
+
+    # Initialize the model and tokenizer
+    logger.info(f"Initializing model ({config.model})")
+    loading_from_ckpt_later = config.ckpt and checkpoint_step is not None
+    model = setup_model(config.model, parallel_dims, loading_from_ckpt_later)
+
+    if parallel_dims.cp_enabled:
+        from aether_rl.utils.cp import assert_cp_style_supports_model
+
+        assert_cp_style_supports_model(config.model.cp_style, model)
+        # sparse MLA is softmax (works with both ring and ulysses).
+        setup_sparse_mla_cp(model, cp_group, cp_rank, parallel_dims.cp)
+        # Linear-attn / Mamba layers are only configured under ulysses; with ring
+        # we'd have already raised above.
+        if config.model.cp_style == "ulysses":
+            setup_model_cp(model, cp_group, cp_rank, parallel_dims.cp)
+
+    if config.model.lora is not None:
+        multi_run_manager = get_multi_run_manager()
+        multi_run_manager.reset_run_parameters(0)
+        multi_run_manager.scaling_factors[0] = config.model.lora.alpha / config.model.lora.rank
+
+    logger.info(f"Initializing tokenizer ({config.tokenizer})")
+    tokenizer = setup_tokenizer(config.tokenizer)
+    processor = setup_processor(config.model)
+    if config.model.vlm is not None and processor is None:
+        raise ValueError(f"[model.vlm] is set but no multimodal processor could be loaded for {config.model.name!r}")
+
+    # Fake data never renders messages, so a model without a hand-coded renderer
+    # can still be used to benchmark step time / memory. Validation data is
+    # always real, so it needs the renderer even when training data is fake.
+    renderer = None
+    if config.data.type != "fake" or config.val is not None:
+        renderer = create_renderer(tokenizer, config.renderer)
+        if processor is not None and hasattr(renderer, "_processor"):
+            renderer._processor = processor
+        logger.info(f"Initialized {type(renderer).__name__} for {config.tokenizer.name}")
+
+    # Set up the optimizer
+    logger.info(f"Initializing optimizer ({config.optim})")
+    optimizer = setup_optimizer(
+        config.optim, list(model.named_parameters()), parallel_dims, cpu_offload=config.model.optim_cpu_offload
+    )
+
+    # Set up the learning rate scheduler
+    scheduler_steps = (
+        config.max_steps - config.ckpt.resume_step
+        if config.max_steps is not None
+        and (config.ckpt and config.ckpt.skip_scheduler and config.ckpt.resume_step is not None)
+        else config.max_steps
+    )
+    logger.info(f"Setting up {config.scheduler.type} scheduler with {scheduler_steps} steps ({config.scheduler})")
+    scheduler = setup_scheduler(optimizer, config.scheduler, scheduler_steps, config.optim.lr)
+
+    # Set up the dataset and dataloader
+    logger.info(f"Initializing data ({config.data})")
+    multimodal = config.model.vlm is not None
+    dataset = setup_dataset(tokenizer, config.data, config.model.cp, renderer=renderer, multimodal=multimodal)
+    dataloader = setup_dataloader(dataset, config.data)
+    dataiter = iter(dataloader)
+
+    val_raw_dataset = None
+    if config.val is not None:
+        logger.info(f"Loading validation dataset ({config.val.data.name})")
+        val_raw_dataset = load_sft_dataset(config.val.data)
+
+    # Optionally, resume training from a checkpoint
+    progress = Progress()
+
+    if checkpoint_step is not None:
+        ckpt_manager.load(
+            checkpoint_step,
+            model,
+            [optimizer],
+            scheduler if not config.ckpt.skip_scheduler else None,
+            progress if not config.ckpt.skip_progress else None,
+            dataloader=dataloader if not config.ckpt.skip_dataloader else None,
+        )
+        logger.info(f"Resuming training from checkpoint step {checkpoint_step}")
+        # The checkpoint finished step ``checkpoint_step``; resume training at the next step.
+        if not config.ckpt.skip_progress:
+            progress.step += 1
+        # This redundant setup is necessary because loading the optimizer's state has side effects on the scheduler state dict
+        if config.ckpt.skip_scheduler:
+            scheduler = setup_scheduler(optimizer, config.scheduler, scheduler_steps, config.optim.lr)
+    logger.info(
+        f"Starting from step {progress.step} (total_tokens={progress.total_tokens}, total_samples={progress.total_samples}, dataset_state={dataloader.state_dict()['dataset_state']})"
+    )
+
+    cp_enabled = parallel_dims.cp_enabled
+    cp_rank = parallel_dims.world_mesh["cp"].get_local_rank() if cp_enabled else 0
+    cp_group = parallel_dims.world_mesh["cp"].get_group() if cp_enabled else None
+    dp_cp_group = parallel_dims.get_mesh("dp_cp").get_group()
+    cp_size = parallel_dims.cp
+
+    def compute_loss(micro_batch: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass returning (loss_sum, token_count) over unmasked tokens."""
+        input_ids = micro_batch["input_ids"].to("cuda")
+        position_ids = micro_batch["position_ids"].to("cuda")
+        target_ids = micro_batch["target_ids"].to("cuda")
+        loss_mask = micro_batch["loss_mask"].to("cuda")
+        seq_lens = micro_batch["seq_lens"].to("cuda")
+        mm_kwargs = micro_batch.get("mm_kwargs")
+        mm_type_ids = micro_batch.get("mm_token_type_ids")
+
+        seq_lens_are_pre_shard = False
+
+        if cp_enabled:
+            # CP requires the sequence length to be divisible by cp_size. CatDataset
+            # pads every pack to seq_len; shard_for_cp raises on violations.
+            defer_vlm_cp_to_model = (
+                mm_kwargs is not None and "image_grid_thw" in mm_kwargs and config.model.cp_style == "ulysses"
+            )
+            if not defer_vlm_cp_to_model:
+                input_ids, position_ids = setup_cp_params(
+                    input_ids,
+                    position_ids,
+                    cp_rank,
+                    cp_size,
+                    cp_group,
+                    seq_lens=seq_lens,
+                    cp_style=config.model.cp_style,
+                )
+            seq_lens_are_pre_shard = True
+            target_ids = shard_for_cp(target_ids, cp_rank=cp_rank, cp_world_size=cp_size)
+            loss_mask = shard_for_cp(loss_mask, cp_rank=cp_rank, cp_world_size=cp_size)
+
+        if config.model.lora is not None:
+            set_lora_num_tokens(torch.full((1,), loss_mask.numel(), dtype=torch.int32, device="cuda"))
+
+        token_count = loss_mask.sum(dtype=torch.int64)
+
+        with maybe_activation_offloading(config.model.ac_offloading):
+            if isinstance(config.model.fused_lm_head_token_chunk_size, int):
+                # Same path as the RL trainer: the chunked LM head computes per-token
+                # logprobs without materializing the [N, V] logits, and per-token
+                # cross-entropy is the negative target logprob.
+                temperature = torch.ones_like(target_ids, dtype=torch.float32)
+                out = forward(
+                    model,
+                    input_ids,
+                    position_ids,
+                    seq_lens=seq_lens,
+                    labels=target_ids,
+                    temperature=temperature,
+                    mm_kwargs=mm_kwargs,
+                    mm_token_type_ids=mm_type_ids,
+                    seq_lens_are_pre_shard=seq_lens_are_pre_shard,
+                )
+                loss_sum = -out["logprobs"][loss_mask].sum()
+            else:
+                out = forward(
+                    model,
+                    input_ids,
+                    position_ids,
+                    mm_kwargs=mm_kwargs,
+                    mm_token_type_ids=mm_type_ids,
+                    seq_lens=seq_lens,
+                    seq_lens_are_pre_shard=seq_lens_are_pre_shard,
+                )
+                logits = out["logits"]
+                B, L, V = logits.shape
+                token_loss = CrossEntropyLoss(reduction="none")(logits.view(-1, V), target_ids.view(-1)).view(B, L)
+                loss_sum = token_loss[loss_mask].sum()
+                del logits
+
+        del out
+        return loss_sum, token_count
+
+    maybe_record_function = nullcontext
+
+    def run_eval_loop(data_iter):
+        """Validation forward loop. Returns token-weighted global mean loss."""
+        total_loss_sum = torch.tensor(0.0, device="cuda")
+        total_token_count = torch.tensor(0, dtype=torch.int64, device="cuda")
+        nan_count = torch.tensor(0, device="cuda")
+
+        # Variable-length packing yields different per-rank batch counts. Under FSDP
+        # every forward is a collective, so all ranks must agree on when to stop —
+        # otherwise the first rank to exit deadlocks the rest in the next all-gather.
+        # Sync per batch and exit together as soon as any rank exhausts its iterator.
+        data_iter = iter(data_iter)
+
+        with torch.no_grad():
+            while True:
+                micro_batch = next(data_iter, None)
+                has_data = torch.tensor(micro_batch is not None, dtype=torch.int32, device="cuda")
+                dist.all_reduce(has_data, op=dist.ReduceOp.MIN)
+                if has_data.item() == 0:
+                    break
+                loss_sum, token_count = compute_loss(micro_batch)
+                if not torch.isnan(loss_sum.detach()):
+                    total_loss_sum += loss_sum.detach()
+                    total_token_count += token_count
+                else:
+                    nan_count += 1
+
+        dist.all_reduce(total_loss_sum, op=dist.ReduceOp.SUM, group=dp_cp_group)
+        dist.all_reduce(total_token_count, op=dist.ReduceOp.SUM, group=dp_cp_group)
+        dist.all_reduce(nan_count, op=dist.ReduceOp.SUM)
+
+        mean_loss = (total_loss_sum / total_token_count).item() if total_token_count.item() > 0 else float("nan")
+        return mean_loss, nan_count.item()
+
+    def run_validation(step: int) -> None:
+        val_dataset = setup_dataset(
+            tokenizer,
+            config.val.data,
+            config.model.cp,
+            max_epochs=1,
+            raw_dataset=val_raw_dataset,
+            renderer=renderer,
+            multimodal=multimodal,
+        )
+        val_dataloader = setup_dataloader(val_dataset, config.val.data)
+
+        # No train/eval switch: no dropout in these models, and toggling would trigger torch.compile recompilation
+        mean_loss, nan_count = run_eval_loop(val_dataloader)
+        if nan_count > 0:
+            logger.warning(f"Validation at step {step}: {nan_count} batches had NaN loss")
+        if mean_loss != mean_loss:
+            logger.warning(f"Validation at step {step} had no valid tokens")
+        else:
+            logger.success(f"Validation | Step {step} | Loss {mean_loss:.4f}")
+        monitor.log({"val/loss": mean_loss, "step": step}, step=step)
+
+    gc_handler = GarbageCollection(config.gc.interval) if config.gc else None
+
+    logger.info(f"Starting training loop (max_steps={config.max_steps or 'infinite'})")
+    max_memory = torch.cuda.mem_get_info()[1] / 1024**3  # GiB
+    is_first_step = True
+    if config.trace_path:
+        logger.info(f"Tracing to {config.trace_path}")
+        prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True).__enter__()
+        maybe_record_function = record_function  # noqa: F841 – captured by run_forward_loop closure
+    while True:
+        # Reset peak memory stats
+        torch.cuda.reset_peak_memory_stats()
+        if gc_handler is not None:
+            gc_handler.run(progress.step)
+        is_last_step = config.max_steps is not None and progress.step == config.max_steps
+
+        memory_profiler = (
+            MemoryProfiler(progress.step, config.memory_profiler_path) if config.memory_profiler_path else None
+        )
+
+        step_start_time = time.perf_counter()
+        forward_backward_start_time = time.perf_counter()
+
+        step_loss_sum = torch.tensor(0.0, device="cuda")
+        step_local_token_count = torch.tensor(0, dtype=torch.int64, device="cuda")
+        nan_loss_count = torch.tensor(0, device="cuda")
+        is_moe_model = is_tt_moe_model(model)
+        moe_stats = (
+            {
+                "max_vio": torch.tensor(0.0, device="cuda"),
+                "routing_confidence": torch.tensor(0.0, device="cuda"),
+            }
+            if is_moe_model
+            else {}
+        )
+        for micro_step in range(grad_accum_steps):
+            micro_batch = next(dataiter)
+
+            if config.log.log_data:
+                print_sample(
+                    micro_batch["input_ids"].flatten().tolist(), micro_batch["loss_mask"].flatten().tolist(), tokenizer
+                )
+
+            with maybe_record_function("forward"):
+                local_loss_sum, local_token_count = compute_loss(micro_batch)
+
+            step_local_token_count += local_token_count
+
+            if torch.isnan(local_loss_sum.detach()):
+                nan_loss_count += 1
+                logger.warning("Local loss is nan, excluding this micro step from backward")
+                scaled_loss = torch.nan_to_num(local_loss_sum, nan=0.0) / grad_accum_steps
+            else:
+                step_loss_sum += local_loss_sum.detach()
+                scaled_loss = local_loss_sum / grad_accum_steps
+
+            with maybe_record_function("backward"):
+                scaled_loss.backward()
+
+            if is_moe_model:
+                for name, values in get_load_balance_stats(model).items():
+                    if values is None:
+                        continue
+                    value = values.mean()
+                    reduce_op = dist.ReduceOp.MAX if name == "max_vio" else dist.ReduceOp.SUM
+                    dist.all_reduce(value, op=reduce_op)
+                    if reduce_op == dist.ReduceOp.SUM:
+                        value /= dist.get_world_size()
+                    moe_stats[name] += value / grad_accum_steps
+
+        forward_backward_time = time.perf_counter() - forward_backward_start_time
+
+        # All-reduce token counts and rescale gradients to get a global token-weighted mean.
+        # FSDP already divided grads by fsdp_gradient_divide_factor, so we undo that and
+        # divide by the true global token count instead.
+        global_step_token_count = step_local_token_count.clone()
+        dist.all_reduce(global_step_token_count, op=dist.ReduceOp.SUM, group=dp_cp_group)
+        global_token_count_val = global_step_token_count.item()
+
+        if global_token_count_val > 0:
+            grad_scale = parallel_dims.fsdp_gradient_divide_factor * grad_accum_steps / global_token_count_val
+            for param in model.parameters():
+                if param.grad is not None:
+                    param.grad.mul_(grad_scale)
+
+        # Run validation after forward-backward (so torch.compile sees training graph first) but before
+        # optimizer step (so eval_on_start evaluates untrained weights)
+        if config.val is not None and (
+            (is_first_step and config.val.eval_on_start)
+            or (not is_first_step and progress.step % config.val.interval == 0)
+        ):
+            run_validation(progress.step)
+
+        # Compute the global mean loss for logging.
+        dist.all_reduce(step_loss_sum, op=dist.ReduceOp.SUM, group=dp_cp_group)
+        dist.all_reduce(nan_loss_count, op=dist.ReduceOp.SUM)
+        if global_token_count_val > 0:
+            batch_loss = (step_loss_sum / global_token_count_val).item()
+        else:
+            batch_loss = 0.0
+        nan_loss_count = nan_loss_count.item()
+
+        grad_norm: torch.Tensor | None = None
+        if config.optim.max_norm is not None:
+            logger.debug(f"Clipping gradients with max norm {config.optim.max_norm}")
+            grad_norm = clip_grad_norm_(
+                model.parameters(), max_norm=config.optim.max_norm, ep_enabled=parallel_dims.ep_enabled
+            )
+            if grad_norm.device.type == "cpu":
+                grad_norm = grad_norm.to(torch.device("cuda"))
+        zero_grad_ratio = get_zero_gradient_ratio(model.parameters(), parallel_dims.dp_replicate)
+
+        logger.debug("Optimizer step")
+        optimizer.step()
+        optimizer.zero_grad()
+
+        # Update learning rate scheduler
+        current_lr = optimizer.param_groups[0]["lr"]
+        scheduler.step()
+
+        # Checkpoint the step we just finished. The last step's checkpoint is written once after
+        # the loop, so skip it here to avoid a double-save.
+        if (
+            ckpt_manager is not None
+            and (config.ckpt and config.ckpt.interval)
+            and not is_last_step
+            and progress.step % config.ckpt.interval == 0
+        ):
+            save_ckpt_time = 0
+
+            if not config.ckpt.weights_only:
+                # Save full checkpoint
+                logger.info(f"Saving checkpoint at step {progress.step}")
+                save_ckpt_start_time = time.perf_counter()
+                ckpt_manager.save(progress.step, model, [optimizer], scheduler, progress, dataloader=dataloader)
+                save_ckpt_time += time.perf_counter() - save_ckpt_start_time
+
+            ckpt_manager.maybe_clean()
+
+            # Save weight checkpoint
+            if weight_ckpt_manager is not None:
+                logger.info(f"Saving weight checkpoint at step {progress.step}")
+                save_ckpt_start_time = time.perf_counter()
+                weight_ckpt_manager.save(progress.step, model, tokenizer, processor)
+                save_ckpt_time += time.perf_counter() - save_ckpt_start_time
+                weight_ckpt_manager.maybe_clean()
+        else:
+            save_ckpt_time = 0
+
+        # Optionally, dump memory snapshot
+        if memory_profiler is not None:
+            memory_profiler.step()
+
+        # Compute step metrics. CP shards the same sequences across cp ranks
+        # (sequence-sharded data parallelism on the seq dim), so the unique
+        # training tokens per step is dp_size * (batch_per_dp_rank * seq).
+        # The `dp` mesh excludes cp by construction (parallel_dims.py), mirroring
+        # the RL trainer's accounting (rl/train.py).
+        dp_size = parallel_dims.get_mesh("dp").size()
+        num_local_tokens = config.data.seq_len * (config.data.batch_size // dp_size)
+        num_tokens = dp_size * num_local_tokens
+        progress.total_tokens += num_tokens
+        progress.total_samples = dataset.step
+        perf_counter = get_perf_counter(model, config.data.seq_len)
+        perf_counter.count_tokens(num_tokens)
+        throughput = perf_counter.get_tokens_per_second() or 0
+        mfu = perf_counter.get_mfu() or 0
+        peak_memory = torch.cuda.max_memory_reserved() / 1024**3  # GiB
+
+        # Log step metrics
+        step_time = time.perf_counter() - step_start_time
+        step_message = f"Step {progress.step} | {format_time(step_time):>7} | Loss {batch_loss:.4f}"
+        if grad_norm is not None:
+            step_message += f" | Grad. Norm {grad_norm:.4f}"
+        step_message += f" | LR {current_lr:.2e} | Throughput {throughput:.0f} tokens/s | MFU {mfu:.1f}% | Peak Mem. {peak_memory:.1f}/{max_memory:.1f} GiB ({peak_memory / max_memory * 100:.1f}%)"
+        if is_moe_model:
+            for name, label in (("max_vio", "Max Vio"), ("routing_confidence", "Routing Conf.")):
+                value = moe_stats[name].item()
+                if value > 0:
+                    step_message += f" | {label} {value:.4f}"
+        logger.success(step_message)
+
+        # Log progress metrics
+        total_samples = sum(dataset.num_samples.values())
+        total_tokens = sum(dataset.num_tokens.values())
+        progress_metrics = {
+            "progress/epoch": dataset.epoch,
+            "progress/num_samples": progress.total_samples,
+            "progress/num_tokens": progress.total_tokens,
+            "step": progress.step,
+        }
+        # At least two subsets/splits
+        if len(dataset.num_samples) > 1:
+            progress_metrics.update(
+                **{
+                    f"progress/{subset_or_split}/ratio_samples": num_samples / total_samples
+                    for subset_or_split, num_samples in dataset.num_samples.items()
+                },
+                **{
+                    f"progress/{subset_or_split}/ratio_tokens": num_tokens / total_tokens
+                    for subset_or_split, num_tokens in dataset.num_tokens.items()
+                },
+            )
+        monitor.log(progress_metrics, step=progress.step)
+
+        # Log performance metrics
+        perf_metrics = {
+            "perf/throughput": throughput,
+            "perf/throughput_per_gpu": throughput / world.world_size,
+            "perf/peak_memory": peak_memory,
+            "perf/mfu": mfu,
+            "step": progress.step,
+        }
+        monitor.log(perf_metrics, step=progress.step)
+
+        # Log optimizer metrics
+        optim_metrics = {
+            "optim/lr": current_lr,
+            "optim/zero_grad_ratio": zero_grad_ratio,
+            "step": progress.step,
+        }
+        if grad_norm is not None:
+            optim_metrics["optim/grad_norm"] = grad_norm.item()
+        monitor.log(optim_metrics, step=progress.step)
+
+        loss_log_metrics = {
+            "loss/mean": batch_loss,
+            "loss/nan_count": nan_loss_count,
+            "step": progress.step,
+        }
+        # Log tensor stats
+        monitor.log(loss_log_metrics, step=progress.step)
+
+        # Log time metrics
+        time_metrics = {
+            "time/step": step_time,
+            "time/save_ckpt": save_ckpt_time,
+            "time/forward_backward": forward_backward_time,
+            "step": progress.step,
+        }
+        monitor.log(time_metrics, step=progress.step)
+
+        # Log disk metrics
+        disk_metrics = get_ckpt_disk_metrics(config.output_dir)
+        disk_metrics["step"] = progress.step
+        monitor.log(disk_metrics, step=progress.step)
+
+        moe_log_metrics = {f"{name}/mean": value.item() for name, value in moe_stats.items() if value.item() > 0}
+        if moe_log_metrics:
+            monitor.log({**moe_log_metrics, "step": progress.step}, step=progress.step)
+
+        is_first_step = False
+
+        # Send heartbeat if configured
+        if heart is not None:
+            heart.beat()
+
+        if is_last_step:
+            break
+        progress.step += 1
+
+    if config.trace_path:
+        prof.__exit__(None, None, None)
+        config.trace_path.mkdir(parents=True, exist_ok=True)
+        trace_file = str(config.trace_path / f"trace_{dist.get_rank()}.json.gz")
+        logger.info(f"Saving trace to {trace_file}")
+        prof.export_chrome_trace(trace_file)
+        logger.info(f"Saved trace to {trace_file}")
+
+    # Write final checkpoint
+    if ckpt_manager is not None:
+        if not (config.ckpt and config.ckpt.weights_only):
+            logger.info("Writing final checkpoint")
+            ckpt_manager.save(progress.step, model, [optimizer], scheduler, progress, dataloader=dataloader)
+        ckpt_manager.maybe_clean()
+
+    # Write final weight checkpoint
+    if weight_ckpt_manager is not None:
+        logger.info("Writing final weight checkpoint")
+        weight_ckpt_manager.save(progress.step, model, tokenizer, processor)
+        weight_ckpt_manager.maybe_clean()
+
+    logger.info(f"Peak memory: {max(to_col_format(monitor.history)['perf/peak_memory']):.1f} GiB")
+    logger.success("SFT trainer finished!")
+
+    # Optionally, print benchmark table and export JSON
+    if config.bench is not None and world.is_master:
+        history = to_col_format(monitor.history)
+        print_benchmark(history)
+        if config.bench.output_json:
+            export_benchmark_json(history, config.bench.output_json)
+            logger.info(f"Benchmark results written to {config.bench.output_json}")
+
+
+def main():
+    set_proc_title("SFTTrainer")
+    train(cli(SFTConfig))
+
+
+if __name__ == "__main__":
+    main()

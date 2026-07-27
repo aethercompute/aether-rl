@@ -24,7 +24,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: primeintellect-ai/prime-rl
+  IMAGE_NAME: ${{ github.repository_owner }}/aether-rl
   BUILD_REF: ${{ inputs.ref || github.ref_name }}
   BUILD_TAG: ${{ inputs.tag || '' }}
   BUILD_PLATFORMS: ${{ inputs.platforms || 'both' }}

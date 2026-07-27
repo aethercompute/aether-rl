@@ -7,7 +7,7 @@ This example uses SFT followed by RL to train `Qwen3-0.6B` to reverse text. The 
 Install the workspace environment and start the log viewer:
 
 ```bash
-uv sync --all-extras --package prime-rl --package reverse-text-v1
+uv sync --all-extras --package aether-rl --package reverse-text-v1
 bash scripts/tmux.sh
 ```
 

@@ -2,7 +2,7 @@ import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, GenerationConfig
 
-from prime_rl.trainer.perf import PerfCounter
+from aether_rl.trainer.perf import PerfCounter
 
 
 @pytest.mark.parametrize(

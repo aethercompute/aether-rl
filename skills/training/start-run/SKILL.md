@@ -1,6 +1,6 @@
 ---
 name: start-run
-description: How to launch prime-rl training runs — the `rl`, `sft`, and `inference` entrypoints, their config classes, and single-node/SLURM/dry-run modes. Use when starting a run or picking the right entrypoint.
+description: How to launch aether-rl training runs — the `rl`, `sft`, and `inference` entrypoints, their config classes, and single-node/SLURM/dry-run modes. Use when starting a run or picking the right entrypoint.
 ---
 
 # Start a run
@@ -29,10 +29,10 @@ uv run rl @ examples/basic/reverse-text/rl.toml
 uv run rl @ examples/basic/reverse-text/rl.toml --dry-run                                # write scripts, don't run
 ```
 
-- Config: `RLConfig` (`packages/prime-rl-configs/src/prime_rl/configs/rl.py`)
-- Entrypoint: `src/prime_rl/entrypoints/rl.py`
+- Config: `RLConfig` (`packages/aether-rl-configs/src/aether_rl/configs/rl.py`)
+- Entrypoint: `src/aether_rl/entrypoints/rl.py`
 - SLURM: single- and multi-node
-- Environment packages: install the workspace packages named by the config before launching. For reverse text, use `uv sync --all-extras --package prime-rl --package reverse-text-v1`. Use repeated `--package <env>` arguments for other runs; reserve `--all-packages` for runs that intentionally need every workspace environment.
+- Environment packages: install the workspace packages named by the config before launching. For reverse text, use `uv sync --all-extras --package aether-rl --package reverse-text-v1`. Use repeated `--package <env>` arguments for other runs; reserve `--all-packages` for runs that intentionally need every workspace environment.
 
 ## `sft` — SFT training
 
@@ -44,13 +44,13 @@ uv run sft @ examples/basic/reverse-text/sft.toml --slurm
 uv run sft @ examples/basic/reverse-text/sft.toml --dry-run
 ```
 
-- Config: `SFTConfig` (`packages/prime-rl-configs/src/prime_rl/configs/sft.py`)
-- Entrypoint: `src/prime_rl/entrypoints/sft.py`
+- Config: `SFTConfig` (`packages/aether-rl-configs/src/aether_rl/configs/sft.py`)
+- Entrypoint: `src/aether_rl/entrypoints/sft.py`
 - SLURM: single- and multi-node
 
 ## `inference` — vLLM server
 
-OpenAI-compatible API plus prime-rl custom endpoints (`/update_weights`, `/load_lora_adapter`, `/init_broadcaster`). Always use this entrypoint — never `vllm serve` directly.
+OpenAI-compatible API plus aether-rl custom endpoints (`/update_weights`, `/load_lora_adapter`, `/init_broadcaster`). Always use this entrypoint — never `vllm serve` directly.
 
 ```bash
 uv run inference --model.name Qwen/Qwen3-0.6B
@@ -67,8 +67,8 @@ curl http://localhost:8000/v1/chat/completions \
   -d '{"model": "Qwen/Qwen3-0.6B", "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 50}'
 ```
 
-- Config: `InferenceConfig` (`packages/prime-rl-configs/src/prime_rl/configs/inference.py`)
-- Entrypoint: `src/prime_rl/entrypoints/inference.py`
+- Config: `InferenceConfig` (`packages/aether-rl-configs/src/aether_rl/configs/inference.py`)
+- Entrypoint: `src/aether_rl/entrypoints/inference.py`
 - SLURM: single-node, multi-node, and disaggregated deployments
 
 ## Summary
@@ -81,7 +81,7 @@ curl http://localhost:8000/v1/chat/completions \
 
 ## Key paths
 
-- `src/prime_rl/entrypoints/` — `rl`, `sft`, `inference` (+ `trainer`, `orchestrator` for direct launches)
-- `packages/prime-rl-configs/src/prime_rl/configs/` — all config classes
+- `src/aether_rl/entrypoints/` — `rl`, `sft`, `inference` (+ `trainer`, `orchestrator` for direct launches)
+- `packages/aether-rl-configs/src/aether_rl/configs/` — all config classes
 - `configs/debug/` — minimal debug configs
 - `examples/` — full example configs (e.g. `reverse-text/`)
