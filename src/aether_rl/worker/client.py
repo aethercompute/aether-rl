@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import httpx
@@ -102,6 +103,33 @@ class CoordinatorClient:
             raise TypeError("unsupported spooled terminal envelope")
         return self._model(response, SubmissionResponse)
 
+    async def get_policy_manifest(self, policy_id: str) -> httpx.Response:
+        response = await self.client.get(
+            f"/api/v1/policies/{policy_id}/manifest",
+            headers=self.headers | {"Accept-Encoding": "identity"},
+        )
+        if response.status_code != 200:
+            raise self._api_error(response)
+        return response
+
+    @asynccontextmanager
+    async def stream_policy_file(self, policy_id: str, name: str):
+        request = self.client.build_request(
+            "GET",
+            f"/api/v1/policies/{policy_id}/files/{name}",
+            headers=self.headers | {"Accept-Encoding": "identity"},
+        )
+        response = await self.client.send(request, stream=True)
+        if response.status_code != 200:
+            await response.aread()
+            error = self._api_error(response)
+            await response.aclose()
+            raise error
+        try:
+            yield response
+        finally:
+            await response.aclose()
+
     async def close(self) -> None:
         if self._owns_client:
             await self.client.aclose()
@@ -127,6 +155,10 @@ class CoordinatorClient:
         response = await self.client.request(method, path, content=content, headers=self.headers | headers)
         if response.status_code in expected:
             return response
+        raise self._api_error(response)
+
+    @staticmethod
+    def _api_error(response: httpx.Response) -> CoordinatorAPIError:
         try:
             payload = response.json()
             error = payload["error"]
@@ -136,7 +168,7 @@ class CoordinatorClient:
             code = "invalid_error_response"
             message = "coordinator returned an invalid error response"
         retry_after = _retry_after(response.headers.get("retry-after"))
-        raise CoordinatorAPIError(response.status_code, code, message, retry_after)
+        return CoordinatorAPIError(response.status_code, code, message, retry_after)
 
     @staticmethod
     def _model(response: httpx.Response, model_type):

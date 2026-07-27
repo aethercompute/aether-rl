@@ -7,6 +7,7 @@ import platform
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -34,6 +35,14 @@ from .spool import WorkerSpool, WorkerState
 
 class AssignmentExecutor(Protocol):
     async def execute(self, lease: AssignmentLease, cancel_event: asyncio.Event) -> TerminalEnvelope: ...
+
+
+class PolicyRuntime(Protocol):
+    async def start(self, stop_event: asyncio.Event) -> None: ...
+    async def stop(self) -> None: ...
+    async def monitor(self) -> None: ...
+    def loaded_policy_ids(self) -> tuple[str, ...]: ...
+    def acquire(self, manifest) -> AbstractAsyncContextManager[str]: ...
 
 
 @dataclass
@@ -65,6 +74,7 @@ class WorkerDaemon:
         timestamp_sequence: TimestampSequence | None = None,
         request_id_factory: Callable[[], str] = lambda: f"request-{uuid.uuid4().hex}",
         loaded_policy_ids: Callable[[], tuple[str, ...]] = lambda: (),
+        policy_runtime: PolicyRuntime | None = None,
     ):
         self.config = config
         self.registration = registration
@@ -73,23 +83,40 @@ class WorkerDaemon:
         self.executor = executor
         self.timestamps = timestamp_sequence or TimestampSequence()
         self.request_id_factory = request_id_factory
-        self.loaded_policy_ids = loaded_policy_ids
+        self.policy_runtime = policy_runtime
+        self.loaded_policy_ids = policy_runtime.loaded_policy_ids if policy_runtime is not None else loaded_policy_ids
         self.stop_event = asyncio.Event()
         self.active: dict[str, ActiveAssignment] = {}
         self._entry_events: dict[str, asyncio.Event] = {}
         self._server_time_offset = 0.0
 
     async def run(self) -> None:
+        try:
+            if self.policy_runtime is not None:
+                await self.policy_runtime.start(self.stop_event)
+            await self._run_control_plane()
+        finally:
+            if self.policy_runtime is not None:
+                await self.policy_runtime.stop()
+
+    async def _run_control_plane(self) -> None:
         await self._register()
         heartbeat = asyncio.create_task(self._heartbeat_loop(), name="worker-heartbeat")
         watchdog = asyncio.create_task(self._lease_watchdog_loop(), name="worker-lease-watchdog")
         uploader = asyncio.create_task(self._upload_loop(), name="worker-uploader")
+        policy_monitor = (
+            asyncio.create_task(self.policy_runtime.monitor(), name="worker-policy-runtime")
+            if self.policy_runtime is not None
+            else None
+        )
         slots = [
             asyncio.create_task(self._slot_loop(), name=f"worker-slot-{index}")
             for index in range(self.config.execution_slots)
         ]
         stop_waiter = asyncio.create_task(self.stop_event.wait(), name="worker-stop")
         tasks = [heartbeat, watchdog, uploader, *slots]
+        if policy_monitor is not None:
+            tasks.append(policy_monitor)
         try:
             done, _ = await asyncio.wait([stop_waiter, *tasks], return_when=asyncio.FIRST_COMPLETED)
             failed = next((task for task in done if task is not stop_waiter), None)
@@ -156,7 +183,18 @@ class WorkerDaemon:
                 raise RuntimeError("coordinator returned an already active lease")
             self.active[lease.lease_id] = active
             try:
-                envelope = await self._execute(active)
+                try:
+                    if self.policy_runtime is None:
+                        envelope = await self._execute(active)
+                    else:
+                        async with self.policy_runtime.acquire(lease.assignment.policy):
+                            envelope = await self._execute(active)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    if getattr(error, "worker_fatal", False):
+                        raise
+                    envelope = self._failure_envelope(active, error)
                 self._validate_terminal_envelope(lease, envelope)
                 entry = self.spool.publish(envelope)
                 event = self._entry_events.setdefault(entry.digest, asyncio.Event())
@@ -196,18 +234,21 @@ class WorkerDaemon:
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            message = str(error) or type(error).__name__
-            return FailureEnvelope(
-                assignment_id=active.lease.assignment.assignment_id,
-                attempt=active.lease.attempt,
-                lease_id=active.lease.lease_id,
-                worker_id=self.registration.worker_id,
-                worker_session_id=self.registration.worker_session_id,
-                failed_at=self.timestamps.next(),
-                code="execution_failed",
-                message=message[:8192],
-                retryable=True,
-            )
+            return self._failure_envelope(active, error)
+
+    def _failure_envelope(self, active: ActiveAssignment, error: Exception) -> FailureEnvelope:
+        message = str(error) or type(error).__name__
+        return FailureEnvelope(
+            assignment_id=active.lease.assignment.assignment_id,
+            attempt=active.lease.attempt,
+            lease_id=active.lease.lease_id,
+            worker_id=self.registration.worker_id,
+            worker_session_id=self.registration.worker_session_id,
+            failed_at=self.timestamps.next(),
+            code="execution_failed",
+            message=message[:8192],
+            retryable=True,
+        )
 
     def _validate_terminal_envelope(self, lease: AssignmentLease, envelope: TerminalEnvelope) -> None:
         expected = (
@@ -398,6 +439,10 @@ async def run_worker(config: WorkerConfig, executor: AssignmentExecutor | None =
         raise RuntimeError("AETHER_COORDINATOR_TOKEN is required")
     state = WorkerState(config.state_dir)
     try:
+        from .identity import discover_base_model_identity
+        from .policy_runtime import WorkerPolicyRuntime
+
+        await asyncio.to_thread(discover_base_model_identity, config)
         worker_id = state.load_or_create_worker_id()
         session_id = f"session-{uuid.uuid4().hex}"
         registration = build_registration(config, worker_id, session_id)
@@ -407,7 +452,8 @@ async def run_worker(config: WorkerConfig, executor: AssignmentExecutor | None =
             token,
             timeout_seconds=config.request_timeout_seconds,
         )
-        daemon = WorkerDaemon(config, registration, client, spool, executor)
+        policy_runtime = WorkerPolicyRuntime(config, state, client)
+        daemon = WorkerDaemon(config, registration, client, spool, executor, policy_runtime=policy_runtime)
         loop = asyncio.get_running_loop()
         for signal_name in ("SIGINT", "SIGTERM"):
             import signal

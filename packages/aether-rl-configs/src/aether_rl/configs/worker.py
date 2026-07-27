@@ -38,6 +38,15 @@ class WorkerConfig(BaseConfig):
     retry_min_seconds: float = Field(default=0.5, gt=0, allow_inf_nan=False)
     retry_max_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
     shutdown_grace_seconds: float = Field(default=30, ge=0, allow_inf_nan=False)
+    hf_cache_dir: Path | None = None
+    inference_port: int = Field(default=8000, ge=1, le=65535)
+    inference_startup_timeout_seconds: float = Field(default=600, gt=0, allow_inf_nan=False)
+    inference_shutdown_timeout_seconds: float = Field(default=60, gt=0, allow_inf_nan=False)
+    gpu_memory_utilization: float = Field(default=0.9, gt=0, le=1, allow_inf_nan=False)
+    max_lora_rank: int = Field(default=64, ge=1)
+    max_loaded_policies: int = Field(default=8, ge=1)
+    adapter_cache_max_bytes: int = Field(default=20 * 1024**3, ge=1)
+    trust_remote_code: bool = False
 
     @model_validator(mode="after")
     def validate_worker(self) -> "WorkerConfig":
