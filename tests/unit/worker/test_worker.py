@@ -1,3 +1,4 @@
+import asyncio
 import importlib.metadata
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from aether_rl.protocol import (
     sha256_digest,
 )
 from aether_rl.worker.client import CoordinatorAPIError
-from aether_rl.worker.daemon import TimestampSequence, WorkerDaemon, build_registration
+from aether_rl.worker.daemon import ActiveAssignment, TimestampSequence, WorkerDaemon, build_registration
 from aether_rl.worker.spool import SpoolCorruptionError, WorkerSpool, WorkerState, WorkerStateError
 from tests.unit.coordinator.test_database import (
     assignments,
@@ -32,7 +33,9 @@ def worker_config(tmp_path: Path) -> WorkerConfig:
             "coordinator_url": "https://coordinator.example.com",
             "state_dir": tmp_path / "worker",
             "base_model": base_model().model_dump(mode="python"),
-            "environments": [{"id": "env", "package": "verifiers", "revision": "1"}],
+            "environments": [
+                {"id": "env", "package": "verifiers", "revision": "1", "config": {"taskset": {"id": "env"}}}
+            ],
             "execution_slots": 1,
             "tensor_parallel_size": 1,
             "heartbeat_interval_seconds": 0.01,
@@ -108,6 +111,7 @@ def test_capability_discovery_verifies_environment_revision(tmp_path: Path):
                     id="env",
                     package="verifiers",
                     revision=importlib.metadata.version("verifiers"),
+                    config={"taskset": {"id": "env"}},
                 )
             ]
         }
@@ -119,6 +123,24 @@ def test_capability_discovery_verifies_environment_revision(tmp_path: Path):
     )
     with pytest.raises(RuntimeError, match="expected wrong"):
         build_registration(mismatched, "worker-1", "session-1", gpu_count=1)
+
+
+def test_failure_envelope_preserves_terminal_execution_errors(tmp_path: Path):
+    class TerminalExecutionError(RuntimeError):
+        code = "result_too_large"
+        retryable = False
+
+    config = worker_config(tmp_path)
+    with WorkerState(config.state_dir) as state:
+        daemon = WorkerDaemon(
+            config, registration(), FakeCoordinatorClient(assignment_lease()), WorkerSpool(state), FakeExecutor()
+        )
+        envelope = daemon._failure_envelope(
+            ActiveAssignment(assignment_lease(), asyncio.Event(), 100),
+            TerminalExecutionError("too large"),
+        )
+    assert envelope.code == "result_too_large"
+    assert envelope.retryable is False
 
 
 class FakeExecutor:

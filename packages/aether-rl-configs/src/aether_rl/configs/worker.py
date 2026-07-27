@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import Field, HttpUrl, model_validator
+from pydantic import Field, HttpUrl, JsonValue, model_validator
 
 from aether_rl.utils.config import BaseConfig
 
@@ -21,6 +21,7 @@ class WorkerEnvironmentConfig(BaseConfig):
     id: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@+~-]*$")
     package: str = Field(min_length=1, max_length=255)
     revision: str = Field(min_length=1, max_length=255)
+    config: dict[str, JsonValue]
 
 
 class WorkerConfig(BaseConfig):

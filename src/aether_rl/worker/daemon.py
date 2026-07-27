@@ -245,9 +245,9 @@ class WorkerDaemon:
             worker_id=self.registration.worker_id,
             worker_session_id=self.registration.worker_session_id,
             failed_at=self.timestamps.next(),
-            code="execution_failed",
+            code=getattr(error, "code", "execution_failed"),
             message=message[:8192],
-            retryable=True,
+            retryable=getattr(error, "retryable", True),
         )
 
     def _validate_terminal_envelope(self, lease: AssignmentLease, envelope: TerminalEnvelope) -> None:
@@ -433,7 +433,9 @@ def build_registration(
 
 async def run_worker(config: WorkerConfig, executor: AssignmentExecutor | None = None) -> None:
     if executor is None:
-        raise RuntimeError("worker rollout execution is not configured; Batch 10 provides the production executor")
+        from .executor import VerifiersAssignmentExecutor
+
+        executor = VerifiersAssignmentExecutor(config)
     token = os.environ.get("AETHER_COORDINATOR_TOKEN")
     if not token:
         raise RuntimeError("AETHER_COORDINATOR_TOKEN is required")
