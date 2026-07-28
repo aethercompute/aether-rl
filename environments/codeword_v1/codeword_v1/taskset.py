@@ -1,11 +1,13 @@
 import hashlib
 import random
+import re
 from typing import Literal
 
 import verifiers.v1 as vf
 
 CODEWORDS = ("dax", "wug", "zorp", "kiv")
 MARKERS = ("A", "B", "C", "D")
+CODEWORD_PATTERN = re.compile(r"\b(dax|wug|zorp|kiv)\b", re.IGNORECASE)
 SYSTEM_PROMPT = (
     "You are learning a fixed hidden mapping from marker letters to codewords using reward feedback. "
     "Reply with exactly one allowed codeword and no other text."
@@ -24,7 +26,8 @@ class CodewordTask(vf.Task[CodewordData]):
     @vf.reward(weight=1.0)
     async def accuracy(self, trace: vf.Trace) -> float:
         response = (trace.last_reply or "").strip().lower()
-        return float(response == self.data.answer)
+        matches = CODEWORD_PATTERN.findall(response)
+        return float(len(matches) == 1 and matches[0].lower() == self.data.answer)
 
     @vf.metric
     async def exact_format(self, trace: vf.Trace) -> float:

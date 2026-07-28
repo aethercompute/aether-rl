@@ -13,6 +13,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Summarize durable distributed evaluation results by policy")
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--source-id")
+    parser.add_argument("--wandb-project")
+    parser.add_argument("--wandb-entity")
+    parser.add_argument("--wandb-name", default="distributed-eval")
+    parser.add_argument("--wandb-group")
     args = parser.parse_args()
 
     groups_dir = args.run_root / "training-queue" / "groups"
@@ -21,6 +25,29 @@ def main() -> None:
 
     policies = summarize_eval(groups_dir, source_id=args.source_id)
     print(json.dumps({"run_root": str(args.run_root), "policies": policies}, indent=2))
+    if args.wandb_project is not None:
+        import wandb
+
+        run = wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=args.wandb_name,
+            group=args.wandb_group,
+            tags=["distributed", "evaluation"],
+        )
+        for policy in policies:
+            run.log(
+                {
+                    "eval/mean_reward": policy["mean_reward"],
+                    "eval/effective_mean_reward": policy["effective_mean_reward"],
+                    "eval/exact_format_mean": policy["exact_format_mean"],
+                    "eval/rollouts": policy["rollouts"],
+                    "eval/effective_rollouts": policy["effective_rollouts"],
+                    "eval/errors": policy["errors"],
+                },
+                step=policy["policy_version"],
+            )
+        run.finish()
 
 
 def summarize_eval(groups_dir: Path, *, source_id: str | None = None) -> list[dict[str, Any]]:

@@ -1,5 +1,5 @@
-run_id = "codeword-learning-proof"
-run_root = "outputs/codeword-learning-proof/server"
+run_id = "codeword-qwen25-learning-proof"
+run_root = "outputs/codeword-qwen25-learning-proof/server"
 host = "127.0.0.1"
 port = 8080
 trainer_config_path = "examples/distributed/codeword/trainer.toml"
@@ -7,14 +7,14 @@ trainer_processes = 1
 training_batch_size = 64
 
 [base_model]
-model_name = "Qwen/Qwen3-0.6B"
-model_revision = "c1899de289a04d12100db370d81485cdf75e47ca"
-model_config_digest = "sha256:57f69a85cf29bb69a5a154be2ad02f88d9b1e698108fcd912dadbaa7bdf01174"
-tokenizer_name = "Qwen/Qwen3-0.6B"
-tokenizer_revision = "c1899de289a04d12100db370d81485cdf75e47ca"
-tokenizer_digest = "sha256:49cedb5843afb50585116d34be5c9513fe926faace0bd42d264d31e66a394625"
-chat_template_digest = "sha256:fdddadaa8dc009d5a7042674a981dbe450d59a050fd5b46f0f8269cbb3e9a1d9"
-vocab_size = 151669
+model_name = "Qwen/Qwen2.5-0.5B-Instruct"
+model_revision = "7ae557604adf67be50417f59c2c2f167def9a775"
+model_config_digest = "sha256:ee6f9831a4c4729cf094af9a76a53dfe1dde8e34a8251889f527d2179c7d918d"
+tokenizer_name = "Qwen/Qwen2.5-0.5B-Instruct"
+tokenizer_revision = "7ae557604adf67be50417f59c2c2f167def9a775"
+tokenizer_digest = "sha256:6595067cd70176d43f94ac8ae0ae81b8d5549209010733596c139b5964031853"
+chat_template_digest = "sha256:2b5d60437a91263d5952be15551475a81123557cd4599cd1850099f2f62908cf"
+vocab_size = 151665
 quantization = "none"
 
 [[sources]]
@@ -26,7 +26,7 @@ environment_config = { taskset = { id = "codeword-v1", split = "train" }, agent 
 group_size = 8
 max_attempts = 3
 weight = 4.0
-sampling = { temperature = 1.5, max_tokens = 16, chat_template_kwargs = { enable_thinking = false } }
+sampling = { temperature = 1.2, max_tokens = 8 }
 
 [sources.algorithm]
 type = "grpo"
@@ -40,4 +40,4 @@ environment_config = { taskset = { id = "codeword-v1", split = "eval" }, agent =
 group_size = 1
 max_attempts = 3
 weight = 1.0
-sampling = { temperature = 0.0, max_tokens = 16, chat_template_kwargs = { enable_thinking = false } }
+sampling = { temperature = 0.0, max_tokens = 8 }
