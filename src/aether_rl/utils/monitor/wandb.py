@@ -142,7 +142,7 @@ class WandbMonitor(Monitor):
         # Provision the curated "overview" saved view once per project (the run's primary process
         # in shared mode, else the single master). Best-effort: a workspaces/API failure must never
         # take down training.
-        if is_online and (primary if shared_mode else True):
+        if config.create_overview and is_online and (primary if shared_mode else True):
             try:
                 url = ensure_overview_view(
                     self.wandb.entity,
@@ -187,7 +187,13 @@ class WandbMonitor(Monitor):
             return
         if not self.enabled:
             return
-        wandb.log({**metrics, "step": step})
+        assert self.config is not None
+        logged = metrics
+        if self.config.log_metrics is not None:
+            allowed = set(self.config.log_metrics)
+            logged = {name: value for name, value in metrics.items() if name in allowed}
+        if logged:
+            wandb.log({**logged, "step": step})
 
     def log_samples(self, rollouts: list[Rollout], step: int) -> None:
         """Logs rollouts to W&B table."""

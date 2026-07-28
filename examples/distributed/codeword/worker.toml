@@ -1,5 +1,5 @@
 coordinator_url = "http://127.0.0.1:8080" # use HTTPS for the remote 5090
-state_dir = "outputs/codeword-qwen25-learning-proof/worker"
+state_dir = "outputs/codeword-qwen25-stable-proof/worker"
 execution_slots = 4
 tensor_parallel_size = 1
 inference_port = 8000

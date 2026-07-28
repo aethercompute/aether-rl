@@ -1,10 +1,10 @@
-run_id = "codeword-qwen25-learning-proof"
-run_root = "outputs/codeword-qwen25-learning-proof/server"
+run_id = "codeword-qwen25-stable-proof"
+run_root = "outputs/codeword-qwen25-stable-proof/server"
 host = "127.0.0.1"
 port = 8080
 trainer_config_path = "examples/distributed/codeword/trainer.toml"
 trainer_processes = 1
-training_batch_size = 64
+training_batch_size = 128
 
 [base_model]
 model_name = "Qwen/Qwen2.5-0.5B-Instruct"
@@ -23,10 +23,10 @@ kind = "train"
 environment_id = "codeword-v1"
 environment_revision = "0.1.0"
 environment_config = { taskset = { id = "codeword-v1", split = "train" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
-group_size = 8
+group_size = 16
 max_attempts = 3
 weight = 4.0
-sampling = { temperature = 1.2, max_tokens = 8 }
+sampling = { temperature = 1.5, max_tokens = 8 }
 
 [sources.algorithm]
 type = "grpo"

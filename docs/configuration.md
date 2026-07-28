@@ -111,4 +111,6 @@ Distributed training requires:
 
 The coordinator sets the trainer output directory and resume step. Common trainer sections are `[model]`, `[model.lora]`, `[optim]`, `[scheduler]`, `[loss]`, `[ckpt]`, `[wandb]`, `[file_monitor]`, and `[metrics_server]`.
 
+Under `[wandb]`, set `log_metrics` to an exact metric-name allowlist to avoid auto-generating panels for every trainer diagnostic. Set `create_overview = false` when the generic project workspace is not useful for the run.
+
 Do not change trainer topology, LoRA shape, optimizer, or model identity when restarting an existing run unless checkpoint compatibility has been independently established.

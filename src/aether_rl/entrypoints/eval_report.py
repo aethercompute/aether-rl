@@ -1,5 +1,6 @@
 import argparse
 import json
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -17,14 +18,16 @@ def main() -> None:
     parser.add_argument("--wandb-entity")
     parser.add_argument("--wandb-name", default="distributed-eval")
     parser.add_argument("--wandb-group")
+    parser.add_argument("--watch-seconds", type=float)
     args = parser.parse_args()
+    if args.watch_seconds is not None and args.watch_seconds <= 0:
+        parser.error("--watch-seconds must be positive")
 
     groups_dir = args.run_root / "training-queue" / "groups"
     if not groups_dir.is_dir():
         parser.error(f"processed group directory does not exist: {groups_dir}")
 
-    policies = summarize_eval(groups_dir, source_id=args.source_id)
-    print(json.dumps({"run_root": str(args.run_root), "policies": policies}, indent=2))
+    run = None
     if args.wandb_project is not None:
         import wandb
 
@@ -35,19 +38,37 @@ def main() -> None:
             group=args.wandb_group,
             tags=["distributed", "evaluation"],
         )
-        for policy in policies:
-            run.log(
-                {
-                    "eval/mean_reward": policy["mean_reward"],
-                    "eval/effective_mean_reward": policy["effective_mean_reward"],
-                    "eval/exact_format_mean": policy["exact_format_mean"],
-                    "eval/rollouts": policy["rollouts"],
-                    "eval/effective_rollouts": policy["effective_rollouts"],
-                    "eval/errors": policy["errors"],
-                },
-                step=policy["policy_version"],
-            )
-        run.finish()
+        run.define_metric("eval/policy_version")
+        run.define_metric("eval/*", step_metric="eval/policy_version")
+
+    last_logged: dict[tuple[str, int, str], dict[str, Any]] = {}
+    try:
+        while True:
+            policies = summarize_eval(groups_dir, source_id=args.source_id)
+            print(json.dumps({"run_root": str(args.run_root), "policies": policies}, indent=2), flush=True)
+            if run is not None:
+                for policy in policies:
+                    key = (policy["source_id"], policy["policy_version"], policy["policy_id"])
+                    if last_logged.get(key) == policy:
+                        continue
+                    run.log(
+                        {
+                            "eval/policy_version": policy["policy_version"],
+                            "eval/reward": policy["mean_reward"],
+                            "eval/exact_format": policy["exact_format_mean"],
+                            "eval/rollouts": policy["rollouts"],
+                            "eval/errors": policy["errors"],
+                        }
+                    )
+                    last_logged[key] = policy.copy()
+            if args.watch_seconds is None:
+                break
+            time.sleep(args.watch_seconds)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if run is not None:
+            run.finish()
 
 
 def summarize_eval(groups_dir: Path, *, source_id: str | None = None) -> list[dict[str, Any]]:

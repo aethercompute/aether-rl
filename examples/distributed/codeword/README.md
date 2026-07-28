@@ -13,7 +13,7 @@ The model sees the marker and the four allowed codewords, but not the mapping. T
 
 ## Expected cost
 
-The default run performs 8 LoRA optimizer steps. An update requires 64 surviving train rollouts, or eight complete GRPO groups. The 4:1 train/eval scheduling weights target approximately 16 eval rollouts per policy; completed evals can arrive after the next policy activates while retaining their original policy identity. Completions are capped at 8 tokens. Full trainer checkpoints are retained every step, so reserve tens of gigabytes on the 3090 machine.
+The default run performs 10 LoRA optimizer steps. An update requires 128 surviving train rollouts, or eight complete 16-sample GRPO groups. The 4:1 train/eval scheduling weights target approximately 32 eval rollouts per policy; completed evals can arrive after the next policy activates while retaining their original policy identity. Completions are capped at 8 tokens. Full resumable checkpoints are retained every step, while optional full-weight exports are disabled.
 
 ## 1. Prepare the server
 
@@ -59,7 +59,7 @@ scripts/preflight-worker.sh @ examples/distributed/codeword/worker.toml
 scripts/launch-worker.sh @ examples/distributed/codeword/worker.toml
 ```
 
-The default worker uses four rollout slots on one GPU. Reduce `execution_slots` if vLLM request concurrency or environment execution is unstable.
+Each worker uses four rollout slots on one GPU. Two workers provide eight aggregate slots. Give every worker its own persistent local `state_dir`; the same path is fine on separate machines.
 
 ## 3. Observe learning
 
@@ -67,29 +67,29 @@ While the run is active, summarize immutable held-out eval traces on the server:
 
 ```bash
 uv run eval-report \
-  --run-root outputs/codeword-qwen25-learning-proof/server \
+  --run-root outputs/codeword-qwen25-stable-proof/server \
   --source-id codeword-eval
 ```
 
 For this binary reward, `mean_reward` is accuracy including failed rollouts. `effective_mean_reward` excludes errored rollouts, and `exact_format_mean` measures compliance with the one-codeword response format.
 
-Policy 0 is the unmodified base model. The predefined comparison target is policy 7. Policy 8 is terminal and normally has no eval groups because reaching `max_steps` gates new leases.
+Policy 0 is the unmodified base model. The predefined comparison target is policy 9. Policy 10 is terminal and normally has no eval groups because reaching `max_steps` gates new leases.
 
 The proof passes when:
 
 - Policy 0 has at least 12 eval rollouts.
-- Policy 7 has at least 12 eval rollouts.
+- Policy 9 has at least 24 eval rollouts.
 - Policy 0 `mean_reward` is below `0.50`.
-- Policy 7 `mean_reward` is at least `0.80`.
+- Policy 9 `mean_reward` is at least `0.80`.
 - Improvement is at least `0.40`.
-- Policy 7 `exact_format_mean` is at least `0.95`.
+- Policy 9 `exact_format_mean` is at least `0.95`.
 - Eval errors remain zero or are explained operationally.
 - Policies, checkpoints, and trainer metrics advance with optimizer steps.
 
 Supporting artifacts are:
 
 ```text
-outputs/codeword-qwen25-learning-proof/server/
+outputs/codeword-qwen25-stable-proof/server/
 ├── coordinator.sqlite
 ├── logs/trainer.log
 ├── policies/
@@ -119,13 +119,16 @@ Lease reassignment does not guarantee a pending spool entry: active execution ma
 - Improving training loss without held-out reward improvement does not prove learning.
 - Do not tune against the eval split after inspecting individual answers; create a new split or mapping for another confirmatory run.
 
-After completion, upload final eval aggregates to a separate W&B run in the same group:
+Run live eval reporting in a separate server terminal. It creates a small W&B run with reward, exact-format rate, rollout count, and errors plotted against policy version:
 
 ```bash
 uv run eval-report \
-  --run-root outputs/codeword-qwen25-learning-proof/server \
+  --run-root outputs/codeword-qwen25-stable-proof/server \
   --source-id codeword-eval \
-  --wandb-project aether-rl-codeword \
-  --wandb-name qwen2.5-0.5b-codeword-eval \
-  --wandb-group distributed-learning-proof
+  --wandb-project aether-rl-codeword-stable \
+  --wandb-name qwen2.5-0.5b-codeword-stable-eval \
+  --wandb-group distributed-learning-proof \
+  --watch-seconds 20
 ```
+
+Stop the reporter with `Ctrl+C` after training completes. The trainer W&B run uses an explicit nine-metric allowlist and does not create the broad automatic overview workspace.

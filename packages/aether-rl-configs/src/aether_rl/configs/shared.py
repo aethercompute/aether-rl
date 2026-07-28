@@ -150,6 +150,12 @@ class WandbConfig(BaseConfig):
     offline: bool = False
     """Run W&B in offline mode."""
 
+    log_metrics: list[str] | None = None
+    """Exact metric names to send to W&B. None sends every metric."""
+
+    create_overview: bool = True
+    """Create a curated project workspace view when online."""
+
 
 class WandbWithExtrasConfig(WandbConfig):
     log_extras: LogExtrasConfig | None = LogExtrasConfig()

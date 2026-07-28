@@ -24,6 +24,8 @@ uv run eval-report --run-root <run_root> --source-id <eval-source-id>
 
 The report's all-attempt `mean_reward` includes errored rollouts as zero reward. Use it as the primary reliability-aware score; `effective_mean_reward` excludes errors.
 
+Add `--watch-seconds 20` and the `--wandb-project`, `--wandb-name`, and optional `--wandb-group` arguments to publish a minimal live evaluation run. Its primary `eval/reward` graph uses `eval/policy_version` as the x-axis.
+
 ## Files and logs
 
 Default coordinator state:
