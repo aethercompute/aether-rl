@@ -51,6 +51,7 @@ dependencies = [
 ]
 
 [project.scripts]
+eval-report = "aether_rl.entrypoints.eval_report:main"
 inference = "aether_rl.entrypoints.inference:main"
 model-identity = "aether_rl.entrypoints.model_identity:main"
 trainer = "aether_rl.entrypoints.trainer:main"
@@ -100,6 +101,7 @@ dev = [
     "ruff>=0.12.1",
 ]
 server = [
+    "aether-rl[flash-attn]",
     "aiosqlite>=0.22.1",
     "fastapi>=0.128.0",
     "uvicorn>=0.40.0",
@@ -139,6 +141,7 @@ override-dependencies = [
 # with `uv sync --all-packages`.
 [tool.uv.workspace]
 members = [
+    "environments/*",
     "deps/research-environments/environments/*/*",
     "deps/verifiers/environments/*",
 ]

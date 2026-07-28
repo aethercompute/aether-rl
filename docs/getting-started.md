@@ -2,6 +2,8 @@
 
 This guide launches the reverse-text example with one coordinator and one or more workers. The checked-in configuration contains identity placeholders and is not runnable until they are replaced.
 
+For a short end-to-end experiment with an objective RL learning threshold, use the [distributed codeword learning proof](../examples/distributed/codeword/README.md).
+
 ## 1. Prepare every machine
 
 Install Linux, a compatible NVIDIA driver/CUDA stack, Python 3.12, Git, and `uv >= 0.11.1`. Clone with submodules:

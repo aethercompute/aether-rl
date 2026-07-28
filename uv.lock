@@ -46,6 +46,7 @@ members = [
     "browsecomp-v1",
     "clbench-v1",
     "code-golf-v1",
+    "codeword-v1",
     "color-codeword-v1",
     "compact",
     "deepdive-v1",
@@ -246,6 +247,7 @@ mamba-ssm = [
     { name = "mamba-ssm" },
 ]
 server = [
+    { name = "aether-rl", extra = ["flash-attn"] },
     { name = "aiosqlite" },
     { name = "fastapi" },
     { name = "uvicorn" },
@@ -336,6 +338,7 @@ dev = [
 ]
 mamba-ssm = [{ name = "mamba-ssm", specifier = ">=2.3.0" }]
 server = [
+    { name = "aether-rl", extras = ["flash-attn"] },
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "fastapi", specifier = ">=0.128.0" },
     { name = "uvicorn", specifier = ">=0.40.0" },
@@ -1212,6 +1215,11 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "verifiers" }]
+
+[[package]]
+name = "codeword-v1"
+version = "0.1.0"
+source = { editable = "environments/codeword_v1" }
 
 [[package]]
 name = "cohere"

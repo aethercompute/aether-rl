@@ -26,6 +26,14 @@ Inspect:
 
 The coordinator has no Prometheus endpoint. Do not edit SQLite or state files while it runs.
 
+For configured eval sources, summarize durable results by behavior-policy version:
+
+```bash
+uv run eval-report --run-root <run_root> --source-id <source-id>
+```
+
+Use all-attempt `mean_reward` as the primary score and inspect the error count before considering effective reward.
+
 ## Workers
 
 Capture worker stdout/stderr with the service manager and inspect `<state_dir>/inference.log` for vLLM. The worker has no inbound health endpoint and currently emits limited lifecycle logging; coordinator status is the fleet view.

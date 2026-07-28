@@ -16,6 +16,14 @@ curl -fsS https://coordinator.example.com/api/v1/status \
 
 Authenticated status reports the active policy, trainer readiness, worker/session counts, stale sessions, active leases, and assignment/group/result counts by state. The coordinator does not currently expose Prometheus `/metrics` or detailed free-slot, latency, policy-lag, or adapter-cache metrics.
 
+Summarize durable evaluation records by source and behavior-policy version with:
+
+```bash
+uv run eval-report --run-root <run_root> --source-id <eval-source-id>
+```
+
+The report's all-attempt `mean_reward` includes errored rollouts as zero reward. Use it as the primary reliability-aware score; `effective_mean_reward` excludes errors.
+
 ## Files and logs
 
 Default coordinator state:
