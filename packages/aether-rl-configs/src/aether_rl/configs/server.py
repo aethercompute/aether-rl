@@ -1,0 +1,55 @@
+import time
+from pathlib import Path
+
+from pydantic import Field, model_validator
+
+from aether_rl.utils.config import BaseConfig
+
+
+class ServerBaseModelIdentityConfig(BaseConfig):
+    model_name: str = Field(min_length=1)
+    model_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    model_config_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    tokenizer_name: str = Field(min_length=1)
+    tokenizer_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    tokenizer_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    chat_template_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    vocab_size: int = Field(ge=1)
+    quantization: str = Field(default="none", min_length=1)
+
+
+class ServerConfig(BaseConfig):
+    run_id: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@+~-]*$")
+    run_root: Path = Path("server-state")
+    database_path: Path | None = None
+    base_model: ServerBaseModelIdentityConfig
+    host: str = "127.0.0.1"
+    port: int = Field(default=8080, ge=1, le=65535)
+    dry_run: bool = False
+    created_at: float = Field(default_factory=time.time, ge=0, allow_inf_nan=False)
+    control_body_limit_bytes: int = Field(default=1024 * 1024, ge=1)
+    result_body_limit_bytes: int = Field(default=64 * 1024 * 1024, ge=1)
+    lease_duration_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
+    loaded_policy_preference_seconds: float = Field(default=5, ge=0, allow_inf_nan=False)
+    max_policy_lag: int = Field(default=0, ge=0)
+    max_lease_wait_seconds: float = Field(default=30, ge=0, allow_inf_nan=False)
+    durable_provider_timeout_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
+    lease_poll_interval_seconds: float = Field(default=0.1, gt=0, allow_inf_nan=False)
+    stale_after_seconds: float = Field(default=60, gt=0, allow_inf_nan=False)
+    lease_reaper_interval_seconds: float = Field(default=1, gt=0, allow_inf_nan=False)
+    policy_verification_interval_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_server(self) -> "ServerConfig":
+        if self.database_path is not None and self.database_path.is_dir():
+            raise ValueError("database_path must be a SQLite file path, not a directory")
+        if self.base_model.model_revision == "0" * 40 or self.base_model.tokenizer_revision == "0" * 40:
+            raise ValueError("base model and tokenizer revisions must be real pinned commits, not placeholders")
+        placeholder_digest = "sha256:" + "0" * 64
+        if placeholder_digest in {
+            self.base_model.model_config_digest,
+            self.base_model.tokenizer_digest,
+            self.base_model.chat_template_digest,
+        }:
+            raise ValueError("base model identity digests must be real fingerprints, not placeholders")
+        return self

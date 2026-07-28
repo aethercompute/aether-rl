@@ -57,6 +57,7 @@ sft = "aether_rl.entrypoints.sft:main"
 inference = "aether_rl.entrypoints.inference:main"
 trainer = "aether_rl.entrypoints.trainer:main"
 orchestrator = "aether_rl.entrypoints.orchestrator:main"
+server = "aether_rl.entrypoints.server:main"
 worker = "aether_rl.entrypoints.worker:main"
 env-server = "aether_rl.orchestrator.env_server.env_server:main"
 
@@ -104,6 +105,18 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=0.23",
     "ruff>=0.12.1",
+]
+server = [
+    "aiosqlite>=0.22.1",
+    "fastapi>=0.128.0",
+    "uvicorn>=0.40.0",
+]
+worker = [
+    "httpx>=0.28.1",
+    "nvidia-ml-py>=12.575.51",
+    "renderers",
+    "verifiers[harbor]>=0.2.1",
+    "vllm>=0.24.0",
 ]
 
 [tool.uv]

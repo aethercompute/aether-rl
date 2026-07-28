@@ -40,12 +40,14 @@ git -c url.https://github.com/.insteadOf=git@github.com: submodule update --init
 ```bash
 uv sync                                    # core only
 uv sync --group dev                        # + pytest, ruff, pre-commit
+uv sync --group server                     # server-role helper group; project deps are still unified
+uv sync --group worker --package reverse-text-v1  # worker helper group + selected env
 uv sync --all-extras                       # + extras (flash-attn, flash-attn-cute, …)
 uv sync --all-extras --all-packages        # + all env packages (needed to train on them)
 uv sync --all-extras --package aether-rl --package reverse-text-v1  # extras + one env
 ```
 
-Environment packages under `deps/research-environments/environments/*/*` and `deps/verifiers/environments/*` are auto-discovered uv workspace members. They are opt-in: `uv sync` and `uv sync --all-extras` do not install them and remove environment packages not selected by the command. Prefer repeated `--package <env>` arguments for the environments a run needs, and include `--package aether-rl`. Add `--all-extras` when the core extras must remain installed. Use `--all-packages` only when every workspace environment is required; incompatible workspace pins may prevent an all-package sync.
+Environment packages under `deps/research-environments/environments/*/*` and `deps/verifiers/environments/*` are auto-discovered uv workspace members. They are opt-in: `uv sync`, `uv sync --group server`, `uv sync --group worker`, and `uv sync --all-extras` do not install them and remove environment packages not selected by the command. Prefer repeated `--package <env>` arguments for the environments a run needs, and include `--package aether-rl`. Add `--all-extras` when the core extras must remain installed. Use `--all-packages` only when every workspace environment is required; incompatible workspace pins may prevent an all-package sync. The current project dependency set is still unified; `server` and `worker` groups document role intent but are not slim installs yet.
 
 When bumping a package past the workspace-wide `exclude-newer = "7 days"` window, add it (and any newly-required transitives) to `[tool.uv.exclude-newer-package]` before refreshing `uv.lock`.
 

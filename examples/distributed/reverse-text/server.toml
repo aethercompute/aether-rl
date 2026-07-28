@@ -1,0 +1,15 @@
+run_id = "reverse-text-distributed"
+run_root = "outputs/reverse-text-distributed/server"
+host = "127.0.0.1"
+port = 8080
+
+[base_model]
+model_name = "PrimeIntellect/Qwen3-0.6B-Reverse-Text-SFT"
+model_revision = "0000000000000000000000000000000000000000" # replace with a real pinned commit
+model_config_digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000" # replace
+tokenizer_name = "PrimeIntellect/Qwen3-0.6B-Reverse-Text-SFT"
+tokenizer_revision = "0000000000000000000000000000000000000000" # replace with a real pinned commit
+tokenizer_digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000" # replace
+chat_template_digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000" # replace
+vocab_size = 151936
+quantization = "none"
