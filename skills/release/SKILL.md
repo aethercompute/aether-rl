@@ -11,7 +11,7 @@ Releases are driven by [`.github/workflows/tag-and-release.yaml`](../../.github/
 2. You open a **draft PR** that bumps `version` in `pyproject.toml`.
 3. Maintainer merges. The workflow tags the commit and promotes the draft.
 
-Release notes live on the GitHub Release, not in the repo. Prime-rl is **not** on PyPI. `.dev` tags are handled separately by `devx_tag.yaml`; `tag-and-release.yaml` ignores them.
+Release notes live on the GitHub Release, not in the repo. The workflow publishes GitHub releases and images; it does not publish the root Aether RL package to PyPI. `.dev` tags are handled separately by `devx_tag.yaml`; `tag-and-release.yaml` ignores them.
 
 ## 1. Decide the version
 
@@ -44,7 +44,7 @@ Tips:
 ## 3. Create the draft release
 
 ```bash
-NEW=v0.6.0
+NEW=vX.Y.Z
 gh release create --draft "$NEW" --title "$NEW" --target main --notes-file /tmp/release-notes-$NEW.md
 gh release view "$NEW" --json isDraft,tagName --jq '{tagName, isDraft}'   # expect isDraft: true
 ```

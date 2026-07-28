@@ -5,34 +5,43 @@ description: Launch Aether RL coordinator and outbound rollout workers. Use when
 
 # Start A Run
 
-Both roles require `AETHER_COORDINATOR_TOKEN`. Replace every placeholder model/tokenizer revision and digest in the examples before launch.
+Use persistent, unique `run_root` and worker `state_dir` paths. Install each selected verifier environment on the coordinator and every compatible worker. Generate immutable model identity values with `uv run model-identity`; checked-in zeros are placeholders.
+
+Both roles require the same `AETHER_COORDINATOR_TOKEN`.
 
 ## Coordinator
 
 ```bash
-AETHER_COORDINATOR_TOKEN=... scripts/preflight-server.sh @ examples/distributed/reverse-text/server.toml
-AETHER_COORDINATOR_TOKEN=... scripts/launch-server.sh @ examples/distributed/reverse-text/server.toml
+export AETHER_COORDINATOR_TOKEN='<secret>'
+scripts/preflight-server.sh @ examples/distributed/reverse-text/server.toml
+scripts/launch-server.sh @ examples/distributed/reverse-text/server.toml
 ```
 
-The coordinator must be exposed to remote workers through an HTTPS proxy, VPN, load balancer, or mesh. TLS does not terminate inside Aether RL.
+The coordinator starts and supervises the central trainer. Do not launch another trainer for the same run. Preflight validates configuration, trainer model/tokenizer revisions, and distributed checkpoint compatibility, but does not start the trainer, load weights, open the production database, or test disk capacity.
+
+Wait for `/health` and `/ready` before workers. `/health` is API liveness only; `/ready` includes trainer, processing, database, and policy integrity.
+
+Expose remote coordinators through an external HTTPS proxy, load balancer, mesh, or VPN gateway. Aether RL does not terminate TLS. Preserve auth/protocol headers and support long polling and configured result body sizes.
 
 ## Worker
 
-Install the environment package selected by the worker config, then preflight and launch:
-
 ```bash
 uv sync --group worker --package aether-rl --package reverse-text-v1
-AETHER_COORDINATOR_TOKEN=... scripts/preflight-worker.sh @ examples/distributed/reverse-text/worker.toml
-AETHER_COORDINATOR_TOKEN=... scripts/launch-worker.sh @ examples/distributed/reverse-text/worker.toml
+export AETHER_COORDINATOR_TOKEN='<same-secret>'
+scripts/preflight-worker.sh @ examples/distributed/reverse-text/worker.toml
+scripts/launch-worker.sh @ examples/distributed/reverse-text/worker.toml
 ```
 
-Workers initiate outbound connections only. Their supervised vLLM process binds to loopback and serves immutable LoRA names.
+Worker preflight checks GPU visibility, artifact fingerprints, package versions, and environment resolution. It does not contact the coordinator, load model weights, start vLLM, execute a rollout, or check disk capacity.
+
+Workers initiate outbound connections only. `worker` starts vLLM on loopback, writes `<state_dir>/inference.log`, executes environments, and durably spools unacknowledged results.
 
 ## Entrypoints
 
-- `server`: coordinator API and durable state.
-- `worker`: outbound worker daemon and local rollout execution.
-- `trainer`: central LoRA-only trainer process used by the server-side training path.
-- `inference`: worker-local vLLM process, normally supervised by `worker` rather than launched manually.
+- `server`: normal coordinator, result processor, and trainer supervisor.
+- `worker`: normal outbound rollout worker and vLLM supervisor.
+- `model-identity`: canonical pinned model/tokenizer fingerprint generator.
+- `trainer`: implementation/debug entrypoint; normally supervised by `server`.
+- `inference`: implementation/debug entrypoint; normally supervised by `worker`.
 
-All Python entrypoints run through `uv run`; never invoke raw Python.
+Always run Python entrypoints through `uv run`. See `docs/getting-started.md` for the complete launch sequence.

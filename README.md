@@ -1,35 +1,71 @@
 # Aether RL
 
-Aether RL trains one LoRA policy on a central machine while outbound worker machines generate verifier v1 rollouts against local vLLM instances.
+Aether RL trains one LoRA policy on a central machine while trusted, geographically distributed workers generate complete verifier v1 rollouts against local vLLM instances. Workers make outbound HTTPS connections only, independently load the same pinned base model, and exchange only immutable content-addressed LoRA adapters after startup.
 
-The coordinator owns durable scheduling, policy identity, result ingestion, central advantage calculation, training batches, and immutable adapter publication. Workers load the same pinned base model independently; only content-addressed LoRA artifacts cross the network after startup.
+The coordinator owns durable scheduling, result ingestion, group scoring, training batches, trainer supervision, checkpoints, and policy publication. One coordinator manages one run.
 
-## Launch
+## Requirements
 
-Both roles require `AETHER_COORDINATOR_TOKEN`. Replace placeholder revisions and fingerprints in the example files before launch.
+- Linux on `x86_64` or `aarch64`, Python 3.12, and `uv >= 0.11.1`.
+- NVIDIA GPUs and a compatible CUDA stack on the trainer and workers.
+- Persistent local storage for each coordinator `run_root` and worker `state_dir`.
+- Access to the exact pinned Hugging Face model and tokenizer revisions.
+- The selected verifier environment package installed on the coordinator and every compatible worker.
+
+## Quickstart
+
+Clone with submodules and install the server plus the example environment:
 
 ```bash
-uv sync --group server
-AETHER_COORDINATOR_TOKEN=... scripts/preflight-server.sh @ examples/distributed/reverse-text/server.toml
-AETHER_COORDINATOR_TOKEN=... scripts/launch-server.sh @ examples/distributed/reverse-text/server.toml
+git clone --recurse-submodules https://github.com/aethercompute/aether-rl.git
+cd aether-rl
+uv sync --group server --package aether-rl --package reverse-text-v1
 ```
 
-On each worker:
+Generate the immutable identity block for a full Hugging Face commit, then place the output in both `server.toml` and `worker.toml`. Set the same revision in `trainer.toml`.
+
+```bash
+uv run model-identity \
+  --model-name PrimeIntellect/Qwen3-0.6B-Reverse-Text-SFT \
+  --model-revision <40-character-commit>
+```
+
+The checked-in reverse-text files are structural templates. Their all-zero identities intentionally fail preflight.
+
+Set one shared ASCII bearer token, validate the server configuration, and launch the coordinator. The coordinator starts and supervises the trainer.
+
+```bash
+export AETHER_COORDINATOR_TOKEN='<random-secret>'
+scripts/preflight-server.sh @ examples/distributed/reverse-text/server.toml
+scripts/launch-server.sh @ examples/distributed/reverse-text/server.toml
+```
+
+On each worker, install the worker role and environment, update `coordinator_url`, use a unique persistent `state_dir`, then preflight and launch:
 
 ```bash
 uv sync --group worker --package aether-rl --package reverse-text-v1
-AETHER_COORDINATOR_TOKEN=... scripts/preflight-worker.sh @ examples/distributed/reverse-text/worker.toml
-AETHER_COORDINATOR_TOKEN=... scripts/launch-worker.sh @ examples/distributed/reverse-text/worker.toml
+export AETHER_COORDINATOR_TOKEN='<same-random-secret>'
+scripts/preflight-worker.sh @ examples/distributed/reverse-text/worker.toml
+scripts/launch-worker.sh @ examples/distributed/reverse-text/worker.toml
 ```
 
-Remote coordinator URLs must use HTTPS through an external proxy, VPN, load balancer, or mesh. Workers need no inbound ports.
+Remote coordinator URLs must use HTTPS through an external reverse proxy, load balancer, mesh, or VPN gateway. Aether RL does not terminate TLS. Workers and their supervised vLLM processes require no inbound ports.
+
+## Documentation
+
+- [Architecture and trust model](docs/overview.md)
+- [Installation and first run](docs/getting-started.md)
+- [Configuration reference](docs/configuration.md)
+- [Operations, monitoring, restart, and upgrades](docs/operations.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
 ## Development
 
 ```bash
 uv sync --all-extras --group dev
-uv run pytest tests/unit
+uv run pytest tests/unit -m "not gpu"
 uv run ruff check .
+uv run ruff format --check .
 ```
 
-See `skills/training/` for the current launch and monitoring runbooks.
+Repository automation runbooks live under [`skills/`](skills/).

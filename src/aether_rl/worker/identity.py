@@ -16,35 +16,13 @@ def discover_base_model_identity(config: WorkerConfig) -> BaseModelIdentity:
     if expected.quantization != "none":
         raise ValueError("worker serving currently supports only quantization='none'")
     cache_dir = None if config.hf_cache_dir is None else str(config.hf_cache_dir / "hub")
-    config_path = Path(
-        hf_hub_download(
-            repo_id=expected.model_name,
-            filename="config.json",
-            revision=expected.model_revision,
-            cache_dir=cache_dir,
-        )
-    )
-    model_config = json.loads(config_path.read_bytes())
-    if model_config.get("quantization_config") is not None:
-        raise ValueError("model repository is quantized but worker identity requires unquantized weights")
-    tokenizer = AutoTokenizer.from_pretrained(
-        expected.tokenizer_name,
-        revision=expected.tokenizer_revision,
-        cache_dir=cache_dir,
-        trust_remote_code=config.trust_remote_code,
-    )
-    if tokenizer.eos_token_id is not None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
-    discovered = BaseModelIdentity(
+    discovered = calculate_base_model_identity(
         model_name=expected.model_name,
         model_revision=expected.model_revision,
-        model_config_digest=sha256_digest(canonical_json_bytes(model_config)),
         tokenizer_name=expected.tokenizer_name,
         tokenizer_revision=expected.tokenizer_revision,
-        tokenizer_digest=tokenizer_digest(tokenizer),
-        chat_template_digest=chat_template_digest(tokenizer.chat_template),
-        vocab_size=len(tokenizer),
-        quantization="none",
+        cache_dir=cache_dir,
+        trust_remote_code=config.trust_remote_code,
     )
     if discovered != expected:
         mismatches = [
@@ -52,6 +30,47 @@ def discover_base_model_identity(config: WorkerConfig) -> BaseModelIdentity:
         ]
         raise ValueError(f"configured base model identity does not match pinned artifacts: {', '.join(mismatches)}")
     return discovered
+
+
+def calculate_base_model_identity(
+    *,
+    model_name: str,
+    model_revision: str,
+    tokenizer_name: str,
+    tokenizer_revision: str,
+    cache_dir: str | None = None,
+    trust_remote_code: bool = False,
+) -> BaseModelIdentity:
+    config_path = Path(
+        hf_hub_download(
+            repo_id=model_name,
+            filename="config.json",
+            revision=model_revision,
+            cache_dir=cache_dir,
+        )
+    )
+    model_config = json.loads(config_path.read_bytes())
+    if model_config.get("quantization_config") is not None:
+        raise ValueError("model repository is quantized but worker identity requires unquantized weights")
+    tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer_name,
+        revision=tokenizer_revision,
+        cache_dir=cache_dir,
+        trust_remote_code=trust_remote_code,
+    )
+    if tokenizer.eos_token_id is not None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+    return BaseModelIdentity(
+        model_name=model_name,
+        model_revision=model_revision,
+        model_config_digest=sha256_digest(canonical_json_bytes(model_config)),
+        tokenizer_name=tokenizer_name,
+        tokenizer_revision=tokenizer_revision,
+        tokenizer_digest=tokenizer_digest(tokenizer),
+        chat_template_digest=chat_template_digest(tokenizer.chat_template),
+        vocab_size=len(tokenizer),
+        quantization="none",
+    )
 
 
 def tokenizer_digest(tokenizer: Any) -> str:

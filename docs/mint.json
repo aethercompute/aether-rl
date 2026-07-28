@@ -1,0 +1,15 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "navigation": [
+    {
+      "group": "Aether RL",
+      "pages": [
+        "overview",
+        "getting-started",
+        "configuration",
+        "operations",
+        "troubleshooting"
+      ]
+    }
+  ]
+}

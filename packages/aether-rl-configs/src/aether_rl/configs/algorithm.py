@@ -1,7 +1,7 @@
 """Algorithm abstraction: sampling and the per-token training signal.
 
 An algorithm is a named, self-contained config — a discriminated union keyed
-on ``type`` (``grpo``, ``max_rl``, ``opd``, ``opsd``, ``sft``, ``echo``).
+on ``type`` (``grpo``, ``max_rl``, ``opd``, ``echo``).
 The bundle *is* the algorithm: each variant carries
 its sampling component and its credit-assignment / loss-routing parameters,
 and its class defaults are the vetted setting — ``type = "opd"`` with a
@@ -160,9 +160,7 @@ class BaseAlgoConfig(BaseConfig):
     cross-cutting source/loss compatibility check. Each subclass sets ``type``
     (the discriminator), declares its loss routing (``action_loss_type``), and
     adds its own parameters — including any reference model it needs, named
-    where that model is actually used (opd scores against a frozen ``teacher``;
-    sft samples from its ``sampling.source``; opsd self-distills against the
-    live policy and names no model).
+    where that model is actually used (OPD scores against a frozen ``teacher``).
 
     The bundle IS the algorithm — there is no separate ``advantage``
     sub-component. ``algo.type`` names it, and the class defaults are the
@@ -175,15 +173,12 @@ class BaseAlgoConfig(BaseConfig):
 
     @model_validator(mode="after")
     def validate_sampling_source(self):
-        """The on-policy loss types (rl, ref_kl) need the live policy's own
-        sampling logprobs, so they must sample from ``"policy"``; only sft (ce)
-        may sample from a frozen model."""
+        """On-policy loss types need the live policy's sampling logprobs."""
         if self.action_loss_type in ("rl", "ref_kl") and self.sampling.source != "policy":
             raise ValueError(
                 f"algorithm '{self.type}' trains with the "
                 f"{self.action_loss_type} loss type but sampling.source is a frozen model — "
-                "the importance ratio and trust region need the live policy's own sampling logprobs. "
-                "Use the 'sft' algorithm to distill frozen-model tokens."
+                "the importance ratio and trust region need the live policy's own sampling logprobs."
             )
         return self
 
@@ -246,8 +241,7 @@ class OPDAlgoConfig(BaseAlgoConfig):
     """The teacher — an inline frozen hosted model (``name`` + ``base_url``)
     whose reverse KL the policy distills toward. Required, and necessarily a
     frozen endpoint: scoring the policy under itself yields zero KL signal, so
-    ``"policy"`` is not even representable here (use ``opsd`` for
-    demo-conditioned self-teaching)."""
+    ``"policy"`` is not representable here."""
 
 
 AlgoConfig: TypeAlias = Annotated[

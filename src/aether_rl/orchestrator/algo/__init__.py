@@ -52,11 +52,8 @@ ALGORITHM_CLASSES: dict[str, type[Algorithm]] = {
 def build_algorithm(config: AlgoConfig, policy_pool: InferencePool) -> Algorithm:
     cls = ALGORITHM_CLASSES[config.type]
     assert cls.action_loss_type == config.action_loss_type  # config and runtime declare in two places
-    # The Algorithm is the runtime of the algorithm config's training signal
-    # (its sibling Sampler interprets the sampling half). Every algorithm is
-    # handed the live policy pool — opsd self-distills against it, others may
-    # judge against it or ignore it. Other models (a frozen teacher, a hint
-    # renderer) are built from the algorithm's own config in setup().
+    # The Algorithm is the runtime of the algorithm config's training signal.
+    # Other models, such as OPD's frozen teacher, are built during setup.
     return cls(config, policy_pool)
 
 

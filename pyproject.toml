@@ -52,6 +52,7 @@ dependencies = [
 
 [project.scripts]
 inference = "aether_rl.entrypoints.inference:main"
+model-identity = "aether_rl.entrypoints.model_identity:main"
 trainer = "aether_rl.entrypoints.trainer:main"
 server = "aether_rl.entrypoints.server:main"
 worker = "aether_rl.entrypoints.worker:main"

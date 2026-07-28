@@ -256,6 +256,10 @@ class CoordinatorRuntime:
             raise ValueError("trainer model name does not match the server base model")
         if trainer.model.revision != config.base_model.model_revision:
             raise ValueError("trainer model revision does not match the server base model")
+        if trainer.tokenizer.name != config.base_model.tokenizer_name:
+            raise ValueError("trainer tokenizer name does not match the server base model")
+        if trainer.tokenizer.revision != config.base_model.tokenizer_revision:
+            raise ValueError("trainer tokenizer revision does not match the server base model")
         if trainer.weight_broadcast.save_format != "safetensors":
             raise ValueError("distributed adapter publication requires safetensors")
         if trainer.ckpt is None or trainer.ckpt.interval != 1 or trainer.ckpt.weights_only:
