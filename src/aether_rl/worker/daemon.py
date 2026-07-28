@@ -86,6 +86,7 @@ class WorkerDaemon:
         self.policy_runtime = policy_runtime
         self.loaded_policy_ids = policy_runtime.loaded_policy_ids if policy_runtime is not None else loaded_policy_ids
         self.stop_event = asyncio.Event()
+        self.lease_lock = asyncio.Lock()
         self.active: dict[str, ActiveAssignment] = {}
         self._entry_events: dict[str, asyncio.Event] = {}
         self._server_time_offset = 0.0
@@ -204,28 +205,29 @@ class WorkerDaemon:
                 self.active.pop(lease.lease_id, None)
 
     async def _acquire_lease(self) -> AssignmentLease | None:
-        request = LeaseRequest(
-            request_id=self.request_id_factory(),
-            worker_id=self.registration.worker_id,
-            worker_session_id=self.registration.worker_session_id,
-            sent_at=self.timestamps.next(),
-            loaded_policy_ids=tuple(sorted(self.loaded_policy_ids())),
-            environments=self.registration.capabilities.environments,
-            available_slots=1,
-            wait_seconds=self.config.lease_wait_seconds,
-        )
-        delay = self.config.retry_min_seconds
-        while not self.stop_event.is_set():
-            try:
-                return await self.client.lease(request)
-            except (httpx.TransportError, httpx.TimeoutException, CoordinatorProtocolError):
-                await self._sleep(delay)
-                delay = min(delay * 2, self.config.retry_max_seconds)
-            except CoordinatorAPIError as error:
-                if not error.retryable:
-                    raise
-                await self._sleep(error.retry_after if error.retry_after is not None else delay)
-                delay = min(delay * 2, self.config.retry_max_seconds)
+        async with self.lease_lock:
+            request = LeaseRequest(
+                request_id=self.request_id_factory(),
+                worker_id=self.registration.worker_id,
+                worker_session_id=self.registration.worker_session_id,
+                sent_at=self.timestamps.next(),
+                loaded_policy_ids=tuple(sorted(self.loaded_policy_ids())),
+                environments=self.registration.capabilities.environments,
+                available_slots=1,
+                wait_seconds=self.config.lease_wait_seconds,
+            )
+            delay = self.config.retry_min_seconds
+            while not self.stop_event.is_set():
+                try:
+                    return await self.client.lease(request)
+                except (httpx.TransportError, httpx.TimeoutException, CoordinatorProtocolError):
+                    await self._sleep(delay)
+                    delay = min(delay * 2, self.config.retry_max_seconds)
+                except CoordinatorAPIError as error:
+                    if not error.retryable:
+                        raise
+                    await self._sleep(error.retry_after if error.retry_after is not None else delay)
+                    delay = min(delay * 2, self.config.retry_max_seconds)
         return None
 
     async def _execute(self, active: ActiveAssignment) -> TerminalEnvelope:
