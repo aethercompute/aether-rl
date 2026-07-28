@@ -13,8 +13,7 @@ Both roles require the same `AETHER_COORDINATOR_TOKEN`.
 
 ```bash
 export AETHER_COORDINATOR_TOKEN='<secret>'
-scripts/preflight-server.sh @ examples/distributed/reverse-text/server.toml
-scripts/launch-server.sh @ examples/distributed/reverse-text/server.toml
+scripts/run-server.sh examples/distributed/reverse-text/server.toml
 ```
 
 The coordinator starts and supervises the central trainer. Do not launch another trainer for the same run. Preflight validates configuration, trainer model/tokenizer revisions, and distributed checkpoint compatibility, but does not start the trainer, load weights, open the production database, or test disk capacity.
@@ -26,10 +25,9 @@ Expose remote coordinators through an external HTTPS proxy, load balancer, mesh,
 ## Worker
 
 ```bash
-uv sync --group worker --package aether-rl --package reverse-text-v1
+scripts/setup-worker.sh reverse-text-v1
 export AETHER_COORDINATOR_TOKEN='<same-secret>'
-scripts/preflight-worker.sh @ examples/distributed/reverse-text/worker.toml
-scripts/launch-worker.sh @ examples/distributed/reverse-text/worker.toml
+scripts/run-worker.sh examples/distributed/reverse-text/worker.toml https://coordinator.example.com
 ```
 
 Worker preflight checks GPU visibility, artifact fingerprints, package versions, and environment resolution. It does not contact the coordinator, load model weights, start vLLM, execute a rollout, or check disk capacity.

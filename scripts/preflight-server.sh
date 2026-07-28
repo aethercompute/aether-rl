@@ -11,4 +11,4 @@ if [ -z "${AETHER_COORDINATOR_TOKEN:-}" ]; then
   exit 2
 fi
 
-uv run --group server server "$@" --dry-run True
+uv run --no-default-groups --group server server "$@" --dry-run True

@@ -11,4 +11,4 @@ if [ -z "${AETHER_COORDINATOR_TOKEN:-}" ]; then
   exit 2
 fi
 
-exec uv run --group worker worker "$@"
+exec uv run --no-default-groups --group worker worker "$@"

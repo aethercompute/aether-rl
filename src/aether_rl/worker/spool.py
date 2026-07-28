@@ -121,6 +121,10 @@ class WorkerState:
                 path.chmod(0o700)
                 cls._fsync_directory(path.parent)
             return
+        if not path.parent.exists():
+            cls._create_directory(path.parent)
+        elif path.parent.is_symlink() or not path.parent.is_dir():
+            raise WorkerStateError(f"worker state parent directory is unsafe: {path.parent}")
         path.mkdir(mode=0o700)
         cls._fsync_directory(path.parent)
 

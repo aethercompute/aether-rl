@@ -2,7 +2,7 @@
 
 This guide launches the reverse-text example with one coordinator and one or more workers. The checked-in configuration contains identity placeholders and is not runnable until they are replaced.
 
-For a short end-to-end experiment with an objective RL learning threshold, use the [distributed codeword learning proof](../examples/distributed/codeword/README.md).
+For a short end-to-end experiment with an objective RL learning threshold, use the [distributed reverse-text proof](../examples/distributed/reverse-text-proof/README.md).
 
 ## 1. Prepare every machine
 
@@ -20,13 +20,13 @@ Use persistent local paths for the server `run_root` and each worker `state_dir`
 The coordinator loads source tasksets, so install every environment package referenced by `server.toml`:
 
 ```bash
-uv sync --group server --package aether-rl --package reverse-text-v1
+scripts/setup-server.sh reverse-text-v1
 ```
 
 Install the worker role and every advertised environment package on each worker:
 
 ```bash
-uv sync --group worker --package aether-rl --package reverse-text-v1
+scripts/setup-worker.sh reverse-text-v1
 ```
 
 Workspace environments are opt-in. Prefer repeated `--package <environment>` arguments instead of `--all-packages`; research environments can have incompatible dependency pins.
@@ -76,8 +76,7 @@ A VPN alone does not change the worker's URL rule: a non-loopback `coordinator_u
 ## 6. Preflight and launch the coordinator
 
 ```bash
-scripts/preflight-server.sh @ examples/distributed/reverse-text/server.toml
-scripts/launch-server.sh @ examples/distributed/reverse-text/server.toml
+scripts/run-server.sh examples/distributed/reverse-text/server.toml
 ```
 
 Server preflight validates configuration, identity shape, source resolution, trainer compatibility, and distributed checkpoint requirements. It does not bind the port, open the production database, load model weights, start the trainer, or test disk capacity.
@@ -96,8 +95,7 @@ curl -fsS http://127.0.0.1:8080/ready
 Set `coordinator_url` to the externally reachable HTTPS origin and choose a unique persistent `state_dir` on each worker:
 
 ```bash
-scripts/preflight-worker.sh @ examples/distributed/reverse-text/worker.toml
-scripts/launch-worker.sh @ examples/distributed/reverse-text/worker.toml
+scripts/run-worker.sh examples/distributed/reverse-text/worker.toml https://coordinator.example.com
 ```
 
 Worker preflight checks GPU visibility, model/tokenizer fingerprints, installed environment versions, and environment resolution. It does not contact the coordinator, load model weights onto the GPU, start vLLM, execute an episode, or check available disk capacity.

@@ -9,6 +9,8 @@ import msgspec
 
 from aether_rl.coordinator.results import ProcessedGroupPayload
 
+EVAL_METRICS = ("exact_match", "exact_format", "length_accuracy")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Summarize durable distributed evaluation results by policy")
@@ -55,7 +57,9 @@ def main() -> None:
                         {
                             "eval/policy_version": policy["policy_version"],
                             "eval/reward": policy["mean_reward"],
+                            "eval/exact_match": policy["exact_match_mean"],
                             "eval/exact_format": policy["exact_format_mean"],
+                            "eval/length_accuracy": policy["length_accuracy_mean"],
                             "eval/rollouts": policy["rollouts"],
                             "eval/errors": policy["errors"],
                         }
@@ -81,8 +85,8 @@ def summarize_eval(groups_dir: Path, *, source_id: str | None = None) -> list[di
             "reward_sum": 0.0,
             "effective_rollouts": 0,
             "effective_reward_sum": 0.0,
-            "exact_format_count": 0,
-            "exact_format_sum": 0.0,
+            "metric_counts": defaultdict(int),
+            "metric_sums": defaultdict(float),
         }
     )
     for path in sorted(groups_dir.glob("*.msgpack")):
@@ -101,30 +105,31 @@ def summarize_eval(groups_dir: Path, *, source_id: str | None = None) -> list[di
             if ok:
                 aggregate["effective_rollouts"] += 1
                 aggregate["effective_reward_sum"] += reward
-            exact_format = record.get("metrics", {}).get("exact_format")
-            if exact_format is not None:
-                aggregate["exact_format_count"] += 1
-                aggregate["exact_format_sum"] += float(exact_format)
+            metrics = record.get("metrics", {})
+            for metric in EVAL_METRICS:
+                if metric in metrics:
+                    aggregate["metric_counts"][metric] += 1
+                    aggregate["metric_sums"][metric] += float(metrics[metric])
 
     policies: list[dict[str, Any]] = []
     for (source_id, policy_version, policy_id), aggregate in sorted(totals.items()):
         rollouts = aggregate["rollouts"]
         effective = aggregate["effective_rollouts"]
-        exact_count = aggregate["exact_format_count"]
-        policies.append(
-            {
-                "source_id": source_id,
-                "policy_version": policy_version,
-                "policy_id": policy_id,
-                "groups": aggregate["groups"],
-                "rollouts": rollouts,
-                "errors": aggregate["errors"],
-                "mean_reward": aggregate["reward_sum"] / rollouts if rollouts else None,
-                "effective_rollouts": effective,
-                "effective_mean_reward": aggregate["effective_reward_sum"] / effective if effective else None,
-                "exact_format_mean": aggregate["exact_format_sum"] / exact_count if exact_count else None,
-            }
-        )
+        policy = {
+            "source_id": source_id,
+            "policy_version": policy_version,
+            "policy_id": policy_id,
+            "groups": aggregate["groups"],
+            "rollouts": rollouts,
+            "errors": aggregate["errors"],
+            "mean_reward": aggregate["reward_sum"] / rollouts if rollouts else None,
+            "effective_rollouts": effective,
+            "effective_mean_reward": aggregate["effective_reward_sum"] / effective if effective else None,
+        }
+        for metric in EVAL_METRICS:
+            count = aggregate["metric_counts"][metric]
+            policy[f"{metric}_mean"] = aggregate["metric_sums"][metric] / count if count else None
+        policies.append(policy)
 
     return policies
 

@@ -1,10 +1,10 @@
-run_id = "codeword-qwen25-stable-proof"
-run_root = "outputs/codeword-qwen25-stable-proof/server"
+run_id = "reverse-text-qwen25-proof"
+run_root = "outputs/reverse-text-qwen25-proof/server"
 host = "127.0.0.1"
 port = 8080
-trainer_config_path = "examples/distributed/codeword/trainer.toml"
+trainer_config_path = "examples/distributed/reverse-text-proof/trainer.toml"
 trainer_processes = 1
-training_batch_size = 128
+training_batch_size = 64
 
 [base_model]
 model_name = "Qwen/Qwen2.5-0.5B-Instruct"
@@ -18,26 +18,26 @@ vocab_size = 151665
 quantization = "none"
 
 [[sources]]
-source_id = "codeword-train"
+source_id = "reverse-text-proof-train"
 kind = "train"
-environment_id = "codeword-v1"
+environment_id = "reverse-text-proof-v1"
 environment_revision = "0.1.0"
-environment_config = { taskset = { id = "codeword-v1", split = "train" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
-group_size = 16
+environment_config = { taskset = { id = "reverse-text-proof-v1", split = "train" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
+group_size = 8
 max_attempts = 3
 weight = 4.0
-sampling = { temperature = 1.5, max_tokens = 8 }
+sampling = { temperature = 1.2, max_tokens = 12 }
 
 [sources.algorithm]
 type = "grpo"
 
 [[sources]]
-source_id = "codeword-eval"
+source_id = "reverse-text-proof-eval"
 kind = "eval"
-environment_id = "codeword-v1"
+environment_id = "reverse-text-proof-v1"
 environment_revision = "0.1.0"
-environment_config = { taskset = { id = "codeword-v1", split = "eval" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
+environment_config = { taskset = { id = "reverse-text-proof-v1", split = "eval" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
 group_size = 1
 max_attempts = 3
 weight = 1.0
-sampling = { temperature = 0.0, max_tokens = 8 }
+sampling = { temperature = 0.0, max_tokens = 12 }

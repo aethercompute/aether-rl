@@ -22,9 +22,9 @@ Summarize durable evaluation records by source and behavior-policy version with:
 uv run eval-report --run-root <run_root> --source-id <eval-source-id>
 ```
 
-The report's all-attempt `mean_reward` includes errored rollouts as zero reward. Use it as the primary reliability-aware score; `effective_mean_reward` excludes errors.
+The report's all-attempt `mean_reward` includes errored rollouts as zero reward. Use it as the primary reliability-aware score; `effective_mean_reward` excludes errors. Standard task metrics are reported as `exact_match_mean`, `exact_format_mean`, and `length_accuracy_mean` when present.
 
-Add `--watch-seconds 20` and the `--wandb-project`, `--wandb-name`, and optional `--wandb-group` arguments to publish a minimal live evaluation run. Its primary `eval/reward` graph uses `eval/policy_version` as the x-axis.
+Add `--watch-seconds 20` and the `--wandb-project`, `--wandb-name`, and optional `--wandb-group` arguments to publish a minimal live evaluation run. Its reward and standard task metrics use `eval/policy_version` as the x-axis.
 
 ## Files and logs
 

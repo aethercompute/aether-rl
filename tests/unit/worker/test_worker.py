@@ -64,11 +64,12 @@ def assignment_lease() -> AssignmentLease:
 
 
 def test_worker_identity_lock_spool_recovery_acknowledgement_and_quarantine(tmp_path: Path):
-    state = WorkerState(tmp_path / "state")
+    state_path = tmp_path / "missing-parent" / "state"
+    state = WorkerState(state_path)
     worker_id = state.load_or_create_worker_id()
     assert state.load_or_create_worker_id() == worker_id
     with pytest.raises(WorkerStateError, match="already owned"):
-        WorkerState(tmp_path / "state")
+        WorkerState(state_path)
 
     spool = WorkerSpool(state)
     entry = spool.publish(failure_envelope(assignment_lease()))
@@ -86,7 +87,7 @@ def test_worker_identity_lock_spool_recovery_acknowledgement_and_quarantine(tmp_
     assert spool.entries() == ()
     state.close()
 
-    with WorkerState(tmp_path / "state") as reopened:
+    with WorkerState(state_path) as reopened:
         assert reopened.load_or_create_worker_id() == worker_id
         spool = WorkerSpool(reopened)
         corrupt = spool.pending / f"{'0' * 64}.failure.json"
@@ -97,7 +98,7 @@ def test_worker_identity_lock_spool_recovery_acknowledgement_and_quarantine(tmp_
         assert (spool.rejected / corrupt.name).read_bytes() == b"not-json"
         pending = spool.publish(result_envelope(assignment_lease()))
 
-    with WorkerState(tmp_path / "state") as restarted:
+    with WorkerState(state_path) as restarted:
         recovered = WorkerSpool(restarted).entries()
         assert len(recovered) == 1
         assert recovered[0].body == pending.body

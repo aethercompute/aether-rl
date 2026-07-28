@@ -27,10 +27,10 @@ weights = "None"
 filename = "metrics.jsonl"
 
 [wandb]
-project = "aether-rl-codeword-stable"
-name = "qwen2.5-0.5b-codeword-stable"
+project = "aether-rl-reverse-text"
+name = "qwen2.5-0.5b-reverse-text"
 group = "distributed-learning-proof"
-tags = ["grpo", "distributed", "codeword"]
+tags = ["grpo", "distributed", "reverse-text"]
 create_overview = false
 log_metrics = [
     "loss/mean",

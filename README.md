@@ -19,7 +19,7 @@ Clone with submodules and install the server plus the example environment:
 ```bash
 git clone --recurse-submodules https://github.com/aethercompute/aether-rl.git
 cd aether-rl
-uv sync --group server --package aether-rl --package reverse-text-v1
+scripts/setup-server.sh reverse-text-v1
 ```
 
 Generate the immutable identity block for a full Hugging Face commit, then place the output in both `server.toml` and `worker.toml`. Set the same revision in `trainer.toml`.
@@ -36,17 +36,15 @@ Set one shared ASCII bearer token, validate the server configuration, and launch
 
 ```bash
 export AETHER_COORDINATOR_TOKEN='<random-secret>'
-scripts/preflight-server.sh @ examples/distributed/reverse-text/server.toml
-scripts/launch-server.sh @ examples/distributed/reverse-text/server.toml
+scripts/run-server.sh examples/distributed/reverse-text/server.toml
 ```
 
 On each worker, install the worker role and environment, update `coordinator_url`, use a unique persistent `state_dir`, then preflight and launch:
 
 ```bash
-uv sync --group worker --package aether-rl --package reverse-text-v1
+scripts/setup-worker.sh reverse-text-v1
 export AETHER_COORDINATOR_TOKEN='<same-random-secret>'
-scripts/preflight-worker.sh @ examples/distributed/reverse-text/worker.toml
-scripts/launch-worker.sh @ examples/distributed/reverse-text/worker.toml
+scripts/run-worker.sh examples/distributed/reverse-text/worker.toml https://coordinator.example.com
 ```
 
 Remote coordinator URLs must use HTTPS through an external reverse proxy, load balancer, mesh, or VPN gateway. Aether RL does not terminate TLS. Workers and their supervised vLLM processes require no inbound ports.
