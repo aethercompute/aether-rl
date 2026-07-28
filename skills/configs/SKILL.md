@@ -1,85 +1,25 @@
 ---
 name: configs
-description: How the aether-rl config system works — TOML files, CLI overrides, composition, and special patterns. Use when creating configs, debugging config errors, or overriding values via CLI.
+description: Configure Aether RL server, worker, trainer, and worker-local inference TOML files and CLI overrides.
 ---
 
 # Configs
 
-aether-rl uses [`pydantic-config`](https://github.com/PrimeIntellect-ai/pydantic-config) — a Pydantic-based TOML + CLI config system (no tyro). Every entrypoint accepts TOML files via `@` and CLI overrides.
-
-## Loading and composition
+Aether RL uses `pydantic-config`. Entrypoints accept one or more files via `@ path.toml`; later files and CLI values override earlier values.
 
 ```bash
-uv run rl @ examples/basic/reverse-text/rl.toml                        # single TOML
-uv run rl @ examples/basic/reverse-text/rl.toml --max-steps 50         # CLI override
-uv run rl @ base.toml @ overlay.toml                                   # left-to-right merge
-uv run rl --trainer.model @ model.toml --trainer.data @ data.toml      # nested section files
-uv run rl @ base.toml --trainer @ trainer.toml --trainer.optim.lr 1e-3 # mixed
+uv run server @ server.toml --port 9000
+uv run worker @ worker.toml --coordinator-url https://coordinator.example.com
 ```
 
-Resolution order: CLI > config files (left-to-right) > class defaults. Merging is deep — unset fields in an overlay are preserved from the base.
+- TOML uses snake_case; CLI flags use kebab-case.
+- Nested CLI fields use dotted paths.
+- Booleans use `--flag` and `--no-flag`.
+- Dict CLI values use JSON.
+- Discriminated unions select variants through `type`.
+- Model and tokenizer identities require immutable full revisions and matching fingerprints.
+- Secrets belong in environment variables, never TOML.
 
-Naming: CLI uses kebab-case (`--model.max-model-len`); TOML uses snake_case (`max_model_len`).
+Canonical examples are `examples/distributed/reverse-text/server.toml` and `worker.toml`. Their all-zero identity values are placeholders and intentionally fail preflight until replaced.
 
-Model and tokenizer configs accept an optional `revision`. The distributed
-contract requires each revision to be a full 40-character Hugging Face commit
-SHA; legacy launch modes continue to allow omitted revisions.
-
-## Inspect & validate
-
-```bash
-uv run rl --help                                  # all fields and defaults
-uv run rl @ rl.toml --dry-run --output-dir /tmp/x # write resolved TOML to /tmp/x/configs
-```
-
-## Validators
-
-Incompatible combinations that can be determined from config alone must raise in a `model_validator` at resolve time.
-
-## Special syntax
-
-**Booleans** — CLI `--flag` / `--no-flag`; TOML must be explicit (`enforce_eager = true`).
-
-**None** — TOML has no null, use the string `"None"` (`max_model_len = "None"`); CLI: `--model.max-model-len None`.
-
-**Lists** — TOML uses array of tables; later config files replace lists wholesale, so overlays must include the full desired list:
-
-```toml
-[[orchestrator.train.env]]
-name = "reverse-text"
-env.taskset = { id = "reverse-text-v1" }
-env.agent.harness = { id = "null", runtime = { type = "subprocess" } }
-```
-
-CLI: `--orchestrator.train.env.0.env.taskset.id reverse-text-v1`.
-
-**Dicts** — TOML uses a section; CLI takes a JSON string: `--vllm-extra '{"key1": "value1"}'`. This works for plain `dict` fields only — nested pydantic-model fields (e.g. `algo`) reject JSON strings; use dotted keys (`--orchestrator.algo.type max_rl`) or a TOML overlay file.
-
-**Discriminated unions** — set the `type` field to pick the variant (`[orchestrator.algo] type = "max_rl"`). Omit `type` to keep the default variant.
-
-**Algorithms** — `[orchestrator.algo] type = "grpo" | "max_rl" | "opd" | "opsd" | "sft" | "echo"` — the type names the algorithm (credit assignment + loss routing, fused), and each type's class defaults are its vetted setting; any other key you set is your own assembly (e.g. `[orchestrator.algo.roles.user] alpha = 0.1` for echo — setting any echo role replaces the whole role table). There is no preset layer, and no config hook that points at user code — a new algorithm is a named class in the repo (subclass `Algorithm`, register it). Per-env override: `[orchestrator.train.env.algo] type = "opd"` (the env assembles its own algorithm). aether-rl only hosts the trainable policy; frozen models are inline external endpoints on the algorithm, named where the model is used — `[orchestrator.algo.teacher]` for opd (the frozen model scored against), `[orchestrator.algo.sampling.source]` for sft (the model it samples from), each with `name` + `base_url`. There is no shared `teacher` slot. opsd declares no model — it self-distills against the live policy. See `docs/algorithms.md`.
-
-**`BaseModel | None` fields** — bare flag enables defaults; nested override enables and sets:
-
-```bash
---model.compile             # enables compile with defaults
---model.compile.fullgraph   # enables and sets fullgraph=true
-```
-
-In TOML, an empty section header (`[ckpt]`) does the same.
-
-## RL trainer token exports
-
-For rollout debugging, enable trainer-side token export with `trainer.enable_token_export = true` (or `--enable-token-export` when running the trainer entrypoint directly). It writes one JSONL record per exported sequence. Single-run/fallback exports go under `output_dir/token_exports/step_<step>/rank_<rank>.jsonl`; multi-run trainer exports with packer metadata go under the owning run directory, `output_dir/<run_id>/token_exports/step_<run_step>/rank_<rank>.jsonl`. Each record stores aligned per-token arrays for token ids, loss mask, component weight streams (rl/ce/ref_kl), advantages, entropy, mismatch KL, inference/trainer logprobs, importance ratios, probability deltas, and masking diagnostics. It does not decode token text in the trainer.
-
-```toml
-enable_token_export = true
-```
-
-Leave it unset for normal training. When enabled, it exports every sequence from each exporting rank.
-
-## Key files
-
-- `packages/aether-rl-configs/src/aether_rl/` — config classes under `configs/`; `utils/config.py` re-exports `BaseConfig` and `cli`
-- `configs/debug/` — minimal debug configs
-- `examples/` — full example configs
+Supported central algorithms are GRPO, MaxRL, ECHO, and external-teacher OPD. Workers execute matching verifier v1 environments locally.

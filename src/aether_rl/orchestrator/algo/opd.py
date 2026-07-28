@@ -9,7 +9,7 @@ from aether_rl.utils.client import StaticInferencePool
 
 if TYPE_CHECKING:
     from aether_rl.orchestrator.types import Rollout
-    from aether_rl.transport import TrainingSample
+    from aether_rl.transport.types import TrainingSample
     from aether_rl.utils.client import InferencePool
 
 

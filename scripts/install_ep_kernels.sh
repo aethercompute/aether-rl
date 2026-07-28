@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
-# Install DeepEP kernels for expert-parallel disaggregated inference.
+# Install DeepEP kernels for central trainer expert parallelism.
 #
 # Builds NVSHMEM + DeepEP from source and installs into the project venv.
-# Required for disaggregated prefill/decode deployments with expert parallelism.
 #
 # Auto-detects the CUDA toolkit version that matches the installed PyTorch
 # and looks for it at /usr/local/cuda-X.Y. Fails if not found.
 #
 # Prerequisites:
 #   - Matching CUDA toolkit installed (e.g. `sudo apt install cuda-toolkit-12-8`)
-#   - For multi-node: IBGDA driver configured (see --configure-drivers)
 #
 # Usage:
 #   bash scripts/install_ep_kernels.sh
@@ -18,7 +16,6 @@
 #   --workspace DIR       Build directory (default: ./ep_kernels_workspace)
 #   --deepep-ref REF      DeepEP commit hash (default: 73b6ea4)
 #   --nvshmem-ver VER     NVSHMEM version (default: 3.3.24)
-#   --configure-drivers   Also configure IBGDA drivers (requires sudo, needs reboot)
 
 set -euo pipefail
 
@@ -28,14 +25,12 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 DEEPEP_COMMIT_HASH="73b6ea4"
 NVSHMEM_VER="3.3.24"
 WORKSPACE="$REPO_ROOT/ep_kernels_workspace"
-CONFIGURE_DRIVERS=0
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --workspace)         WORKSPACE="$2";          shift 2 ;;
         --deepep-ref)        DEEPEP_COMMIT_HASH="$2"; shift 2 ;;
         --nvshmem-ver)       NVSHMEM_VER="$2";        shift 2 ;;
-        --configure-drivers) CONFIGURE_DRIVERS=1;     shift   ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -144,23 +139,6 @@ python setup.py bdist_wheel --dist-dir "$WHEEL_DIR"
 WHEEL=$(ls "$WHEEL_DIR"/deep_ep*.whl | head -1)
 echo ""
 echo "--- DeepEP wheel built at: $WHEEL ---"
-
-# ── Step 4 (optional): Configure IBGDA drivers ───────────────────────────────
-if [ "$CONFIGURE_DRIVERS" -eq 1 ]; then
-    echo ""
-    echo "--- Configuring IBGDA drivers (requires sudo) ---"
-    echo 'options nvidia NVreg_EnableStreamMemOPs=1 NVreg_RegistryDwords="PeerMappingOverride=1;"' | sudo tee -a /etc/modprobe.d/nvidia.conf
-    if command -v update-initramfs &> /dev/null; then
-        sudo update-initramfs -u
-    elif command -v dracut &> /dev/null; then
-        sudo dracut --force
-    else
-        echo "No supported initramfs update tool found." >&2
-        exit 1
-    fi
-    echo ""
-    echo "IBGDA configured. Please REBOOT the system to apply changes."
-fi
 
 echo ""
 echo "================================================================"

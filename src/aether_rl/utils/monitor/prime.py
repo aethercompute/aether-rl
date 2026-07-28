@@ -17,7 +17,6 @@ from prime_cli.core.config import Config as PrimeConfig
 from transformers.tokenization_utils import PreTrainedTokenizer
 from verifiers.v1.push import trace_to_sample
 
-from aether_rl.configs.orchestrator import OrchestratorConfig
 from aether_rl.configs.shared import PrimeMonitorConfig
 from aether_rl.utils.logger import get_logger
 from aether_rl.utils.monitor.base import Monitor, drop_non_finite_json_values, sample_items_for_logging
@@ -74,7 +73,7 @@ class PrimeMonitor(Monitor):
         config: PrimeMonitorConfig | None,
         output_dir: Path | None = None,
         tokenizer: PreTrainedTokenizer | None = None,
-        run_config: OrchestratorConfig | None = None,
+        run_config: object | None = None,
         keep_full_history: bool = True,
     ):
         self.config = config
@@ -147,7 +146,7 @@ class PrimeMonitor(Monitor):
             if config.log_extras.distributions:
                 self.last_log_distributions_step = -1
 
-    def _register_run(self, config: PrimeMonitorConfig, run_config: OrchestratorConfig | None) -> str | None:
+    def _register_run(self, config: PrimeMonitorConfig, run_config: object | None) -> str | None:
         """Register an external run with the platform. Returns run_id on success, None on failure."""
         prime_config = None
         team_id = config.team_id

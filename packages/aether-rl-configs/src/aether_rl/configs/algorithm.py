@@ -36,7 +36,6 @@ executes them.
 from typing import Annotated, Any, ClassVar, Literal, TypeAlias
 
 from pydantic import Field, model_validator
-from renderers import AutoRendererConfig, RendererConfig
 
 from aether_rl.configs.shared import ClientConfig
 from aether_rl.utils.config import BaseConfig
@@ -251,61 +250,8 @@ class OPDAlgoConfig(BaseAlgoConfig):
     demo-conditioned self-teaching)."""
 
 
-class OPSDAlgoConfig(BaseAlgoConfig):
-    type: Literal["opsd"] = "opsd"
-    """On-policy self-distillation (SDFT, https://arxiv.org/abs/2601.19897):
-    the per-token signal is the reverse KL against the live policy conditioned
-    on an expert demonstration. The teacher *is* the policy — self-distillation
-    names no separate model — scoring each sample with the demonstration
-    prepended as a leading system message. The sample is scored verbatim (no
-    re-rendering), so it's robust to tool/multimodal prompts and works for any
-    number of turns. No scalar advantage is assigned — rollouts keep
-    ``advantages=None`` (advantage-based filters never fire) and samples ship no
-    advantage stream."""
-
-    action_loss_type: ClassVar[ActionLossType] = "ref_kl"
-
-    demo_key: str = "demonstration"
-    """Key holding the expert demonstration text — looked up in the example's
-    ``info`` dict first, then as a top-level rollout field (e.g. ``answer``)."""
-
-    template: str = "Here is an example of an expert response:\n<demonstration>\n{demonstration}\n</demonstration>"
-    """Content of the leading system message carrying the demonstration.
-    Receives ``{demonstration}``; the original question stays in the (verbatim)
-    user turn, so it isn't templated here."""
-
-    renderer: RendererConfig = AutoRendererConfig()
-    """Renderer family for the hint block. The tokenizer is always the live
-    policy's (self-distillation has no separate model — not configurable).
-    Defaults to ``"auto"`` (resolved from the policy tokenizer); set explicitly
-    to match a non-auto policy renderer."""
-
-
-class SFTAlgoConfig(BaseAlgoConfig):
-    type: Literal["sft"] = "sft"
-    """SFT distillation: cross-entropy on the sampled tokens. The ``ce`` loss
-    ignores advantages and SFT assigns none — it trains on every sampled token.
-    Reward-based filtering, if wanted, is an explicit filter, not smuggled
-    through an unused advantage stream."""
-
-    action_loss_type: ClassVar[ActionLossType] = "ce"
-
-    @model_validator(mode="after")
-    def require_frozen_source(self):
-        """sft's teacher is the model it samples from — ``sampling.source`` must
-        be a frozen hosted model, not the policy (CE on the policy's own tokens
-        is not a distillation target)."""
-        if self.sampling.source == "policy":
-            raise ValueError(
-                f"algorithm '{self.type}' needs a teacher to sample rollouts from — "
-                "CE on the policy's own tokens is not a distillation target. Set "
-                "sampling.source to an inline hosted model (name + base_url)."
-            )
-        return self
-
-
 AlgoConfig: TypeAlias = Annotated[
-    GRPOAlgoConfig | EchoAlgoConfig | MaxRLAlgoConfig | OPDAlgoConfig | OPSDAlgoConfig | SFTAlgoConfig,
+    GRPOAlgoConfig | EchoAlgoConfig | MaxRLAlgoConfig | OPDAlgoConfig,
     Field(discriminator="type"),
 ]
 """The training algorithm: sampling plus the per-token training signal (credit
@@ -315,8 +261,6 @@ its class defaults are the vetted setting.
 - ``grpo`` — policy group sampling, group-relative advantage, RL loss (the default).
 - ``max_rl`` — GRPO with mean-normalized advantages (maximum-likelihood RL).
 - ``opd`` — on-policy distillation: policy samples, per-token reverse KL against a reference model. Needs ``teacher``.
-- ``opsd`` — SDFT: policy samples, demo-conditioned reverse KL against the live policy (the teacher is the policy itself).
-- ``sft`` — a frozen model samples, the policy trains with CE on its tokens. Needs a frozen ``sampling.source``.
 - ``echo`` — GRPO on action tokens + weighted CE on tool-response observation tokens.
 
 A new credit-assignment scheme is a new named algorithm in code (subclass

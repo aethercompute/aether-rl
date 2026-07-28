@@ -38,8 +38,6 @@ def _ref_kind(ref):
         ("grpo", {}, "policy", "rl"),
         ("max_rl", {}, "policy", "rl"),
         ("opd", {"teacher": FROZEN}, "policy", "ref_kl"),
-        ("sft", {"sampling": {"source": FROZEN}}, "frozen", "ce"),
-        ("opsd", {}, "policy", "ref_kl"),
         ("echo", {}, "policy", "rl"),
     ],
 )
@@ -76,11 +74,6 @@ def test_opd_teacher_must_be_a_frozen_endpoint():
         _build(type="opd")
     with pytest.raises(ValueError, match="FrozenModelConfig"):
         _build(type="opd", teacher="policy")
-
-
-def test_sft_requires_teacher():
-    with pytest.raises(ValueError, match="needs a teacher to sample rollouts from"):
-        _build(type="sft")
 
 
 def test_rl_loss_type_incompatible_with_frozen_sampling():

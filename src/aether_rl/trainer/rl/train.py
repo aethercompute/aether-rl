@@ -14,9 +14,8 @@ import torch
 import torch.distributed as dist
 from torch.profiler import profile, ProfilerActivity, record_function
 from aether_rl.trainer.ckpt import setup_ckpt_managers
-from aether_rl.trainer.multi_ckpt import setup_multi_checkpoint_manager
-from aether_rl.trainer.optim import setup_optimizer, setup_multi_optimizer
-from aether_rl.trainer.scheduler import setup_scheduler, setup_multi_scheduler
+from aether_rl.trainer.optim import setup_optimizer
+from aether_rl.trainer.scheduler import setup_scheduler
 from aether_rl.configs.trainer import TrainerConfig
 from aether_rl.trainer.rl.data import DataLoader, FakeDataLoader
 from aether_rl.utils.cp import (
@@ -129,22 +128,15 @@ def train(config: TrainerConfig):
     # Initialize parallel dimensions
     parallel_dims = get_parallel_dims(config.model)
 
-    # For single-run, check for checkpoint to resume from
     checkpoint_step = None
-    if config.max_concurrent_runs == 1:
-        # Set up checkpoint manager for single-run
-        logger.info(f"Initializing checkpoint managers ({config.ckpt})")
-        ckpt_manager, weight_ckpt_manager = setup_ckpt_managers(config.output_dir, config.ckpt, config.model.lora)
-
-        if config.ckpt and config.ckpt.resume_step is not None and ckpt_manager is not None:
-            if config.ckpt.resume_step == -1:
-                checkpoint_step = resolve_latest_ckpt_step(ckpt_manager.ckpt_dir)
-            else:
-                checkpoint_step = config.ckpt.resume_step
-    else:
-        # Multi-run uses per-run checkpointing via MultiCheckpointManager
-        ckpt_manager, weight_ckpt_manager = setup_multi_checkpoint_manager(config.output_dir)
-        logger.info("Initialized multi-run checkpoint manager")
+    logger.info(f"Initializing checkpoint managers ({config.ckpt})")
+    ckpt_manager, weight_ckpt_manager = setup_ckpt_managers(config.output_dir, config.ckpt, config.model.lora)
+    if config.ckpt and config.ckpt.resume_step is not None and ckpt_manager is not None:
+        checkpoint_step = (
+            resolve_latest_ckpt_step(ckpt_manager.ckpt_dir)
+            if config.ckpt.resume_step == -1
+            else config.ckpt.resume_step
+        )
 
     # Initialize the model and tokenizer
     logger.info(f"Initializing model ({config.model})")
@@ -164,24 +156,14 @@ def train(config: TrainerConfig):
     # Set up the optimizer
     logger.info(f"Initializing optimizer ({config.optim})")
 
-    if config.max_concurrent_runs == 1:
-        optimizer = setup_optimizer(
-            config.optim,
-            list(model.named_parameters()),
-            parallel_dims,
-            lora=config.model.lora is not None,
-            cpu_offload=config.model.optim_cpu_offload,
-        )
-        scheduler = setup_scheduler(optimizer, config.scheduler, config.max_steps, config.optim.lr)
-    else:
-        optimizer = setup_multi_optimizer(config.optim, parallel_dims)
-        scheduler = setup_multi_scheduler(optimizer, config.scheduler, config.max_steps)
-
-        # Register checkpoint loading callback at index 1 (after scheduler creation at index 0)
-        def load_run_checkpoint(_optimizer, idx: int) -> None:
-            ckpt_manager.load_run(idx, optimizer, scheduler)
-
-        optimizer.register_post_creation_callback(load_run_checkpoint, index=1)
+    optimizer = setup_optimizer(
+        config.optim,
+        list(model.named_parameters()),
+        parallel_dims,
+        lora=True,
+        cpu_offload=config.model.optim_cpu_offload,
+    )
+    scheduler = setup_scheduler(optimizer, config.scheduler, config.max_steps, config.optim.lr)
 
     logger.info(f"Using `{config.scheduler.type}` scheduler ({config.scheduler})")
 
@@ -263,29 +245,15 @@ def train(config: TrainerConfig):
         logger.info(f"Tracing to {config.trace_path}")
         prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True).__enter__()
         maybe_record_function = record_function
-    start_step = progress.step
     while True:
         # Reset peak memory stats
         torch.cuda.reset_peak_memory_stats()
         if gc_handler is not None:
             gc_handler.run(progress.step)
-        is_last_step = config.max_steps is not None and progress.step == config.max_steps
+        is_last_step = config.max_steps is not None and progress.step >= config.max_steps
 
         logger.debug(f"Starting training step {progress.step}")
         step_start_time = time.perf_counter()
-
-        # In-memory transfers broadcast the incoming policy (v{progress.step-1}) before waiting
-        # for its rollouts so the trainer and inference pool join the same update lifecycle.
-        if (
-            progress.step == start_step
-            and weight_broadcast is not None
-            and config.weight_broadcast.type in ("nccl", "nixl")
-        ):
-            logger.info(f"Broadcasting startup policy weights (v{progress.step - 1}) to inference engines")
-            multi_run_manager.wait_for_run(0)
-            for idx in multi_run_manager.used_idxs:
-                multi_run_manager.ready_to_update[idx] = True
-            weight_broadcast.broadcast_weights(model, step=progress.step - 1)
 
         # Wait for the batch to be available
         logger.debug("Waiting for training batch to arrive")
@@ -584,10 +552,7 @@ def train(config: TrainerConfig):
         # Update learning rate scheduler
         scheduler.step()
 
-        if config.max_concurrent_runs == 1:
-            current_lr = optimizer.param_groups[0]["lr"]
-        else:
-            current_lr = optimizer.get_current_lr()
+        current_lr = optimizer.param_groups[0]["lr"]
         forward_backward_time = time.perf_counter() - forward_backward_start_time
 
         # Broadcast the model just produced (policy v{progress.step}) so the orchestrator can
@@ -596,34 +561,13 @@ def train(config: TrainerConfig):
         if weight_broadcast is None:
             broadcast_weights_time = 0
         else:
-            broadcast_unused = (
-                config.weight_broadcast.type in ("nccl", "nixl")
-                and config.max_steps is not None
-                and progress.step >= config.max_steps - 1
-            )
-            if not broadcast_unused:
-                broadcast_weights_start_time = time.perf_counter()
-                weight_broadcast.broadcast_weights(model, step=progress.step)
-                broadcast_weights_time = time.perf_counter() - broadcast_weights_start_time
-                # Clean up old broadcast directories (unless at ckpt interval if using filesystem weight broadcast)
-                if config.weight_broadcast.type == "filesystem":
-                    interval_to_keep = config.ckpt and config.ckpt.interval
-                    weight_broadcast.maybe_clean(interval_to_keep)
-            else:
-                broadcast_weights_time = 0
-                # Usually the broadcast will set this. If broadcast is skipped, we need to reset this here.
-                for idx in multi_run_manager.used_idxs:
-                    multi_run_manager.ready_to_update[idx] = False
+            broadcast_weights_start_time = time.perf_counter()
+            weight_broadcast.broadcast_weights(model, step=progress.step)
+            broadcast_weights_time = time.perf_counter() - broadcast_weights_start_time
+            weight_broadcast.maybe_clean(config.ckpt and config.ckpt.interval)
 
         # Checkpoint the step we just finished (model = policy v{progress.step}).
-        if config.max_concurrent_runs > 1:
-            # Multi-run: save per-run checkpoints every step (interval-gated inside
-            # MultiCheckpointManager); there is no after-loop final save for multi-run.
-            save_ckpt_start_time = time.perf_counter()
-            ckpt_manager.save(optimizer, scheduler)
-            save_ckpt_time = time.perf_counter() - save_ckpt_start_time
-            ckpt_manager.maybe_clean()
-        elif (
+        if (
             ckpt_manager is not None
             and (config.ckpt and config.ckpt.interval)
             # the last step is written once after the loop (final ckpt), so skip it here
@@ -637,6 +581,7 @@ def train(config: TrainerConfig):
                 logger.info(f"Saving checkpoint at step {progress.step}")
                 save_ckpt_start_time = time.perf_counter()
                 ckpt_manager.save(progress.step, model, [optimizer], scheduler, progress)
+                ckpt_manager.mark_stable(progress.step)
                 save_ckpt_time += time.perf_counter() - save_ckpt_start_time
 
             ckpt_manager.maybe_clean()
@@ -749,10 +694,7 @@ def train(config: TrainerConfig):
             for idx in multi_run_manager.used_idxs:
                 run_id = multi_run_manager.idx_2_id[idx]
                 run_progress = multi_run_manager.progress[idx]
-                if config.max_concurrent_runs == 1:
-                    lr = optimizer.param_groups[0]["lr"]
-                else:
-                    lr = optimizer.get_current_lr(idx) if optimizer.optimizers[idx] else 0.0
+                lr = optimizer.param_groups[0]["lr"]
                 run_stats.append(
                     RunStats(
                         run_id=run_id,
@@ -786,14 +728,14 @@ def train(config: TrainerConfig):
 
     token_exporter.close()
 
-    # Write final checkpoint (only for single-run mode; multi-run checkpoints are managed by MultiCheckpointManager)
-    if config.max_concurrent_runs == 1 and ckpt_manager is not None:
+    if ckpt_manager is not None:
         if not (config.ckpt and config.ckpt.weights_only):
             logger.info("Writing final checkpoint")
             ckpt_manager.save(progress.step, model, [optimizer], scheduler, progress)
+            ckpt_manager.mark_stable(progress.step)
         ckpt_manager.maybe_clean()
 
-    if config.max_concurrent_runs == 1 and weight_ckpt_manager is not None:
+    if weight_ckpt_manager is not None:
         logger.info("Writing final weight checkpoint")
         weight_ckpt_manager.save(progress.step, model, tokenizer)
         weight_ckpt_manager.maybe_clean()

@@ -4,6 +4,7 @@ import os
 import re
 import stat
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -11,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 import verifiers.v1 as vf
 
-from aether_rl.orchestrator.envs import episode_to_rollouts
 from aether_rl.orchestrator.filters import RolloutFilter, apply_filters
 from aether_rl.orchestrator.trajectories import trace_to_samples
 from aether_rl.orchestrator.types import Rollout
@@ -23,7 +23,7 @@ from aether_rl.protocol import (
     policy_manifest_digest,
     sha256_digest,
 )
-from aether_rl.transport import TrainingBatch, TrainingSample
+from aether_rl.transport.types import TrainingBatch, TrainingSample
 
 from .database import (
     ArtifactCorruptionError,
@@ -36,6 +36,23 @@ from .database import (
 
 if TYPE_CHECKING:
     from aether_rl.orchestrator.algo import Algorithm
+
+ROLLOUT_TYPE = Rollout[vf.WireTaskData]
+
+
+def episode_to_rollouts(episode: vf.WireEpisode) -> list[Rollout]:
+    if not episode.traces:
+        error = episode.error
+        detail = f"{error.type}: {error.message}" if error is not None else "no traces and no error recorded"
+        raise RuntimeError(f"rollout failed before any trace was created: {detail}")
+    rollouts = [ROLLOUT_TYPE.model_construct(**dict(wire)) for wire in episode.traces]
+    for rollout in rollouts:
+        rollout.episode_id = episode.id
+        if not episode.ok and rollout.ok:
+            error = episode.error or vf.Error(type="EpisodeFailed", message="A sibling trace in this episode failed")
+            rollout.errors = [*rollout.errors, error]
+            rollout.ok = False
+    return rollouts
 
 
 @dataclass(frozen=True)
@@ -182,6 +199,7 @@ class RemoteResultProcessor:
         *,
         batch_size: int | None = None,
         token_batch_size: int | None = None,
+        database_call: Callable[..., Awaitable[object]] | None = None,
     ):
         if (batch_size is None) == (token_batch_size is None):
             raise ValueError("exactly one batch size must be configured")
@@ -195,18 +213,28 @@ class RemoteResultProcessor:
             raise ValueError("result processing source IDs must be unique")
         self.batch_size = batch_size
         self.token_batch_size = token_batch_size
+        self.database_call = database_call
         self.queue = DurableTrainingQueue(repository.run_root)
         self.queue.recover(repository)
         self._encoder = msgspec.msgpack.Encoder()
         self._group_decoder = msgspec.msgpack.Decoder(type=ProcessedGroupPayload)
 
-    async def process_available(self) -> tuple[int, int]:
+    async def process_available(self, *, max_groups: int | None = None) -> tuple[int, int]:
+        if max_groups is not None and max_groups < 1:
+            raise ValueError("max_groups must be positive")
         processed_groups = 0
-        while groups := self.repository.ready_groups():
+        while groups := await self._call(self.repository.ready_groups):
             await self._process_group(groups[0])
             processed_groups += 1
-        emitted_batches = self._emit_ready_batches()
+            if max_groups is not None and processed_groups >= max_groups:
+                break
+        emitted_batches = await self._emit_ready_batches()
         return processed_groups, emitted_batches
+
+    async def _call(self, function: Callable[..., object], /, *args: object, **kwargs: object):
+        if self.database_call is not None:
+            return await self.database_call(function, *args, **kwargs)
+        return function(*args, **kwargs)
 
     async def _process_group(self, group: ReadyGroup) -> None:
         if group.source_id is None or group.source_id not in self.sources:
@@ -290,7 +318,8 @@ class RemoteResultProcessor:
         artifact_digest = sha256_digest(artifact_bytes)
         artifact_path = self.queue.publish_group(artifact_digest, artifact_bytes)
         token_counts = [rollout.token_count for rollout in processed_rollouts]
-        self.repository.record_processed_group(
+        await self._call(
+            self.repository.record_processed_group,
             group.group_id,
             input_digest=input_digest,
             artifact_digest=artifact_digest,
@@ -299,10 +328,10 @@ class RemoteResultProcessor:
             token_counts=token_counts,
         )
 
-    def _emit_ready_batches(self) -> int:
+    async def _emit_ready_batches(self) -> int:
         emitted = 0
         while True:
-            pending = self.repository.pending_processed_rollouts()
+            pending = await self._call(self.repository.pending_processed_rollouts)
             selected = []
             tokens = 0
             for rollout in pending:
@@ -335,13 +364,14 @@ class RemoteResultProcessor:
                 samples.extend(payload.rollouts[rollout.ordinal].samples)
                 members.append((rollout.group_id, rollout.ordinal))
             if not samples:
-                self.repository.discard_processed_rollouts(members)
+                await self._call(self.repository.discard_processed_rollouts, members)
                 continue
-            step = self.repository.next_training_batch_step()
+            step = await self._call(self.repository.next_training_batch_step)
             batch_bytes = self._encoder.encode(TrainingBatch(examples=samples, step=step))
             batch_digest = sha256_digest(batch_bytes)
             batch_path = self.queue.publish_batch(step, batch_digest, batch_bytes)
-            self.repository.record_training_batch(
+            await self._call(
+                self.repository.record_training_batch,
                 step=step,
                 artifact_digest=batch_digest,
                 artifact_path=batch_path,

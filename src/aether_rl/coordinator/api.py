@@ -76,8 +76,8 @@ class CoordinatorService:
         self._lock = asyncio.Lock()
 
     async def call(self, function: Callable[..., object], /, *args: object, **kwargs: object) -> object:
-        loop = asyncio.get_running_loop()
         async with self._lock:
+            loop = asyncio.get_running_loop()
             if self._executor is None:
                 self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="coordinator-db")
             return await loop.run_in_executor(self._executor, lambda: function(*args, **kwargs))
@@ -136,6 +136,9 @@ def create_coordinator_app(
     stale_after_seconds: float = 60.0,
     lease_reaper_interval_seconds: float = 1.0,
     policy_verification_interval_seconds: float = 30.0,
+    startup: Callable[[], Awaitable[None]] | None = None,
+    shutdown: Callable[[], Awaitable[None]] | None = None,
+    gate_leases_on_trainer: bool = False,
 ) -> FastAPI:
     auth_token = token if token is not None else os.environ.get("AETHER_COORDINATOR_TOKEN")
     if not auth_token:
@@ -201,6 +204,8 @@ def create_coordinator_app(
                 await asyncio.sleep(policy_verification_interval_seconds)
                 await verify_active_policy()
 
+        if startup is not None:
+            await startup()
         reaper = asyncio.create_task(reap_expired_leases())
         verifier = asyncio.create_task(verify_policies())
         await verify_active_policy()
@@ -215,11 +220,20 @@ def create_coordinator_app(
                 for task in provider_tasks:
                     task.cancel()
             await asyncio.gather(reaper, verifier, return_exceptions=True)
+            if shutdown is not None:
+                await shutdown()
             service.close()
 
     app = FastAPI(lifespan=lifespan)
     app.state.coordinator_service = service
     app.state.policy_integrity_ok = True
+
+    async def lease_gate_open() -> bool:
+        if not gate_leases_on_trainer:
+            return True
+        callback_result = trainer_ready()
+        is_trainer_ready = await callback_result if inspect.isawaitable(callback_result) else callback_result
+        return is_trainer_ready and app.state.policy_integrity_ok
 
     @app.middleware("http")
     async def authenticate(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
@@ -343,6 +357,8 @@ def create_coordinator_app(
 
     @app.post("/api/v1/assignments/lease")
     async def lease(request: Request) -> Response:
+        if not await lease_gate_open():
+            raise APIError(503, "trainer_unavailable", "trainer or coordinator processing is unavailable")
         lease_request = await parse_control_body(request, LeaseRequest)
         disposition = await service.call(repository.validate_lease_request, lease_request)
         if not isinstance(disposition, LeaseRequestDisposition):
@@ -355,6 +371,8 @@ def create_coordinator_app(
         deadline = asyncio.get_running_loop().time() + wait_seconds
         initial_attempt = True
         while True:
+            if not await lease_gate_open():
+                raise APIError(503, "trainer_unavailable", "trainer or coordinator processing is unavailable")
             remaining = deadline - asyncio.get_running_loop().time()
             if not initial_attempt and remaining <= 0:
                 return await _complete_no_work(service, repository, lease_request.request_id)
@@ -385,6 +403,9 @@ def create_coordinator_app(
                     return await _complete_no_work(service, repository, lease_request.request_id)
                 offered = provider_task.result()
             if offered is not None:
+                if not await lease_gate_open():
+                    await service.call(repository.release_unoffered_lease, offered.lease_id)
+                    raise APIError(503, "trainer_unavailable", "trainer or coordinator processing is unavailable")
                 disposition = await service.call(repository.associate_offered_lease, lease_request, offered)
                 if not isinstance(disposition, LeaseRequestDisposition):
                     raise TypeError("repository returned an invalid lease request disposition")

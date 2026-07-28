@@ -12,14 +12,26 @@ is flat over the rollout list except the solve rates, which group by ``group_id`
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Iterator, Literal
-
-from aether_rl.orchestrator.utils import compute_pass_metrics
 
 if TYPE_CHECKING:
     from aether_rl.orchestrator.types import Rollout
 
 Subset = Literal["all", "effective"]
+
+
+def compute_pass_metrics(rewards: list[float]) -> dict[str, float]:
+    n = len(rewards)
+    correct = sum(reward == 1.0 for reward in rewards)
+    metrics: dict[str, float] = {}
+    k = 1
+    while k <= n:
+        combinations = math.comb(n, k)
+        metrics[f"pass@{k}"] = 1.0 - math.comb(n - correct, k) / combinations
+        metrics[f"pass^{k}"] = math.comb(correct, k) / combinations
+        k *= 2
+    return metrics
 
 
 class Stat:

@@ -1,8 +1,7 @@
 import os
-from pathlib import Path
 from typing import Annotated, Literal, TypeAlias
 
-from pydantic import AfterValidator, Field, model_validator
+from pydantic import AfterValidator, Field
 
 from aether_rl.utils.config import BaseConfig
 
@@ -25,62 +24,6 @@ def reject_protected_env_vars(env_vars: dict[str, str]) -> dict[str, str]:
 
 EnvVars: TypeAlias = Annotated[dict[str, str], AfterValidator(reject_protected_env_vars)]
 """A per-component `env_vars` mapping, validated to not clobber `PROTECTED_ENV_VARS`."""
-
-
-class SlurmConfig(BaseConfig):
-    job_name: str = "aether-rl"
-    """SLURM job name."""
-
-    project_dir: Path = Path(".")
-    """Path to the project root, used to source .env, activate .venv, and run uv sync."""
-
-    template_path: Path | None = None
-    """SLURM template file. If None, uses the bundled single-node or multi-node template."""
-
-    partition: str = "cluster"
-    """SLURM partition (#SBATCH --partition)."""
-
-    nodelist: str | None = None
-    """Comma-separated list of specific nodes to run on (#SBATCH --nodelist)."""
-
-    exclude: str | None = None
-    """Comma-separated list of nodes to exclude (#SBATCH --exclude)."""
-
-    account: str | None = None
-    """SLURM account to charge (#SBATCH --account)."""
-
-    time: str | None = None
-    """Maximum wall time, e.g. '24:00:00' or '7-00:00:00' (#SBATCH --time)."""
-
-    pre_run_command: str | None = None
-    """Shell command to run on the head node after cd, .env sourcing, and venv activation. Useful for cleanup like ``sudo pkill -f vllm``; wrap with ``srun bash -c '...'`` to fan out to all nodes."""
-
-    cleanup_grace_period: int = Field(3600, ge=0)
-    """Seconds to wait before tearing down a multi-node RL job that hit a non-zero exit, letting in-flight checkpoints flush. Set to 0 to tear down immediately."""
-
-    shared_fs: bool = True
-    """Whether the project filesystem (including the venv) is shared across nodes (e.g. NFS). When True, a single ``uv sync`` on the batch node suffices. Set to False when the venv is node-local (e.g. ``UV_PROJECT_ENVIRONMENT`` on ``/tmp``) so ``uv sync`` runs on every node via srun."""
-
-    @property
-    def template_vars(self) -> dict:
-        """Common template variables for all SLURM templates."""
-        return {
-            "job_name": self.job_name,
-            "project_dir": self.project_dir,
-            "partition": self.partition,
-            "nodelist": self.nodelist,
-            "exclude": self.exclude,
-            "account": self.account,
-            "time": self.time,
-            "pre_run_command": self.pre_run_command,
-            "cleanup_grace_period": self.cleanup_grace_period,
-            "shared_fs": self.shared_fs,
-        }
-
-    @model_validator(mode="after")
-    def resolve_project_dir(self):
-        self.project_dir = self.project_dir.resolve()
-        return self
 
 
 ServerType = Literal["vllm", "openai"]
@@ -125,17 +68,6 @@ class TokenizerConfig(BaseConfig):
     """Jinja2 chat template string or template file path. If None, uses the tokenizer default."""
 
 
-class ElasticConfig(BaseConfig):
-    hostname: str
-    """DNS hostname that resolves to inference server IPs."""
-
-    port: int = 8000
-    """Port that inference servers listen on."""
-
-    sync_interval: float = 5.0
-    """Seconds between server discovery checks."""
-
-
 class ClientConfig(BaseConfig):
     wait_for_ready_timeout: int = 1800
     """Seconds to wait at startup for the inference pool to become ready. Applies to both the static health check and elastic DNS-based discovery."""
@@ -160,20 +92,6 @@ class ClientConfig(BaseConfig):
 
     dp_rank_count: int = Field(1, ge=1)
     """Number of data-parallel ranks behind each base URL. When > 1, each URL is expanded into ``dp_rank_count`` logical clients pinned via the ``X-data-parallel-rank`` header, so every request within a rollout hits the same DP engine and reuses KV cache. Auto-set from the inference config when using the RL entrypoint."""
-
-    admin_base_url: list[str] | None = None
-    """Separate base URLs for admin operations (weight updates, health checks). When set, admin clients bypass routers and hit each server directly — used in disaggregated P/D deployments where the router must not handle admin traffic."""
-
-    elastic: ElasticConfig | None = None
-    """Elastic inference pool config for DNS-based service discovery. When set, ``base_url`` is ignored and inference servers are discovered dynamically via DNS."""
-
-    router_url: str | None = None
-    """vllm-router URL for load-aware inference routing. With elastic mode, inference requests go through the router while admin ops still hit discovered pods directly."""
-
-    @property
-    def is_elastic(self) -> bool:
-        """Check if elastic mode is enabled."""
-        return self.elastic is not None
 
 
 class LogConfig(BaseConfig):
@@ -291,17 +209,4 @@ class FileSystemTransportConfig(BaseTransportConfig):
     type: Literal["filesystem"] = "filesystem"
 
 
-class ZMQTransportConfig(BaseTransportConfig):
-    type: Literal["zmq"] = "zmq"
-
-    host: str = "localhost"
-    """Host address for ZMQ transport."""
-
-    port: int = 5555
-    """Base port for ZMQ transport."""
-
-    hwm: int = 10
-    """High-water mark (max in-flight messages per ZMQ socket)."""
-
-
-TransportConfig: TypeAlias = Annotated[FileSystemTransportConfig | ZMQTransportConfig, Field(discriminator="type")]
+TransportConfig: TypeAlias = FileSystemTransportConfig

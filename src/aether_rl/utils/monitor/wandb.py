@@ -367,12 +367,12 @@ def build_sections(train_envs: Sequence[str] = (), eval_envs: Sequence[str] = ()
         sections = [train_section("train/agg", "train/agg")]
         sections += [train_section(f"train/{env}", f"train/{env}") for env in train_envs]
     else:
-        # Env names unknown (e.g. SFT): fall back to the aggregate.
+        # Unknown environment names fall back to the aggregate.
         sections = [train_section("train", "train/agg")]
     if eval_envs:
         sections += [eval_section(f"eval/{env}", re.escape(env)) for env in eval_envs]
     else:
-        # Env names unknown (e.g. SFT): one regex section matching any eval env.
+        # Unknown environment names use one regex section matching any eval env.
         sections.append(eval_section("eval", ".*"))
     sections.append(section("stability", metrics=STABILITY_METRICS))
     sections.append(section("performance", metrics=PERFORMANCE_METRICS))

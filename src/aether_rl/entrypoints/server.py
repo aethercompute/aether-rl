@@ -6,6 +6,7 @@ import uvicorn
 
 from aether_rl.configs.server import ServerConfig
 from aether_rl.coordinator import CoordinatorRepository, create_coordinator_app
+from aether_rl.coordinator.runtime import CoordinatorRuntime
 from aether_rl.protocol import BaseModelIdentity, PolicyManifest
 from aether_rl.utils.config import cli
 from aether_rl.utils.process import set_proc_title
@@ -32,11 +33,13 @@ def main() -> None:
         raise RuntimeError("AETHER_COORDINATOR_TOKEN must contain only ASCII characters") from error
     base = base_policy(config)
     if config.dry_run:
+        CoordinatorRuntime.validate_config(config)
         return
     database_path = config.database_path or (config.run_root / "coordinator.sqlite")
     repository = CoordinatorRepository(database_path, config.run_root)
     try:
         repository.initialize_run(base)
+        runtime = CoordinatorRuntime(config, repository, base)
         app = create_coordinator_app(
             repository,
             token=token,
@@ -51,8 +54,12 @@ def main() -> None:
             stale_after_seconds=config.stale_after_seconds,
             lease_reaper_interval_seconds=config.lease_reaper_interval_seconds,
             policy_verification_interval_seconds=config.policy_verification_interval_seconds,
-            trainer_ready=lambda: True,
+            trainer_ready=runtime.ready,
+            startup=runtime.start,
+            shutdown=runtime.stop,
+            gate_leases_on_trainer=True,
         )
+        runtime.service = app.state.coordinator_service
         uvicorn.run(app, host=config.host, port=config.port)
     finally:
         repository.close()

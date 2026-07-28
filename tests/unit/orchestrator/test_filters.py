@@ -3,7 +3,7 @@ import uuid
 
 import verifiers.v1 as vf
 
-from aether_rl.configs.orchestrator import GibberishFilterConfig, RepetitionFilterConfig
+from aether_rl.configs.filters import GibberishFilterConfig, RepetitionFilterConfig
 from aether_rl.orchestrator.filters import (
     GibberishFilter,
     RepetitionFilter,

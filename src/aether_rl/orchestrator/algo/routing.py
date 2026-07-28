@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from aether_rl.configs.algorithm import ActionLossType
-from aether_rl.transport import TrainingSample
+from aether_rl.transport.types import TrainingSample
 
 if TYPE_CHECKING:
     from aether_rl.orchestrator.types import Rollout

@@ -54,7 +54,7 @@ if [ -n "$AETHER_RL_REF" ]; then
     fi
     echo "[aether-rl] running uv sync --inexact (this may take a few minutes on cold checkout)"
     # Mirror the image's uv sync extras — explicit instead
-    # of --all-extras so we don't pull in `disagg` / `quack` and trigger
+    # of --all-extras so we don't pull optional trainer kernels into workers and trigger
     # heavy source builds (deep-ep, deep-gemm, quack-kernels) at pod
     # startup. --inexact keeps the seeded venv's pre-built wheels
     # (flash-attn-3, mamba-ssm) in place; uv only rebuilds them if the

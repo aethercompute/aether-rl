@@ -244,7 +244,7 @@ def ref_kl_loss_fn(inputs: LossInputs) -> LossOutputs:
 
 
 def ce_loss_fn(inputs: LossInputs) -> LossOutputs:
-    """Cross-entropy loss type: masked negative log-likelihood (SFT / ECHO
+    """Cross-entropy loss type: masked negative log-likelihood (ECHO
     observation prediction)."""
     trainer_logprobs = inputs.trainer_logprobs
     loss_mask = inputs.loss_mask

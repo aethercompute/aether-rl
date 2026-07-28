@@ -68,14 +68,11 @@ jobs:
           /tmp/slim/bin/python - <<'PY'
           import sys
 
-          from aether_rl.configs.rl import RLConfig
-          from aether_rl.configs.sft import SFTConfig
           from aether_rl.configs.inference import InferenceConfig
-          from aether_rl.configs.orchestrator import OrchestratorConfig
+          from aether_rl.configs.server import ServerConfig
           from aether_rl.configs.trainer import TrainerConfig
-          from aether_rl.configs.env_server import EnvServerConfig
-          from aether_rl.utils.config import BaseConfig, find_package_resource, rgetattr, rsetattr
-          from aether_rl.utils.validation import validate_shared_ckpt_config
+          from aether_rl.configs.worker import WorkerConfig
+          from aether_rl.utils.config import BaseConfig
 
           # `verifiers` (+ its `datasets` dep) is a declared slim dep: the v1 config types
           # (EnvConfig, Task, ...) extend verifiers.v1, which is pure-pydantic and pulls no
@@ -86,23 +83,5 @@ jobs:
           if leaked:
               raise SystemExit(f"slim install leaked heavy deps into sys.modules: {leaked}")
 
-          # Slim wheel does not ship the templates/ data dir; resolver returns None.
-          assert find_package_resource("templates") is None, "templates should not be in slim wheel"
           print("slim install OK — configs import with no heavy deps loaded")
-          PY
-      - name: Verify real SFT config (with [slurm]) parses on slim install
-        run: |
-          /tmp/slim/bin/python - <<'PY'
-          from pydantic_config import cli
-          from aether_rl.configs.sft import SFTConfig
-          # The slim wheel intentionally excludes taskset packages, so validate a real
-          # SFT config here. RL recipes are covered by the full config suite.
-          for cfg_cls, args in [
-              (SFTConfig, ["@", "configs/ci/slim_sft.toml"]),
-          ]:
-              cfg = cli(cfg_cls, args=args)
-              assert cfg.slurm is not None, f"expected [slurm] in {args}"
-              # On slim, template_path can't be auto-resolved (heavy wheel absent) — must stay None.
-              assert cfg.slurm.template_path is None, f"unexpected template_path on slim: {cfg.slurm.template_path}"
-          print("slim parse OK")
           PY

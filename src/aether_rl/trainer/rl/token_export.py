@@ -97,8 +97,7 @@ class TokenExporter:
                 try:
                     (stable_dir / "STABLE").touch()
                 except FileNotFoundError:
-                    # A multi-run run dir can be deleted while its tail steps are
-                    # still flushing (mirrors the broadcast paths' guard)
+                    # A run directory can disappear while its tail steps are flushing.
                     get_logger().warning(f"Run dir for {run_id} is deleted, skipping token-export STABLE marker")
 
     def _export_dir(self, export_step: int, run_id: str | None) -> Path:

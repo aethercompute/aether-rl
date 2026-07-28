@@ -19,12 +19,10 @@ dependencies = [
     "torchdata>=0.11.0",
     "transformers==5.6.2",
     "vllm>=0.24.0",
-    "mooncake-transfer-engine>=0.3.10.post2",
     "wandb>=0.26.1",
     "wandb-workspaces>=0.4.3",
     "ring-flash-attn>=0.1.8",
     "prime>=0.6.19",
-    "pyzmq>=27.1.0",
     "aiolimiter>=1.2.1",
     "aiosqlite>=0.22.1",
     "fastapi>=0.128.0",
@@ -47,19 +45,16 @@ dependencies = [
     "pybase64>=1.4.2",
     "pandas>=2.0",
     "msgspec>=0.18",
+    "safetensors",
+    "tomli-w>=1.2.0",
     "torchao>=0.17.0",
-    "modelexpress==0.3.0",
 ]
 
 [project.scripts]
-rl = "aether_rl.entrypoints.rl:main"
-sft = "aether_rl.entrypoints.sft:main"
 inference = "aether_rl.entrypoints.inference:main"
 trainer = "aether_rl.entrypoints.trainer:main"
-orchestrator = "aether_rl.entrypoints.orchestrator:main"
 server = "aether_rl.entrypoints.server:main"
 worker = "aether_rl.entrypoints.worker:main"
-env-server = "aether_rl.orchestrator.env_server.env_server:main"
 
 [project.entry-points."vllm.general_plugins"]
 aether_rl = "aether_rl.inference.patches:apply_shared_vllm_patches"
@@ -73,12 +68,9 @@ flash-attn-3 = ["flash_attn_3"]
 flash-attn-cute = [
     "flash-attn-4",
 ]
-disagg = [
+expert-parallel = [
     "deep-ep ; platform_machine == 'x86_64' or platform_machine == 'aarch64'",
     "deep-gemm",
-    "nixl",
-    "nixl-cu12 ; platform_machine == 'x86_64'",
-    "vllm-router",
 ]
 gpt-oss = [
     "kernels",
@@ -88,7 +80,7 @@ quack = [
 ]
 all = [
     "aether-rl[flash-attn]",
-    "aether-rl[disagg]",
+    "aether-rl[expert-parallel]",
     "aether-rl[quack]",
     "aether-rl[flash-attn-3]",
     "aether-rl[flash-attn-cute]",
@@ -156,22 +148,6 @@ exclude = [
     "deps/research-environments/environments/tool_use/tau3_bench_v1",
 ]
 
-# ModelExpress 0.3.0 publishes protobuf<6 metadata, but its generated proto is
-# compatible with protobuf 6. prime-sandboxes requires protobuf>=6.31.1; keep
-# this capped to the validated protobuf major.
-[[tool.uv.dependency-metadata]]
-name = "modelexpress"
-version = "0.3.0"
-requires-dist = [
-    "grpcio>=1.66.2",
-    "huggingface_hub>=0.20.0",
-    "nixl[cu12]",
-    "numpy>=1.24.0",
-    "protobuf>=5.27.0,<7.0.0",
-    "pydantic>=2.0.0",
-    "torch>=2.6.0",
-]
-
 [tool.uv.exclude-newer-package]
 # we want latest vllm, remove next patch
 vllm = false
@@ -190,11 +166,9 @@ verifiers = false
 renderers = false
 prime-pydantic-config = false
 # Trusted git/URL sources pinned by rev or wheel URL (defensive: belt-and-suspenders)
-vllm-router = false
 dion = false
 deep-ep = false
 deep-gemm = false
-nixl-cu12 = false
 torchao = false
 
 [tool.uv.sources]
@@ -213,10 +187,6 @@ torchtitan = { git = "https://github.com/pytorch/torchtitan", rev = "23e4dfc" }
 torchao = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.6.0/torchao-0.17.0+git02105d46c-cp312-cp312-linux_x86_64.whl", marker = "platform_machine == 'x86_64'" }
 dion = { git = "https://github.com/samsja/dion.git", rev = "d891eeb" }
 flash-attn-4 = { git = "https://github.com/Dao-AILab/flash-attention.git", subdirectory = "flash_attn/cute", rev = "96bd151" }
-vllm-router = [
-    { url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_x86_64.whl", marker = "platform_machine == 'x86_64'" },
-    { url = "https://github.com/PrimeIntellect-ai/router/releases/download/v0.1.26/vllm_router-0.1.26-cp38-abi3-manylinux_2_28_aarch64.whl", marker = "platform_machine == 'aarch64'" },
-]
 vllm = [
     { url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl", marker = "platform_machine == 'x86_64'" },
     { url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_aarch64.whl", marker = "platform_machine == 'aarch64'" },
@@ -229,7 +199,6 @@ deep-gemm = [
     { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_x86_64.whl", marker = "platform_machine == 'x86_64'" },
     { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_aarch64.whl", marker = "platform_machine == 'aarch64'" },
 ]
-nixl-cu12 = { url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/nixl_cu12-0.10.1-cp312-cp312-linux_x86_64.whl" }
 flash-linear-attention = { git = "https://github.com/fla-org/flash-linear-attention" }
 flash_attn_3 = { index = "pytorch-cu128-test" }
 

@@ -12,10 +12,10 @@ import torch.distributed.distributed_c10d as c10d
 from aether_rl.configs.trainer import LoRAConfig
 from aether_rl.trainer.world import get_world
 from aether_rl.utils.logger import get_logger
-from aether_rl.utils.pathing import get_all_ckpt_steps, get_stable_ckpt_steps
+from aether_rl.utils.pathing import get_all_ckpt_steps
 
 if TYPE_CHECKING:
-    from aether_rl.configs.orchestrator import OrchestratorConfig
+    from aether_rl.configs.run import TrainerRunConfig
     from aether_rl.trainer.models.layers.lora import MultiLoRALinear
 
 
@@ -43,14 +43,14 @@ class MultiRunManager:
         self.unused_idxs = {i for i in range(self.max_runs)}
 
         self.progress: dict[int, Progress] = {}
-        self.config: dict[int, "OrchestratorConfig"] = {}
+        self.config: dict[int, "TrainerRunConfig"] = {}
         self.ready_to_update = [False] * max_runs
 
         self._creation_hooks: list[Callable[[int, str], None]] = []
         self._deletion_hooks: list[Callable[[int, str], None]] = []
-        self._discovered_hooks: list[Callable[[int, str, "OrchestratorConfig"], None]] = []
+        self._discovered_hooks: list[Callable[[int, str, "TrainerRunConfig"], None]] = []
         self._forgotten_hooks: list[Callable[[int, str], None]] = []
-        self._config_validation_hooks: list[Callable[["OrchestratorConfig"], tuple[bool, str]]] = []
+        self._config_validation_hooks: list[Callable[["TrainerRunConfig"], tuple[bool, str]]] = []
 
         # We use the store to keep other ranks in sync with master
         self.store = c10d._get_default_store()
@@ -107,11 +107,11 @@ class MultiRunManager:
         """
         self._deletion_hooks.append(hook)
 
-    def register_discovered_hook(self, hook: Callable[[int, str, "OrchestratorConfig"], None]) -> None:
+    def register_discovered_hook(self, hook: Callable[[int, str, "TrainerRunConfig"], None]) -> None:
         """Register a hook to be called when a new run is discovered (master only).
 
         Args:
-            hook: A callable that takes (idx: int, run_id: str, config: OrchestratorConfig).
+            hook: A callable that takes the run index, ID, and trainer run config.
                   Called only on master rank in discover_runs() when a new run is found.
         """
         if not self.world.is_master:
@@ -129,11 +129,11 @@ class MultiRunManager:
             raise RuntimeError("register_forgotten_hook() must only be called on the master rank")
         self._forgotten_hooks.append(hook)
 
-    def register_config_validation_hook(self, hook: Callable[["OrchestratorConfig"], tuple[bool, str]]) -> None:
+    def register_config_validation_hook(self, hook: Callable[["TrainerRunConfig"], tuple[bool, str]]) -> None:
         """Register a hook to validate orchestrator config when a run is created.
 
         Args:
-            hook: A callable that takes (config: OrchestratorConfig) and returns
+            hook: A callable that takes a trainer run config and returns
                   (is_valid: bool, error_message: str). Error message is used when invalid.
         """
         if not self.world.is_master:
@@ -225,7 +225,7 @@ class MultiRunManager:
     # Config Loading
     # =========================================================================
 
-    def get_orchestrator_config(self, run_id: str) -> Optional["OrchestratorConfig"]:
+    def get_orchestrator_config(self, run_id: str) -> Optional["TrainerRunConfig"]:
         """Load and validate orchestrator config for a run.
 
         Returns None if config doesn't exist, fails to parse, or fails validation.
@@ -243,20 +243,9 @@ class MultiRunManager:
             with open(config_path, "rb") as f:
                 config_dict = tomli.load(f)
 
-            from verifiers.v1.loaders import skip_plugin_install
+            from aether_rl.configs.run import TrainerRunConfig
 
-            from aether_rl.configs.orchestrator import OrchestratorConfig
-
-            # The trainer only reads training-relevant fields (model, lora, seq_len, buffers,
-            # env names) and never runs the env, so skip resolving/installing taskset/harness
-            # plugins from the Environments Hub while parsing. Otherwise a private v1 hub env
-            # (`taskset.id = owner/name@version`) 404s here — the trainer has no Hub creds — and
-            # the run is silently skipped. The env server still installs the plugin at runtime.
-            token = skip_plugin_install.set(True)
-            try:
-                config = OrchestratorConfig(**config_dict)
-            finally:
-                skip_plugin_install.reset(token)
+            config = TrainerRunConfig(**config_dict)
         except Exception as e:
             if error_path.parent.exists():
                 with open(error_path, "w") as f:
@@ -289,7 +278,7 @@ class MultiRunManager:
     # Internal Run Data Helpers
     # =========================================================================
 
-    def _create_run_data(self, new_run: str, new_id: int, config: "OrchestratorConfig") -> None:
+    def _create_run_data(self, new_run: str, new_id: int, config: "TrainerRunConfig") -> None:
         """Update data structures for a new run (no hooks or param reset)."""
         self.id_2_idx[new_run] = new_id
         self.unused_idxs.remove(new_id)
@@ -302,9 +291,7 @@ class MultiRunManager:
             self.progress[new_id].step = 1
         elif config.ckpt.resume_step == -1:
             ckpt_dir = self.get_run_dir(new_id) / "checkpoints"
-            # In multi-run, the trainer writes STABLE after saving LoRA weights to the run's checkpoint dir.
-            # In single-run, only the orchestrator writes checkpoints here (trainer has its own dir), so no STABLE exists.
-            steps = get_stable_ckpt_steps(ckpt_dir) if self.max_runs > 1 else get_all_ckpt_steps(ckpt_dir)
+            steps = get_all_ckpt_steps(ckpt_dir)
             self.progress[new_id].step = max(steps) + 1 if steps else 1
         else:
             self.progress[new_id].step = config.ckpt.resume_step + 1
@@ -445,7 +432,7 @@ class MultiRunManager:
             new_id_2_idx: dict[str, int] = sync_data["id_2_idx"]
             self.ready_to_update = sync_data["ready_to_update"]
             self.scaling_factors.copy_(sync_data["scaling_factors"])
-            new_configs: dict[str, "OrchestratorConfig"] = sync_data["new_configs"]
+            new_configs: dict[str, "TrainerRunConfig"] = sync_data["new_configs"]
             master_progress: dict[int, Progress] = sync_data["progress"]
 
             new_runs = new_id_2_idx.keys() - self.id_2_idx.keys()
@@ -529,18 +516,9 @@ def get_multi_run_manager() -> MultiRunManager:
 def setup_multi_run_manager(
     output_dir: Path, max_runs: int, device: torch.device, lora_config: LoRAConfig | None = None
 ) -> MultiRunManager:
-    """Initialize the MultiRunManager singleton.
-
-    Args:
-        output_dir: Directory containing run outputs
-        max_runs: Maximum number of concurrent runs
-        device: Device for LoRA tensors
-        lora_config: Optional trainer LoRA config. If provided, registers validation
-            and scaling hooks for LoRA rank and alpha.
-
-    Returns:
-        The initialized MultiRunManager instance.
-    """
+    """Initialize the single run state used by trainer components."""
+    if max_runs != 1:
+        raise ValueError("Aether RL supports exactly one trainer run")
     global _MULTI_RUN_MANAGER
     _MULTI_RUN_MANAGER = MultiRunManager(output_dir, max_runs, device)
 
@@ -548,23 +526,18 @@ def setup_multi_run_manager(
     if lora_config is not None and _MULTI_RUN_MANAGER.world.is_master:
         trainer_lora = lora_config
 
-        def validate_lora_rank(orch_config: "OrchestratorConfig") -> tuple[bool, str]:
-            if orch_config.model.lora is None:
-                return False, "orchestrator.model.lora is required when trainer is configured with LoRA"
-            # Default to trainer's rank/alpha if not specified
-            if orch_config.model.lora.rank is None:
-                orch_config.model.lora.rank = trainer_lora.rank
-            if orch_config.model.lora.alpha is None:
-                orch_config.model.lora.alpha = trainer_lora.alpha
-            if orch_config.model.lora.rank > trainer_lora.rank:
+        def validate_lora_rank(run_config: "TrainerRunConfig") -> tuple[bool, str]:
+            lora = run_config.model.lora
+            if lora.rank != trainer_lora.rank:
                 return (
                     False,
-                    f"orchestrator.model.lora.rank ({orch_config.model.lora.rank}) exceeds trainer max rank ({trainer_lora.rank})",
+                    f"run model LoRA rank ({lora.rank}) does not match trainer rank ({trainer_lora.rank})",
                 )
             return True, ""
 
-        def on_run_discovered(idx: int, run_id: str, orch_config: "OrchestratorConfig") -> None:
-            _MULTI_RUN_MANAGER.scaling_factors[idx] = orch_config.model.lora.alpha / orch_config.model.lora.rank
+        def on_run_discovered(idx: int, run_id: str, run_config: "TrainerRunConfig") -> None:
+            lora = run_config.model.lora
+            _MULTI_RUN_MANAGER.scaling_factors[idx] = lora.alpha / lora.rank
 
         _MULTI_RUN_MANAGER.register_config_validation_hook(validate_lora_rank)
         _MULTI_RUN_MANAGER.register_discovered_hook(on_run_discovered)

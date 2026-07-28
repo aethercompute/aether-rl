@@ -19,6 +19,7 @@ from .database import (
 )
 from .environments import EnvironmentCatalog, EnvironmentSourceSpec, verifier_v1_task_payloads
 from .results import DurableTrainingQueue, RemoteResultProcessor, ResultProcessingSource, decode_training_batch
+from .runtime import CoordinatorRuntime
 from .scheduler import CoordinatorScheduler
 from .spool import AtomicSpool, ImmutableArtifactConflictError
 from .trainer_bridge import CoordinatorTrainingBatchExporter
@@ -32,6 +33,7 @@ __all__ = [
     "CoordinatorError",
     "CoordinatorLockError",
     "CoordinatorRepository",
+    "CoordinatorRuntime",
     "CoordinatorScheduler",
     "CoordinatorService",
     "CoordinatorState",

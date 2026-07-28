@@ -12,7 +12,7 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from aether_rl.configs.orchestrator import FilterConfig
+from aether_rl.configs.filters import FilterConfig
 from aether_rl.utils.logger import get_logger
 
 if TYPE_CHECKING:

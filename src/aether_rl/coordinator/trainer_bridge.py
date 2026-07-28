@@ -43,11 +43,23 @@ class CoordinatorTrainingBatchExporter:
         )
 
     def _export_run_config(self) -> None:
-        self._publish_file(
-            self.trainer_output_dir / self.run_id / "control" / "orch.toml",
-            self.run_config,
-            conflict_message="exported trainer run config conflicts with requested config",
-        )
+        final_path = self.trainer_output_dir / self.run_id / "control" / "orch.toml"
+        self._ensure_directory(final_path.parent)
+        if final_path.is_symlink():
+            raise ArtifactCorruptionError("trainer run config path is unsafe")
+        if final_path.is_file() and final_path.read_bytes() == self.run_config:
+            return
+        temporary_path = final_path.parent / f".{BATCH_FILE_TMP_NAME}.{uuid.uuid4().hex}"
+        descriptor = os.open(temporary_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            with os.fdopen(descriptor, "wb") as file:
+                file.write(self.run_config)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary_path, final_path)
+            self._fsync_directory(final_path.parent)
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
     def _publish_file(self, final_path: Path, data: bytes, *, conflict_message: str) -> bool:
         self._ensure_directory(final_path.parent)

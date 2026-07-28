@@ -511,47 +511,6 @@ class FileSystemWeightBroadcastConfig(BaseWeightBroadcastConfig):
     """Weight checkpoint serialization format."""
 
 
-class InMemoryWeightBroadcastConfig(BaseWeightBroadcastConfig):
-    host: str = "localhost"
-    """Weight transfer host."""
-
-    port: int
-    """Weight transfer port."""
-
-    timeout: int = 1200
-    """Weight transfer timeout in seconds."""
-
-    # TODO: Should not be configurable, but auto-inferred
-    inference_world_size: int = 1
-    """Number of inference workers."""
-
-
-class NCCLWeightBroadcastConfig(InMemoryWeightBroadcastConfig):
-    type: Literal["nccl"] = "nccl"
-
-    port: int = 29501
-    """Port for the NCCL broadcast rendezvous."""
-
-    quantize_in_weight_transfer: bool = False
-    """Use kernel-format FP8 quantized NCCL transfer for weight updates. When disabled, uses default HF checkpoint-format transfer."""
-
-
-class NIXLWeightBroadcastConfig(InMemoryWeightBroadcastConfig):
-    type: Literal["nixl"] = "nixl"
-
-    port: int = 8001
-    """ModelExpress gRPC port."""
-
-    session_id: str = "default"
-    """ModelExpress session ID."""
-
-
-WeightBroadcastConfig: TypeAlias = Annotated[
-    FileSystemWeightBroadcastConfig | NCCLWeightBroadcastConfig | NIXLWeightBroadcastConfig,
-    Field(discriminator="type"),
-]
-
-
 class TrainerConfig(BaseConfig):
     model: ModelConfig = ModelConfig()
 
@@ -569,8 +528,8 @@ class TrainerConfig(BaseConfig):
     ckpt: CheckpointConfig | None = None
     """Full training-state checkpoint configuration (model + optimizer + scheduler). If None, no resume-capable checkpoints are written."""
 
-    weight_broadcast: WeightBroadcastConfig = FileSystemWeightBroadcastConfig()
-    """Transport used to broadcast updated weights from trainer to inference."""
+    weight_broadcast: FileSystemWeightBroadcastConfig = FileSystemWeightBroadcastConfig()
+    """Local adapter publication settings."""
 
     rollout_transport: TransportConfig = FileSystemTransportConfig()
     """Transport used to ship rollouts from orchestrator to trainer."""
@@ -615,8 +574,7 @@ class TrainerConfig(BaseConfig):
     metrics_server: MetricsServerConfig | None = None
     """Prometheus metrics server configuration. If set, exposes a ``/metrics`` endpoint for scraping."""
 
-    max_concurrent_runs: int = Field(1, ge=1)
-    """Maximum number of concurrent runs to allow. If 1, only one run may run at a time."""
+    max_concurrent_runs: Literal[1] = 1
 
     enable_token_export: bool = False
     """Opt-in per-token JSONL export for rollout debugging. When enabled, writes token ids and aligned trainer metrics after each forward pass."""
@@ -693,15 +651,11 @@ class TrainerConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
-    def validate_optim_cpu_offload_single_run(self):
-        if self.model.optim_cpu_offload and self.max_concurrent_runs > 1:
-            raise ValueError("Optimizer CPU offload is not supported with max_concurrent_runs > 1")
-        return self
-
-    @model_validator(mode="after")
-    def validate_lora_broadcast(self):
-        if self.model.lora is not None and self.weight_broadcast.type in ("nccl", "nixl"):
-            raise ValueError("In-memory weight broadcast does not support LoRA yet.")
+    def require_lora(self):
+        if self.model.lora is None:
+            raise ValueError("RL training requires model.lora")
+        if self.model.lora.modules_to_save:
+            raise ValueError("LoRA modules_to_save is not supported")
         return self
 
     @model_validator(mode="after")

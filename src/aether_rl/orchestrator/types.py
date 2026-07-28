@@ -10,7 +10,7 @@ import verifiers.v1 as vf
 from pydantic import ConfigDict, Field
 from verifiers.v1.task import DataT
 
-from aether_rl.transport import TrainingSample
+from aether_rl.transport.types import TrainingSample
 
 if TYPE_CHECKING:
     from aether_rl.orchestrator.metrics import EvalRollouts, TrainRollouts

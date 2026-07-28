@@ -63,10 +63,6 @@ nosetests.xml
 debug_I2_zero_band
 
 # Project runtime artifacts
-**/slurm
-!src/aether_rl/slurm
-!examples/slurm
-!docs/slurm.md
 **/torchrun
 **/weights
 **/checkpoints
@@ -81,8 +77,6 @@ debug_I2_zero_band
 final_summary.json
 .pydantic_config
 .chroma_db
-deps/nixl_*
-nixl_workspace/*
 outputs/
 third_party/
 

@@ -4,19 +4,14 @@ import time
 from pathlib import Path
 from typing import Literal
 
-import torch.nn as nn
 from torch.distributed.tensor import DTensor
 
 from aether_rl.configs.trainer import FileSystemWeightBroadcastConfig, LoRAConfig
 from aether_rl.trainer.lora import save_lora_config
-from aether_rl.trainer.models import PreTrainedModelAetherRL
 from aether_rl.trainer.rl.broadcast.base import WeightBroadcast
 from aether_rl.trainer.runs import get_multi_run_manager
 from aether_rl.trainer.utils import maybe_clean
-from aether_rl.trainer.weights import (
-    gather_weights_on_master,
-    save_state_dict,
-)
+from aether_rl.trainer.weights import save_state_dict
 from aether_rl.trainer.world import get_world
 from aether_rl.utils.utils import get_broadcast_dir, get_step_path
 
@@ -24,9 +19,7 @@ from aether_rl.utils.utils import get_broadcast_dir, get_step_path
 class FileSystemWeightBroadcast(WeightBroadcast):
     """Broadcast weights into the inference engine via shared filesystem."""
 
-    def __init__(
-        self, output_dir: Path, config: FileSystemWeightBroadcastConfig, lora_config: LoRAConfig | None = None
-    ):
+    def __init__(self, output_dir: Path, config: FileSystemWeightBroadcastConfig, lora_config: LoRAConfig):
         super().__init__(output_dir, lora_config)
         self.save_format: Literal["safetensors", "torch"] = config.save_format
         self.save_sharded = config.save_sharded if lora_config is None else False
@@ -36,35 +29,22 @@ class FileSystemWeightBroadcast(WeightBroadcast):
             f"Filesystem broadcast initialized (save_format={config.save_format}, save_sharded={self.save_sharded})"
         )
 
-    def broadcast_weights(self, model: nn.Module, step: int) -> None:
-        """Broadcast weights by saving a HF-compatible checkpoint to shared filesystem and notifies the orchestrator."""
-        self.logger.debug("Starting broadcasting weights to inference engine via shared filesystem")
+    def broadcast_weights(self, model, step: int) -> None:
+        """Publish adapter weights to the local coordinator/trainer handoff."""
+        self.logger.debug("Publishing adapter weights")
         start_time = time.perf_counter()
-        adapter_only = self.lora_config is not None
-
-        if not adapter_only:
-            state_dict = gather_weights_on_master(model, is_master=self.world.is_master)
-            if isinstance(model, PreTrainedModelAetherRL) and model.is_prime_state_dict(state_dict):
-                model.convert_to_hf(state_dict)
-            else:
-                from transformers.core_model_loading import revert_weight_conversion
-
-                state_dict = revert_weight_conversion(model, state_dict)
 
         for idx in self.multi_run_manager.ready_to_update_idxs:
             self.logger.debug(
                 f"Broadcasting weights for run {idx} (ready_to_update={self.multi_run_manager.ready_to_update[idx]})"
             )
 
-            if adapter_only:
-                # For adapter-only, MultiRunManager creates state dict directly for each run
-                # All ranks must participate in DTensor gathering, but only master saves
-                state_dict = self.multi_run_manager.get_state_dict_for_run(idx)
-                for key, value in state_dict.items():
-                    if isinstance(value, DTensor):
-                        value = value.full_tensor()
-                    if self.world.is_master:
-                        state_dict[key] = value.to("cpu", non_blocking=False)
+            state_dict = self.multi_run_manager.get_state_dict_for_run(idx)
+            for key, value in state_dict.items():
+                if isinstance(value, DTensor):
+                    value = value.full_tensor()
+                if self.world.is_master:
+                    state_dict[key] = value.to("cpu", non_blocking=False)
 
             # TODO: Broadcast ready to update in sync, then we dont need to gather on not ready
             if self.world.is_master:
@@ -87,16 +67,15 @@ class FileSystemWeightBroadcast(WeightBroadcast):
                 save_dir.mkdir(parents=True, exist_ok=True)
 
                 self.logger.debug(f"Saving weights for run {idx} to {save_dir}")
-                save_state_dict(state_dict, save_dir, self.save_format, self.save_sharded, adapter=adapter_only)
-                if adapter_only:
-                    orch_lora = self.multi_run_manager.config[idx].model.lora
-                    save_lora_config(
-                        model,
-                        save_dir,
-                        rank=orch_lora.rank,
-                        alpha=orch_lora.alpha,
-                        dropout=self.lora_config.dropout,
-                    )
+                save_state_dict(state_dict, save_dir, self.save_format, self.save_sharded, adapter=True)
+                orch_lora = self.multi_run_manager.config[idx].model.lora
+                save_lora_config(
+                    model,
+                    save_dir,
+                    rank=orch_lora.rank,
+                    alpha=orch_lora.alpha,
+                    dropout=self.lora_config.dropout,
+                )
 
                 self._notify_orchestrator(save_dir)
 

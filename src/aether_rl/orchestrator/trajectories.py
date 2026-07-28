@@ -7,7 +7,7 @@ entry (a root→leaf path) is first-class and carries its own flat token sequenc
 training sample directly. Token-length readers (`completion_len`, `total_tokens`, `num_turns`)
 live on `vf.Trace` itself.
 
-Training is renderer-only across every mode (RL/OPD student, SFT teacher), so every node
+Training is renderer-only across every retained algorithm, so every node
 always carries its tokens — no backfill needed. For multimodal rollouts the branch also carries
 the images it introduced (`branch.multi_modal_data`), rebuilt here into the flat `mm_kwargs` /
 `mm_token_type_ids` the trainer forwards.
@@ -20,8 +20,7 @@ from collections.abc import Iterator
 import numpy as np
 import verifiers.v1 as vf
 
-from aether_rl.transport import TrainingSample
-from aether_rl.transport.types import EncodedTensor, RoutedExperts
+from aether_rl.transport.types import EncodedTensor, RoutedExperts, TrainingSample
 from aether_rl.utils.logger import get_logger
 
 

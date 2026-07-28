@@ -17,8 +17,6 @@ def apply_shared_vllm_patches():
     monkey_patch_qwen3_coder_param_newline_trim()
     monkey_patch_minimax_m2_think_end_passthrough()
     monkey_patch_vllm_padded_input_scrub()
-    monkey_patch_return_routed_experts_with_nixl_connector()
-    monkey_patch_kv_xfer_finished_tolerate_freed()
     monkey_patch_online_fp8_parameter_cast()
 
 
@@ -44,67 +42,6 @@ def monkey_patch_online_fp8_parameter_cast():
 
     _per_block_cast_to_fp8._aether_rl_unwraps_parameters = True
     fp8.per_block_cast_to_fp8 = _per_block_cast_to_fp8
-
-
-def monkey_patch_kv_xfer_finished_tolerate_freed():
-    """Tolerate KV-transfer finish notifications for already-freed requests.
-
-    In disaggregated P/D (NIXL, optionally + a KV store connector) a request can
-    be finished — most often ``FINISHED_ABORTED`` from an off-policy cancel, a
-    client disconnect, or a request timeout — while it still has in-flight KV
-    transfers. When such a request's ``finished_recving`` and ``finished_sending``
-    both land in the same ``Scheduler.update_from_output`` step, the stock
-    ``_update_from_kv_xfer_finished`` frees it in the recving branch
-    (``_free_blocks`` -> ``del self.requests[req_id]``) and then the sending
-    branch hits ``assert req_id in self.requests`` and kills the EngineCore. On a
-    DP deployment that one death cascades to every rank via the gloo finish-state
-    all-reduce, taking down the whole inference pool.
-
-    The trigger is the abort itself, not weight-update pause/resume: it reproduces
-    during normal stepping whenever an aborted request's recv and send complete in
-    the same step (observed with zero off-policy cancellations, driven only by
-    incidental client-side aborts). Skip already-freed request ids instead of
-    asserting — their blocks are freed either way, so dropping the stale
-    notification is safe.
-
-    Upstream issue: https://github.com/vllm-project/vllm/issues/46240
-    """
-    from vllm.logger import init_logger
-    from vllm.v1.core.sched.scheduler import Scheduler
-    from vllm.v1.request import RequestStatus
-
-    logger = init_logger("vllm.v1.core.sched.scheduler")
-
-    if getattr(Scheduler._update_from_kv_xfer_finished, "_aether_rl_tolerates_freed", False):
-        return
-
-    def _update_from_kv_xfer_finished(self, kv_connector_output):
-        if self.connector is not None:
-            self.connector.update_connector_output(kv_connector_output)
-
-        for req_id in kv_connector_output.finished_recving or ():
-            logger.debug("Finished recving KV transfer for request %s", req_id)
-            # Stale notification for a request freed earlier this step (e.g. an
-            # aborted request whose send completion freed it). Nothing to do.
-            if req_id not in self.requests:
-                continue
-            req = self.requests[req_id]
-            if req.status == RequestStatus.WAITING_FOR_REMOTE_KVS:
-                self.finished_recving_kv_req_ids.add(req_id)
-            else:
-                assert RequestStatus.is_finished(req.status)
-                self._free_blocks(self.requests[req_id])
-        for req_id in kv_connector_output.finished_sending or ():
-            logger.debug("Finished sending KV transfer for request %s", req_id)
-            # See above: the recving branch may have already freed an aborted
-            # request whose send also completed this step.
-            if req_id not in self.requests:
-                continue
-            self._free_blocks(self.requests[req_id])
-
-    _update_from_kv_xfer_finished._aether_rl_tolerates_freed = True
-    Scheduler._update_from_kv_xfer_finished = _update_from_kv_xfer_finished
-    logger.warning("Patched Scheduler._update_from_kv_xfer_finished to tolerate freed (aborted) KV-transfer reqs.")
 
 
 def monkey_patch_nano_v3_reasoning_parser():
@@ -207,50 +144,6 @@ def monkey_patch_minimax_m2_think_end_passthrough():
         )
 
     minimax_m2.minimax_m2_config = _patched_config
-
-
-def monkey_patch_return_routed_experts_with_nixl_connector():
-    from vllm import envs
-    from vllm.config.vllm import VllmConfig
-    from vllm.logger import init_logger
-
-    logger = init_logger(__name__)
-    original_post_init = VllmConfig.__post_init__
-
-    if getattr(original_post_init, "_aether_rl_allows_nixl_routed_experts", False):
-        return
-
-    def _is_nixl_routed_experts_pd_config(config: VllmConfig) -> bool:
-        kv_transfer_config = config.kv_transfer_config
-        return (
-            config.model_config is not None
-            and config.model_config.enable_return_routed_experts
-            and kv_transfer_config is not None
-            and kv_transfer_config.kv_connector == "NixlConnector"
-            and kv_transfer_config.is_kv_transfer_instance
-        )
-
-    def _post_init(config: VllmConfig):
-        if not _is_nixl_routed_experts_pd_config(config):
-            return original_post_init(config)
-
-        if config.parallel_config.pipeline_parallel_size > 1:
-            raise ValueError("--enable-return-routed-experts is incompatible with pipeline parallelism (PP > 1).")
-        if envs.VLLM_USE_V2_MODEL_RUNNER:
-            raise ValueError("VLLM_USE_V2_MODEL_RUNNER does not yet support: routed experts capture")
-
-        # vLLM rejects every KV connector, but our P/D path uses NIXL and
-        # stitches prefill/decode routed experts in the router. CPU KV offload
-        # remains rejected by aether-rl config validation.
-        config.model_config.enable_return_routed_experts = False
-        try:
-            return original_post_init(config)
-        finally:
-            config.model_config.enable_return_routed_experts = True
-
-    _post_init._aether_rl_allows_nixl_routed_experts = True
-    VllmConfig.__post_init__ = _post_init
-    logger.warning("Enabled vLLM routed-experts capture with NIXL connector patch.")
 
 
 def monkey_patch_strip_routed_experts_from_chat():
@@ -757,36 +650,3 @@ def monkey_patch_fp32_router_logits():
 
     DeepseekV2MoE.__init__ = _patched_init
     logger.info("Installed fp32 router logits patch (self-gates on additional_config['fp32_router_logits']).")
-
-
-def monkey_patch_dp_coordinator_startup_timeout():
-    """Raise the DP coordinator startup timeout from vLLM's hard-coded 120s.
-
-    The coordinator child process is spawned on the DP-rank-0 API server while
-    every engine-core rank on the node is importing and loading weights, so its
-    own spawn-time re-import can exceed the hard-coded timeout under that CPU/IO
-    contention (seen on multi-node disaggregated GLM-5.1 launches). Configurable
-    via PRIME_DP_COORDINATOR_STARTUP_TIMEOUT (seconds, default 300).
-    """
-    import multiprocessing.connection
-    import os
-
-    from vllm.v1.engine.coordinator import DPCoordinator
-
-    timeout = float(os.environ.get("PRIME_DP_COORDINATOR_STARTUP_TIMEOUT", "300"))
-
-    def _patched_wait_for_zmq_addrs(self, zmq_addr_pipe):
-        try:
-            ready = multiprocessing.connection.wait([zmq_addr_pipe, self.proc.sentinel], timeout=timeout)
-            if not ready:
-                raise RuntimeError(
-                    f"DP Coordinator process failed to report ZMQ addresses within {timeout}s during startup."
-                )
-            try:
-                return zmq_addr_pipe.recv()
-            except EOFError:
-                raise RuntimeError("DP Coordinator process failed during startup.") from None
-        finally:
-            zmq_addr_pipe.close()
-
-    DPCoordinator._wait_for_zmq_addrs = _patched_wait_for_zmq_addrs

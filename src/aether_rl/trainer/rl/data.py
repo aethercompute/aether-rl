@@ -7,7 +7,7 @@ from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
 from aether_rl.configs.trainer import FakeDataLoaderConfig
-from aether_rl.trainer.rl.packer import BasePacker, setup_packer
+from aether_rl.trainer.rl.packer import Packer, setup_packer
 from aether_rl.trainer.runs import get_multi_run_manager
 from aether_rl.trainer.world import get_world
 from aether_rl.transport import (
@@ -191,7 +191,7 @@ class DataLoader:
         self.world = get_world()
 
         if self.world.is_master:
-            self.packer: BasePacker = setup_packer(
+            self.packer: Packer = setup_packer(
                 dp_world_size=dp_world_size,
                 seq_len=seq_len,
                 transport_config=config,

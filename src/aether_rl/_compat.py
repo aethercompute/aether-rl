@@ -27,7 +27,7 @@ if not hasattr(_mfau, "is_flash_attn_greater_or_equal_2_10"):
 # kernel is already cached locally. Only FileNotFoundError and AssertionError
 # are caught; OfflineModeIsEnabled (a ConnectionError subclass) is not.
 #
-# This breaks Mamba-based models (NemotronH, Zamba2, Jamba, etc.) on SLURM
+# This breaks Mamba-based models (NemotronH, Zamba2, Jamba, etc.)
 # worker nodes where HF_HUB_OFFLINE=1 is set.
 #
 # Fix: patch the except clause to also catch ConnectionError.

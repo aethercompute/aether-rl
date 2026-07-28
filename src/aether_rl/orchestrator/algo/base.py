@@ -62,7 +62,7 @@ async def connect_frozen_pool(
 
     When ``renderer_config`` is set, the pool's train client is the renderer
     (token-in/out) client — required when the frozen model *generates* rollouts
-    (sft), so the rollout carries tokens. Left as plain chat-completions
+    from an external source, so the rollout carries tokens. Left as plain chat-completions
     otherwise (opd/opsd read teacher logprobs via prefill, where the train
     client type is moot)."""
     from aether_rl.utils.client import setup_inference_pool

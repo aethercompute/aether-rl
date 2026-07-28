@@ -158,7 +158,7 @@ class AppState(Stateful):
 
 
 class CheckpointManager:
-    """Utility class to save and load trainer checkpoints to resume SFT and RL training."""
+    """Save and load resumable RL trainer checkpoints."""
 
     def __init__(self, output_dir: Path, config: CheckpointConfig):
         self.config = config

@@ -596,6 +596,23 @@ class CoordinatorRepository:
             )
         return LeaseRequestDisposition("leased", offered)
 
+    def release_unoffered_lease(self, lease_id: str) -> None:
+        with self._transaction():
+            lease = self.connection.execute(
+                "SELECT assignment_id FROM lease_attempts WHERE lease_id = ? AND state = 'active'", (lease_id,)
+            ).fetchone()
+            if lease is None:
+                return
+            assignment = self._assignment(lease["assignment_id"])
+            if assignment["current_lease_id"] != lease_id:
+                return
+            self.connection.execute("DELETE FROM lease_attempts WHERE lease_id = ?", (lease_id,))
+            self.connection.execute(
+                "UPDATE assignments SET state = 'retry_wait', attempt_count = attempt_count - 1, "
+                "current_lease_id = NULL, available_at = ? WHERE assignment_id = ?",
+                (self.clock(), lease["assignment_id"]),
+            )
+
     def validate_offered_lease(self, request: LeaseRequest, offered: AssignmentLease) -> None:
         self._validate_offered_lease(request, offered)
 
