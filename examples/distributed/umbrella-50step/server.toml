@@ -1,8 +1,8 @@
-run_id = "countdown-qwen25-50step"
-run_root = "outputs/countdown-qwen25-50step/server"
+run_id = "umbrella-qwen25-50step"
+run_root = "outputs/umbrella-qwen25-50step/server"
 host = "127.0.0.1"
 port = 8080
-trainer_config_path = "examples/distributed/countdown-50step/trainer.toml"
+trainer_config_path = "examples/distributed/umbrella-50step/trainer.toml"
 trainer_processes = 1
 training_batch_size = 64
 
@@ -18,28 +18,28 @@ vocab_size = 151665
 quantization = "none"
 
 [[sources]]
-source_id = "countdown-50step-train"
+source_id = "umbrella-50step-train"
 kind = "train"
-environment_id = "countdown-proof-v1"
+environment_id = "umbrella-story-v1"
 environment_revision = "0.1.0"
-environment_config = { taskset = { id = "countdown-proof-v1", split = "train" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
+environment_config = { taskset = { id = "umbrella-story-v1" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
 group_size = 16
 max_attempts = 3
 task_limit = 10000
 weight = 8.0
-sampling = { temperature = 1.0, max_tokens = 32 }
+sampling = { temperature = 1.0, max_tokens = 64 }
 
 [sources.algorithm]
 type = "grpo"
 
 [[sources]]
-source_id = "countdown-50step-eval"
+source_id = "umbrella-50step-eval"
 kind = "eval"
-environment_id = "countdown-proof-v1"
+environment_id = "umbrella-story-v1"
 environment_revision = "0.1.0"
-environment_config = { taskset = { id = "countdown-proof-v1", split = "eval" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
+environment_config = { taskset = { id = "umbrella-story-v1" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
 group_size = 1
 max_attempts = 3
-task_limit = 256
+task_limit = 10000
 weight = 1.0
-sampling = { temperature = 0.0, max_tokens = 32 }
+sampling = { temperature = 0.0, max_tokens = 64 }

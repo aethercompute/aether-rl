@@ -27,10 +27,10 @@ weights = "None"
 filename = "metrics.jsonl"
 
 [wandb]
-project = "aether-rl-countdown"
-name = "qwen2.5-0.5b-countdown-50step"
+project = "aether-rl-umbrella"
+name = "qwen2.5-0.5b-umbrella-50step"
 group = "distributed-learning-proof"
-tags = ["grpo", "distributed", "countdown", "50-step"]
+tags = ["grpo", "distributed", "umbrella", "50-step"]
 create_overview = false
 log_metrics = [
     "loss/mean",

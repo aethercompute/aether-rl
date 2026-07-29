@@ -1,5 +1,5 @@
 coordinator_url = "http://127.0.0.1:8080" # override with the coordinator URL
-state_dir = "outputs/countdown-qwen25-50step/worker"
+state_dir = "outputs/umbrella-qwen25-50step/worker"
 execution_slots = 32
 tensor_parallel_size = 1
 inference_port = 8000
@@ -19,7 +19,7 @@ vocab_size = 151665
 quantization = "none"
 
 [[environments]]
-id = "countdown-proof-v1"
-package = "countdown-proof-v1"
+id = "umbrella-story-v1"
+package = "umbrella-story-v1"
 revision = "0.1.0"
-config = { taskset = { id = "countdown-proof-v1" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
+config = { taskset = { id = "umbrella-story-v1" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
