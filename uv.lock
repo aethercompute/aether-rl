@@ -115,8 +115,8 @@ members = [
     "terminal-lego-v1",
     "tmax-v1",
     "triviaqa-v1",
-    "umbrella-story-v1",
     "unscramble-v1",
+    "up-story-v1",
     "uuid-ctf-v1",
     "verbatim-copy-v1",
     "wideseek-v1",
@@ -7640,11 +7640,6 @@ wheels = [
 ]
 
 [[package]]
-name = "umbrella-story-v1"
-version = "0.1.0"
-source = { editable = "environments/umbrella_story_v1" }
-
-[[package]]
 name = "uncalled-for"
 version = "0.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -7676,6 +7671,11 @@ requires-dist = [
     { name = "datasets" },
     { name = "verifiers", specifier = ">=0.2.0" },
 ]
+
+[[package]]
+name = "up-story-v1"
+version = "0.1.0"
+source = { editable = "environments/up_story_v1" }
 
 [[package]]
 name = "urllib3"

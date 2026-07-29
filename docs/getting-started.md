@@ -2,7 +2,7 @@
 
 This guide launches the reverse-text example with one coordinator and one or more workers. The checked-in configuration contains identity placeholders and is not runnable until they are replaced.
 
-For a short end-to-end experiment with an objective RL learning signal, use the [distributed umbrella repetition proof](../examples/distributed/umbrella-50step/README.md).
+For a short end-to-end experiment with an objective RL learning signal, use the [distributed up repetition proof](../examples/distributed/up-50step/README.md).
 
 ## 1. Prepare every machine
 

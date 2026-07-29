@@ -1,8 +1,8 @@
-run_id = "umbrella-qwen25-50step"
-run_root = "outputs/umbrella-qwen25-50step/server"
+run_id = "up-qwen25-50step"
+run_root = "outputs/up-qwen25-50step/server"
 host = "127.0.0.1"
 port = 8080
-trainer_config_path = "examples/distributed/umbrella-50step/trainer.toml"
+trainer_config_path = "examples/distributed/up-50step/trainer.toml"
 trainer_processes = 1
 training_batch_size = 64
 
@@ -18,11 +18,11 @@ vocab_size = 151665
 quantization = "none"
 
 [[sources]]
-source_id = "umbrella-50step-train"
+source_id = "up-50step-train"
 kind = "train"
-environment_id = "umbrella-story-v1"
+environment_id = "up-story-v1"
 environment_revision = "0.1.0"
-environment_config = { taskset = { id = "umbrella-story-v1" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
+environment_config = { taskset = { id = "up-story-v1" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
 group_size = 16
 max_attempts = 3
 task_limit = 10000
@@ -33,11 +33,11 @@ sampling = { temperature = 1.0, max_tokens = 64 }
 type = "grpo"
 
 [[sources]]
-source_id = "umbrella-50step-eval"
+source_id = "up-50step-eval"
 kind = "eval"
-environment_id = "umbrella-story-v1"
+environment_id = "up-story-v1"
 environment_revision = "0.1.0"
-environment_config = { taskset = { id = "umbrella-story-v1" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
+environment_config = { taskset = { id = "up-story-v1" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
 group_size = 1
 max_attempts = 3
 task_limit = 10000
