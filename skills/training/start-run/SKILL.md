@@ -18,6 +18,8 @@ scripts/run-server.sh examples/distributed/reverse-text/server.toml
 
 The coordinator starts and supervises the central trainer. Do not launch another trainer for the same run. Preflight validates configuration, trainer model/tokenizer revisions, and distributed checkpoint compatibility, but does not start the trainer, load weights, open the production database, or test disk capacity.
 
+Distributed runs retain a complete checkpoint every step and cannot prune checkpoints while active. Before a long run, measure one stable checkpoint or use a representative prior run, multiply by `max_steps`, and add room for policies, results, caches, and temporary checkpoint writes. Check the filesystem containing `run_root`, not just another mount. Maintain enough free space for at least one additional full checkpoint throughout the run.
+
 Wait for `/health` and `/ready` before workers. `/health` is API liveness only; `/ready` includes trainer, processing, database, and policy integrity.
 
 Expose remote coordinators through an external HTTPS proxy, load balancer, mesh, or VPN gateway. Aether RL does not terminate TLS. Preserve auth/protocol headers and support long polling and configured result body sizes.

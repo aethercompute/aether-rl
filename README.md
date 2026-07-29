@@ -14,10 +14,10 @@ The coordinator owns durable scheduling, result ingestion, group scoring, traini
 
 ## Quickstart
 
-Clone with submodules and install the server plus the example environment:
+Clone the repository and install the server plus the example environment. The setup script initializes recursive submodules over HTTPS:
 
 ```bash
-git clone --recurse-submodules https://github.com/aethercompute/aether-rl.git
+git clone https://github.com/aethercompute/aether-rl.git
 cd aether-rl
 scripts/setup-server.sh reverse-text-v1
 ```

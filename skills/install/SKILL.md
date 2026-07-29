@@ -5,10 +5,10 @@ description: Install Aether RL coordinator or worker dependencies and selected v
 
 # Install
 
-Aether RL supports Linux `x86_64` and `aarch64`, Python 3.12, and `uv >= 0.11.1`. Trainer and worker roles require compatible NVIDIA GPUs and CUDA. Clone with submodules:
+Aether RL supports Linux `x86_64` and `aarch64`, Python 3.12, and `uv >= 0.11.1`. Trainer and worker roles require compatible NVIDIA GPUs and CUDA. Clone the top-level repository; the setup scripts initialize recursive submodules over HTTPS, including submodules whose recorded URLs use SSH:
 
 ```bash
-git clone --recurse-submodules https://github.com/aethercompute/aether-rl.git
+git clone https://github.com/aethercompute/aether-rl.git
 cd aether-rl
 ```
 
@@ -33,6 +33,15 @@ uv sync --all-extras --group dev
 Environment workspace packages are opt-in. Prefer repeated `--package <environment>` arguments over `--all-packages`; research environments can have incompatible pins. Private models require normal Hugging Face authentication and persistent cache access.
 
 The setup scripts initialize recursive submodules over HTTPS, skip the default development group, and synchronize the selected role plus explicitly named environment packages.
+
+If an earlier `git clone --recurse-submodules` failed on an SSH-form submodule URL, it can leave an already-cloned submodule without a checked-out working tree. Repair the affected path before rerunning setup:
+
+```bash
+git submodule update --init --recursive --checkout --force deps/pydantic-config
+scripts/setup-worker.sh reverse-text-v1
+```
+
+Use the corresponding setup script and environment package for the intended role. The forced checkout is only for recovery of the incomplete initial clone, not routine setup.
 
 DeepEP is an optional expert-parallel backend for the central trainer. `scripts/install_ep_kernels.sh` builds a compatible wheel into `deps/`; install the resulting wheel explicitly through the project's uv-managed environment before selecting `ep_comm_backend = "deepep"`.
 

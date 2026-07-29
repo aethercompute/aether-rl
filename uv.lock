@@ -48,6 +48,7 @@ members = [
     "code-golf-v1",
     "color-codeword-v1",
     "compact",
+    "countdown-proof-v1",
     "deepdive-v1",
     "deepwiki-v1",
     "enterprise-ops-gym-v1",
@@ -1321,6 +1322,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/05/0a/a3fe3be3ee2dceb3e615ebb4df97ae6f3828aa915d3e10549ce016302bd1/contourpy-1.3.3-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:451e71b5a7d597379ef572de31eeb909a87246974d960049a9848c3bc6c41bf7", size = 1331288, upload-time = "2025-07-26T12:01:31.198Z" },
     { url = "https://files.pythonhosted.org/packages/33/1d/acad9bd4e97f13f3e2b18a3977fe1b4a37ecf3d38d815333980c6c72e963/contourpy-1.3.3-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:459c1f020cd59fcfe6650180678a9993932d80d44ccde1fa1868977438f0b411", size = 1403386, upload-time = "2025-07-26T12:01:33.947Z" },
 ]
+
+[[package]]
+name = "countdown-proof-v1"
+version = "0.1.0"
+source = { editable = "environments/countdown_proof_v1" }
 
 [[package]]
 name = "cryptography"

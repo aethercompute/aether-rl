@@ -1,5 +1,5 @@
-coordinator_url = "http://127.0.0.1:8080" # override with the coordinator HTTPS URL
-state_dir = "outputs/reverse-text-qwen25-50step/worker"
+coordinator_url = "http://127.0.0.1:8080" # override with the coordinator URL
+state_dir = "outputs/countdown-qwen25-50step/worker"
 execution_slots = 32
 tensor_parallel_size = 1
 inference_port = 8000
@@ -19,7 +19,7 @@ vocab_size = 151665
 quantization = "none"
 
 [[environments]]
-id = "reverse-text-proof-v1"
-package = "reverse-text-proof-v1"
+id = "countdown-proof-v1"
+package = "countdown-proof-v1"
 revision = "0.1.0"
-config = { taskset = { id = "reverse-text-proof-v1" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
+config = { taskset = { id = "countdown-proof-v1" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }

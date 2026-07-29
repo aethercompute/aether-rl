@@ -6,10 +6,10 @@ For a short end-to-end experiment with an objective RL learning threshold, use t
 
 ## 1. Prepare every machine
 
-Install Linux, a compatible NVIDIA driver/CUDA stack, Python 3.12, Git, and `uv >= 0.11.1`. Clone with submodules:
+Install Linux, a compatible NVIDIA driver/CUDA stack, Python 3.12, Git, and `uv >= 0.11.1`. Clone the top-level repository; the role setup scripts initialize recursive submodules over HTTPS:
 
 ```bash
-git clone --recurse-submodules https://github.com/aethercompute/aether-rl.git
+git clone https://github.com/aethercompute/aether-rl.git
 cd aether-rl
 ```
 

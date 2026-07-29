@@ -3,7 +3,7 @@ max_steps = 50
 [model]
 name = "Qwen/Qwen2.5-0.5B-Instruct"
 revision = "7ae557604adf67be50417f59c2c2f167def9a775"
-seq_len = 128
+seq_len = 256
 impl = "hf"
 attn = "flash_attention_2"
 
@@ -27,10 +27,10 @@ weights = "None"
 filename = "metrics.jsonl"
 
 [wandb]
-project = "aether-rl-reverse-text"
-name = "qwen2.5-0.5b-reverse-text-50step"
+project = "aether-rl-countdown"
+name = "qwen2.5-0.5b-countdown-50step"
 group = "distributed-learning-proof"
-tags = ["grpo", "distributed", "reverse-text", "50-step"]
+tags = ["grpo", "distributed", "countdown", "50-step"]
 create_overview = false
 log_metrics = [
     "loss/mean",
