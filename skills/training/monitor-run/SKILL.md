@@ -40,6 +40,8 @@ Capture worker stdout/stderr with the service manager and inspect `<state_dir>/i
 
 Inspect `<state_dir>/spool/pending/` when results do not drain, `<state_dir>/spool/rejected/` for nonretryable submissions, and disk use under `<state_dir>/cache/policies/`.
 
+Lease capacity is backpressure, not a worker-fatal condition. Current coordinators return `429 capacity_exceeded`; current workers also retry the capacity-specific `409 conflict` messages emitted by older coordinators. If a worker exits on `requested slots exceed worker session capacity`, update the worker before restarting it. Other 409 responses remain fatal protocol conflicts and must be diagnosed rather than retried.
+
 ## Restarts
 
 Never restart unless explicitly requested. Preserve the complete server `run_root`, external database/trainer paths, and worker `state_dir`. Only one process may own each state directory.

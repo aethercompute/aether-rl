@@ -301,6 +301,12 @@ async def test_multi_slot_requests_reserve_one_slot_and_auth_failure_preserves_s
     class Client(FakeCoordinatorClient):
         async def lease(self, request):
             self.lease_requests.append(request)
+            if len(self.lease_requests) == 1:
+                raise CoordinatorAPIError(
+                    409,
+                    "conflict",
+                    "requested slots exceed worker session capacity",
+                )
             return None
 
         async def submit(self, entry):
@@ -321,7 +327,7 @@ async def test_multi_slot_requests_reserve_one_slot_and_auth_failure_preserves_s
         )
         assert await daemon._acquire_lease() is None
         assert await daemon._acquire_lease() is None
-        assert [request.available_slots for request in client.lease_requests] == [1, 1]
+        assert [request.available_slots for request in client.lease_requests] == [1, 1, 1]
         with pytest.raises(CoordinatorAPIError, match="unauthorized"):
             await daemon._upload_loop()
         assert spool.entries() == (entry,)

@@ -276,10 +276,13 @@ def create_coordinator_app(
 
     @app.exception_handler(ConflictError)
     @app.exception_handler(IncompatibleWorkerError)
-    @app.exception_handler(CapacityError)
     @app.exception_handler(InvalidStateError)
     async def handle_conflict(request: Request, error: Exception) -> JSONResponse:
         return _error(409, "conflict", str(error))
+
+    @app.exception_handler(CapacityError)
+    async def handle_capacity(request: Request, error: CapacityError) -> JSONResponse:
+        return _error(429, "capacity_exceeded", str(error), {"Retry-After": "1"})
 
     @app.exception_handler(sqlite3.OperationalError)
     async def handle_sqlite(request: Request, error: sqlite3.OperationalError) -> JSONResponse:

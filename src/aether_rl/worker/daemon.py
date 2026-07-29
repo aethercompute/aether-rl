@@ -226,7 +226,16 @@ class WorkerDaemon:
                     await self._sleep(delay)
                     delay = min(delay * 2, self.config.retry_max_seconds)
                 except CoordinatorAPIError as error:
-                    if not error.retryable:
+                    legacy_capacity_conflict = (
+                        error.status_code == 409
+                        and error.code == "conflict"
+                        and error.message
+                        in {
+                            "requested slots exceed worker session capacity",
+                            "worker session has no free assignment capacity",
+                        }
+                    )
+                    if not error.retryable and not legacy_capacity_conflict:
                         raise
                     await self._sleep(error.retry_after if error.retry_after is not None else delay)
                     delay = min(delay * 2, self.config.retry_max_seconds)

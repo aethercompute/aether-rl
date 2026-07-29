@@ -106,6 +106,41 @@ async def test_health_readiness_auth_protocol_registration_lease_and_status(tmp_
 
 
 @pytest.mark.asyncio
+async def test_lease_capacity_is_retryable_backpressure(tmp_path: Path):
+    clock = FakeClock()
+    with make_repository(tmp_path, clock) as repository:
+        repository.register_worker(registration())
+        assignment = assignments(base_policy())[0]
+        repository.create_group([assignment], max_attempts=1)
+        repository.create_lease(
+            assignment.assignment_id,
+            worker_id="worker-1",
+            worker_session_id="session-1",
+            lease_id="lease-active",
+            duration_seconds=30,
+        )
+        request = LeaseRequest(
+            request_id="request-at-capacity",
+            worker_id="worker-1",
+            worker_session_id="session-1",
+            sent_at=clock.now,
+            environments=registration().capabilities.environments,
+            available_slots=1,
+        )
+        app = create_coordinator_app(repository, token=TOKEN, trainer_ready=lambda: True)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/assignments/lease",
+                headers=JSON_HEADERS,
+                content=canonical_json_bytes(request),
+            )
+            assert response.status_code == 429
+            assert response.json()["error"]["code"] == "capacity_exceeded"
+            assert response.headers["retry-after"] == "1"
+        app.state.coordinator_service.close()
+
+
+@pytest.mark.asyncio
 async def test_body_validation_limits_and_immediate_injected_lease(tmp_path: Path):
     clock = FakeClock()
     with make_repository(tmp_path, clock) as repository:
