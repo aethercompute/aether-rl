@@ -3,7 +3,7 @@ state_dir = "outputs/umbrella-qwen25-50step/worker"
 execution_slots = 32
 tensor_parallel_size = 1
 inference_port = 8000
-gpu_memory_utilization = 0.9
+gpu_memory_utilization = 0.8
 max_loaded_policies = 4
 adapter_cache_max_bytes = 10737418240
 
