@@ -231,6 +231,16 @@ class CancellationExecutor:
         raise RuntimeError("coordinator cancelled assignment")
 
 
+class CancelledErrorExecutor:
+    def __init__(self):
+        self.cancelled = False
+
+    async def execute(self, lease, cancel_event):
+        await cancel_event.wait()
+        self.cancelled = True
+        raise asyncio.CancelledError
+
+
 class CancellationClient(FakeCoordinatorClient):
     async def lease(self, request):
         self.lease_requests.append(request)
@@ -263,6 +273,24 @@ async def test_heartbeat_cancellation_stops_executor_and_spools_failure(tmp_path
         client.daemon = daemon
         await daemon.run()
         assert executor.cancelled
+        assert spool.entries() == ()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_cancelled_error_does_not_stop_worker(tmp_path: Path):
+    config = worker_config(tmp_path)
+    client = CancellationClient(assignment_lease())
+    executor = CancelledErrorExecutor()
+    with WorkerState(config.state_dir) as state:
+        spool = WorkerSpool(state)
+        daemon = WorkerDaemon(config, registration(), client, spool, executor)
+        client.daemon = daemon
+        task = asyncio.create_task(daemon.run())
+        while not executor.cancelled:
+            await asyncio.sleep(0)
+        daemon.stop()
+        await task
+        assert len(client.lease_requests) > 1
         assert spool.entries() == ()
 
 

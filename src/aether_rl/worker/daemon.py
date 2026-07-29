@@ -191,6 +191,8 @@ class WorkerDaemon:
                         async with self.policy_runtime.acquire(lease.assignment.policy):
                             envelope = await self._execute(active)
                 except asyncio.CancelledError:
+                    if active.cancel_event.is_set() and not self.stop_event.is_set():
+                        continue
                     raise
                 except Exception as error:
                     if getattr(error, "worker_fatal", False):
