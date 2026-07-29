@@ -1,0 +1,25 @@
+coordinator_url = "http://127.0.0.1:8080" # override with the coordinator HTTPS URL
+state_dir = "outputs/reverse-text-qwen25-50step/worker"
+execution_slots = 32
+tensor_parallel_size = 1
+inference_port = 8000
+gpu_memory_utilization = 0.9
+max_loaded_policies = 4
+adapter_cache_max_bytes = 10737418240
+
+[base_model]
+model_name = "Qwen/Qwen2.5-0.5B-Instruct"
+model_revision = "7ae557604adf67be50417f59c2c2f167def9a775"
+model_config_digest = "sha256:ee6f9831a4c4729cf094af9a76a53dfe1dde8e34a8251889f527d2179c7d918d"
+tokenizer_name = "Qwen/Qwen2.5-0.5B-Instruct"
+tokenizer_revision = "7ae557604adf67be50417f59c2c2f167def9a775"
+tokenizer_digest = "sha256:6595067cd70176d43f94ac8ae0ae81b8d5549209010733596c139b5964031853"
+chat_template_digest = "sha256:2b5d60437a91263d5952be15551475a81123557cd4599cd1850099f2f62908cf"
+vocab_size = 151665
+quantization = "none"
+
+[[environments]]
+id = "reverse-text-proof-v1"
+package = "reverse-text-proof-v1"
+revision = "0.1.0"
+config = { taskset = { id = "reverse-text-proof-v1" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
