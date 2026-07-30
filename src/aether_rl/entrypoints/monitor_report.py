@@ -544,6 +544,7 @@ def render_html(snapshot: Mapping[str, Any], options: MonitorOptions) -> str:
     coordinator = snapshot.get("coordinator", {})
     rollouts = snapshot.get("rollouts", {})
     trainer = snapshot.get("trainer", {})
+    top = topline(snapshot)
     return "\n".join(
         [
             "<!doctype html>",
@@ -552,59 +553,107 @@ def render_html(snapshot: Mapping[str, Any], options: MonitorOptions) -> str:
             '<meta charset="utf-8">',
             f'<meta http-equiv="refresh" content="{options.refresh_seconds}">',
             f"<title>Aether RL Monitor - {escape(options.run_root.name)}</title>",
-            "<style>",
-            ":root { color-scheme: dark; }",
-            "body { background: #111; color: #ddd; font-family: sans-serif; line-height: 1.35; margin: 1rem; }",
-            "a { color: #8ab4f8; }",
-            "code, td, th { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }",
-            "table { border-collapse: collapse; margin-bottom: 1rem; max-width: 100%; }",
-            "th, td { border: 1px solid #555; padding: 0.25rem 0.5rem; text-align: left; vertical-align: top; }",
-            "th { background: #222; color: #fff; position: sticky; top: 0; }",
-            "tr:nth-child(even) { background: #181818; }",
-            "svg { background: #181818; display: block; max-width: 100%; }",
-            "rect, polyline, text { stroke: #ddd; }",
-            "text { fill: #ddd; stroke: none; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }",
-            "</style>",
+            *render_style(),
             "</head>",
             "<body>",
+            "<header>",
             f"<h1>Aether RL Monitor: {escape(options.run_root.name)}</h1>",
-            f"<p>Generated: {escape(generated)}. Refresh: {options.refresh_seconds}s. JSON: <a href=\"/snapshot.json\">/snapshot.json</a></p>",
-            f"<p>Run root: <code>{escape(str(options.run_root))}</code></p>",
+            "<p>",
+            f"Generated: <time>{escape(generated)}</time>. ",
+            f"Refresh: {options.refresh_seconds}s. ",
+            'JSON: <a href="/snapshot.json">/snapshot.json</a>. ',
+            f"Run root: <code>{escape(str(options.run_root))}</code>",
+            "</p>",
+            render_nav(),
+            "</header>",
+            "<main>",
             *render_errors(snapshot.get("errors", [])),
-            "<h2>Run</h2>",
-            render_key_values(coordinator.get("run", {})),
-            "<h2>Topline</h2>",
-            render_key_values(topline(snapshot)),
-            "<h2>Rollout Speed</h2>",
-            render_table(coordinator.get("result_windows", [])),
-            "<h2>Workers</h2>",
-            render_table(coordinator.get("workers", [])),
-            "<h2>Queue Counts</h2>",
-            "<h3>Assignments</h3>",
-            render_table(coordinator.get("assignment_counts", [])),
-            "<h3>Groups</h3>",
-            render_table(coordinator.get("group_counts", [])),
-            "<h2>Eval And Train By Policy</h2>",
-            render_table(rollouts.get("by_source_policy", [])),
-            "<h2>Rollout Summary</h2>",
-            "<h3>Train</h3>",
-            render_nested_summary(rollouts.get("summary", {}).get("train", {})),
-            "<h3>Eval</h3>",
-            render_nested_summary(rollouts.get("summary", {}).get("eval", {})),
-            "<h2>Trainer Latest</h2>",
-            render_key_values(trainer.get("latest", {})),
-            "<h2>Trainer Graphs</h2>",
-            *render_charts(trainer.get("charts", {})),
-            "<h2>Rollout Graphs</h2>",
-            *render_charts(rollouts.get("charts", {})),
-            "<h2>Recent Rollouts</h2>",
-            render_table(rollouts.get("recent", [])),
-            "<h2>Recent Failures</h2>",
-            render_table(coordinator.get("recent_failures", [])),
+            render_section(
+                "overview",
+                "Overview",
+                render_card_grid(top),
+                render_details("Run identity", render_key_values(coordinator.get("run", {})), open_=True),
+            ),
+            render_section(
+                "fleet",
+                "Fleet And Queues",
+                "<h3>Rollout Speed</h3>",
+                render_table(coordinator.get("result_windows", [])),
+                "<h3>Workers</h3>",
+                render_table(coordinator.get("workers", [])),
+                render_details("Assignment Counts", render_table(coordinator.get("assignment_counts", []))),
+                render_details("Group Counts", render_table(coordinator.get("group_counts", []))),
+            ),
+            render_section(
+                "policies",
+                "Eval And Train By Policy",
+                render_table(rollouts.get("by_source_policy", [])),
+            ),
+            render_section(
+                "rollouts",
+                "Rollout Summaries",
+                render_details(
+                    "Train Summary",
+                    render_nested_summary(rollouts.get("summary", {}).get("train", {})),
+                    open_=True,
+                ),
+                render_details(
+                    "Eval Summary",
+                    render_nested_summary(rollouts.get("summary", {}).get("eval", {})),
+                    open_=True,
+                ),
+            ),
+            render_section("trainer", "Trainer Latest", render_key_values(trainer.get("latest", {}))),
+            render_section("trainer-charts", "Trainer Graphs", render_charts(trainer.get("charts", {}))),
+            render_section("rollout-charts", "Rollout Graphs", render_charts(rollouts.get("charts", {}))),
+            render_section(
+                "recent",
+                "Recent Activity",
+                "<h3>Recent Rollouts</h3>",
+                render_table(rollouts.get("recent", [])),
+                "<h3>Recent Failures</h3>",
+                render_table(coordinator.get("recent_failures", [])),
+            ),
+            "</main>",
             "</body>",
             "</html>",
         ]
     )
+
+
+def render_style() -> list[str]:
+    return [
+        "<style>",
+        ":root { color-scheme: dark; }",
+        "body { background: #111; color: #ddd; font-family: sans-serif; line-height: 1.35; margin: 0; }",
+        "header { background: #151515; border-bottom: 1px solid #555; padding: 1rem; position: sticky; top: 0; z-index: 2; }",
+        "main, section { display: block; }",
+        "section { border-bottom: 1px solid #333; padding: 1rem; }",
+        "h1, h2, h3, p { margin-top: 0; }",
+        "h2 { border-bottom: 1px solid #444; padding-bottom: 0.25rem; }",
+        "a { color: #8ab4f8; }",
+        "nav a { display: inline-block; margin: 0 1rem 0.25rem 0; }",
+        "code, td, th, .metric-value, time { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }",
+        ".cards { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); margin-bottom: 1rem; }",
+        ".card { background: #181818; border: 1px solid #555; padding: 0.75rem; }",
+        ".metric-label { color: #aaa; font-size: 0.85rem; overflow-wrap: anywhere; }",
+        ".metric-value { color: #fff; font-size: 1.25rem; margin-top: 0.25rem; overflow-wrap: anywhere; }",
+        "details { border: 1px solid #444; margin: 0.75rem 0; padding: 0.5rem; }",
+        "summary { color: #fff; cursor: pointer; font-weight: bold; }",
+        ".table-wrap { max-height: 32rem; max-width: 100%; overflow: auto; margin-bottom: 1rem; }",
+        "table { border-collapse: collapse; min-width: 45rem; width: 100%; }",
+        "th, td { border: 1px solid #555; padding: 0.25rem 0.5rem; text-align: left; vertical-align: top; }",
+        "th { background: #222; color: #fff; position: sticky; top: 0; z-index: 1; }",
+        "tr:nth-child(even) { background: #181818; }",
+        ".chart-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(32rem, 100%), 1fr)); }",
+        ".chart { border: 1px solid #444; padding: 0.5rem; overflow: auto; }",
+        "section { scroll-margin-top: 8rem; }",
+        "svg { background: #181818; display: block; max-width: 100%; }",
+        "rect, polyline, text { stroke: #ddd; }",
+        "text { fill: #ddd; stroke: none; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }",
+        ".errors { border-color: #a55; }",
+        "</style>",
+    ]
 
 
 def topline(snapshot: Mapping[str, Any]) -> dict[str, Any]:
@@ -629,10 +678,46 @@ def topline(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def render_nav() -> str:
+    links = (
+        ("overview", "Overview"),
+        ("fleet", "Fleet"),
+        ("policies", "Policies"),
+        ("rollouts", "Rollouts"),
+        ("trainer", "Trainer"),
+        ("trainer-charts", "Trainer Graphs"),
+        ("rollout-charts", "Rollout Graphs"),
+        ("recent", "Recent"),
+    )
+    return "<nav>" + "".join(f'<a href="#{anchor}">{escape(label)}</a>' for anchor, label in links) + "</nav>"
+
+
+def render_section(section_id: str, title: str, *content: str) -> str:
+    body = "\n".join(content)
+    return f'<section id="{escape(section_id)}"><h2>{escape(title)}</h2>{body}</section>'
+
+
+def render_details(title: str, content: str, *, open_: bool = False) -> str:
+    attr = " open" if open_ else ""
+    return f"<details{attr}><summary>{escape(title)}</summary>{content}</details>"
+
+
+def render_card_grid(values: Mapping[str, Any]) -> str:
+    cards = []
+    for key, value in values.items():
+        cards.append(
+            '<article class="card">'
+            f'<div class="metric-label">{escape(key)}</div>'
+            f'<div class="metric-value">{escape(format_value(value))}</div>'
+            "</article>"
+        )
+    return '<div class="cards">' + "".join(cards) + "</div>"
+
+
 def render_errors(errors: Sequence[object]) -> list[str]:
     if not errors:
         return []
-    return ["<h2>Monitor Errors</h2>", render_table([{"error": error} for error in errors])]
+    return [render_section("errors", "Monitor Errors", '<div class="errors">' + render_table([{"error": error} for error in errors]) + "</div>")]
 
 
 def render_nested_summary(summary: Mapping[str, Any]) -> str:
@@ -657,16 +742,25 @@ def render_table(rows: Sequence[Mapping[str, Any]]) -> str:
     header = "".join(f"<th>{escape(key)}</th>" for key in keys)
     body = []
     for row in rows:
-        body.append("<tr>" + "".join(f"<td>{escape(format_value(row.get(key)))}</td>" for key in keys) + "</tr>")
-    return "<table><thead><tr>" + header + "</tr></thead><tbody>" + "".join(body) + "</tbody></table>"
+        body.append("<tr>" + "".join(f"<td>{escape(format_table_value(key, row.get(key)))}</td>" for key in keys) + "</tr>")
+    return (
+        '<div class="table-wrap"><table><thead><tr>'
+        + header
+        + "</tr></thead><tbody>"
+        + "".join(body)
+        + "</tbody></table></div>"
+    )
 
 
-def render_charts(charts: Mapping[str, Sequence[Mapping[str, float]]]) -> list[str]:
-    rendered = []
+def render_charts(charts: Mapping[str, Sequence[Mapping[str, float]]]) -> str:
+    rendered = ['<div class="chart-grid">']
     for name, points in charts.items():
+        rendered.append('<article class="chart">')
         rendered.append(f"<h3>{escape(name)}</h3>")
         rendered.append(render_svg(points))
-    return rendered
+        rendered.append("</article>")
+    rendered.append("</div>")
+    return "\n".join(rendered)
 
 
 def render_svg(points: Sequence[Mapping[str, float]], *, width: int = 900, height: int = 180) -> str:
@@ -712,15 +806,22 @@ def format_time(timestamp: object) -> str:
 
 
 def format_value(value: object) -> str:
+    if isinstance(value, bool):
+        return str(value)
     if isinstance(value, float):
         return f"{value:.6g}"
     if isinstance(value, int) or value is None or isinstance(value, str):
         return str(value)
-    if isinstance(value, bool):
-        return str(value)
     if isinstance(value, dict | list):
         return json.dumps(value, sort_keys=True)
     return str(value)
+
+
+def format_table_value(key: str, value: object) -> str:
+    if key.endswith("_at") or key in {"completed_at", "generated_at"}:
+        formatted = format_time(value)
+        return formatted if formatted else format_value(value)
+    return format_value(value)
 
 
 def escape(value: object) -> str:
