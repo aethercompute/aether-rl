@@ -1,5 +1,5 @@
-run_id = "deepscaler-r1-qwen-1.5b-stage1"
-run_root = "outputs/deepscaler-r1-qwen-1.5b-stage1/server"
+run_id = "deepscaler-r1-qwen-1p5b-stage1-v2"
+run_root = "outputs/deepscaler-r1-qwen-1p5b-stage1-v2/server"
 host = "127.0.0.1"
 port = 8080
 trainer_config_path = "examples/distributed/deepscaler-1.5b/trainer.toml"
@@ -20,7 +20,7 @@ vocab_size = 151665
 quantization = "none"
 
 [[sources]]
-source_id = "deepscaler-stage1-train"
+source_id = "deepscaler-stage1-v2-train"
 kind = "train"
 environment_id = "deepscaler-v1"
 environment_revision = "0.1.0"
@@ -28,13 +28,13 @@ environment_config = { taskset = { id = "deepscaler-v1", task = { math_verify_ti
 group_size = 8
 max_attempts = 3
 weight = 32.0
-sampling = { temperature = 0.6, top_p = 1.0, max_tokens = 8192 }
+sampling = { temperature = 0.6, top_p = 1.0, max_tokens = 24576 }
 
 [sources.algorithm]
 type = "grpo"
 
 [[sources]]
-source_id = "deepscaler-stage1-aime24-eval"
+source_id = "deepscaler-stage1-v2-aime24-eval"
 kind = "eval"
 environment_id = "deepscaler-v1"
 environment_revision = "0.1.0"
@@ -42,4 +42,4 @@ environment_config = { taskset = { id = "deepscaler-v1", dataset = "aime24", tas
 group_size = 1
 max_attempts = 3
 weight = 4.0
-sampling = { temperature = 0.0, top_p = 1.0, max_tokens = 8192 }
+sampling = { temperature = 0.0, top_p = 1.0, max_tokens = 32768 }

@@ -8,9 +8,9 @@ and local vLLM instance.
 
 The checked-in stage is a substantial consumer-hardware run, not an exact reproduction of
 the 8-A100 DeepScaleR phase. It performs 100 optimizer steps. Each step consumes 256
-rollouts (32 problems with 8 samples each), for up to 25,600 train rollouts. Completions
-use temperature 0.6, top-p 1.0, and an 8,192-token cap. AIME 2024 greedy evaluations run
-alongside training.
+rollouts (32 problems with 8 samples each), for up to 25,600 train rollouts. Training
+completions use temperature 0.6, top-p 1.0, and a 24,576-token cap. AIME 2024 greedy
+evaluations use a 32,768-token cap and run alongside training.
 
 ## Format and identity
 
@@ -30,7 +30,7 @@ Scoring is local and deterministic, with no reference-model judge or API key.
 
 ## Capacity
 
-The trainer uses a 12,288-token training sequence limit so an 8,192-token completion and
+The trainer uses a 28,672-token training sequence limit so a 24,576-token completion and
 the longest rendered dataset prompt fit without truncating the rewarded final answer. It
 enables the trainer defaults for activation checkpointing, activation offload, and
 optimizer-state CPU offload. Start with at least 64 GiB of system RAM on the trainer host.
@@ -39,7 +39,7 @@ Each full checkpoint is expected to use about 7.5 GiB. The coordinator keeps the
 checkpoint and two prior checkpoints, and removes each redundant trainer broadcast after
 its immutable policy is activated. Published rank-64 policy adapters still use roughly
 28 GiB across 100 steps, and long rollout records also accumulate. Provision at least
-200 GiB on the filesystem containing `run_root`, then measure actual checkpoint and trace
+300 GiB on the filesystem containing `run_root`, then measure actual checkpoint and trace
 growth during the first few steps. The original 1,040-step phase still needs substantially
 more policy, rollout, and operational storage as well as a much larger rollout fleet.
 
@@ -98,8 +98,8 @@ curl -fsS https://coordinator.example.com/api/v1/status \
   -H "Aether-Protocol-Version: 1"
 
 uv run --no-default-groups eval-report \
-  --run-root outputs/deepscaler-r1-qwen-1.5b-stage1/server \
-  --source-id deepscaler-stage1-aime24-eval \
+  --run-root outputs/deepscaler-r1-qwen-1p5b-stage1-v2/server \
+  --source-id deepscaler-stage1-v2-aime24-eval \
   --watch-seconds 20
 ```
 
@@ -121,5 +121,5 @@ trainer topology after state exists under this `run_id`; create a new run direct
 The original phase used 1,024 rollouts per update (128 problems times 8) and 1,040 steps
 with full-parameter training at learning rate `1e-6`. This config uses rank-64 LoRA, a
 256-rollout update, and learning rate `1e-5` to fit the available trainer and rollout
-fleet. It keeps the published prompt, 8K rollout cap, temperature, top-p, GRPO group size,
-clip thresholds, gradient clipping, and KL coefficient.
+fleet. It keeps the published prompt, temperature, top-p, GRPO group size, clip thresholds,
+gradient clipping, and KL coefficient while using the published final-phase 24K train cap.

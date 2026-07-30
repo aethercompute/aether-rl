@@ -69,6 +69,8 @@ Files under `<state_dir>/spool/rejected/` represent nonretryable submissions and
 
 Confirm the complete run root and trainer output are present and that the active policy version has its full checkpoint. Do not point a new run at an old database, change source definitions under existing IDs, or set trainer `ckpt.resume_step` manually. Only one coordinator may hold a run root.
 
+If the trainer repeatedly reports a missing `run_<id>/control/orch.toml`, compare the logged path with the directory exported under the trainer output. Run directory names preserve the complete `run_id`, including dots; a shortened name indicates mismatched or outdated coordinator/trainer code.
+
 For workers, preserve the original `state_dir`. Starting two workers against one state directory fails its process lock and risks operational confusion.
 
 ## Disk growth

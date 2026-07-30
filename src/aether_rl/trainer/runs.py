@@ -367,7 +367,7 @@ class MultiRunManager:
         """
         if not self.world.is_master:
             raise RuntimeError("discover_runs() must only be called on the master rank")
-        run_ids = {run_path.stem for run_path in self.output_dir.glob("run_*")}
+        run_ids = {run_path.name for run_path in self.output_dir.glob("run_*")}
 
         # Filter out evicted runs
         evicted_runs = {run_id for run_id in run_ids if (self.output_dir / run_id / "control" / "evicted.txt").exists()}

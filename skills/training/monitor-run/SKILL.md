@@ -24,6 +24,8 @@ Inspect:
 - `<run_root>/spool/results/`, `training-queue/`, `policies/`, and default `trainer/` paths for durable progress.
 - Optional trainer W&B, JSONL file monitor, or explicitly configured metrics server.
 
+If the trainer repeats `No orchestrator config found`, compare the logged and exported `run_<id>` directory names exactly. Dots in `run_id` are preserved; a shortened name indicates mismatched or outdated code and no optimizer steps can begin.
+
 The coordinator has no Prometheus endpoint. Do not edit SQLite or state files while it runs.
 
 For configured eval sources, summarize durable results by behavior-policy version:
