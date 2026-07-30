@@ -23,28 +23,28 @@ class DeepScaleRTaskConfig(vf.TaskConfig):
     math_verify_timeout: int = 5
 
 
-def has_deepscaler_format(response: str) -> bool:
-    if response.count("<think>") != 1 or response.count("</think>") != 1:
+def has_deepscaler_format(trace: vf.Trace) -> bool:
+    messages = trace.assistant_messages
+    if not messages:
         return False
-    think_start = response.find("<think>")
-    think_end = response.rfind("</think>")
-    if think_end < think_start:
+    response = messages[-1]
+    if not (response.reasoning_content or "").strip():
         return False
-    final_answer = response[think_end + len("</think>") :]
-    return bool(vf.extract_boxed_answer(final_answer, strict=True).strip())
+    return bool(vf.extract_boxed_answer(response.content or "", strict=True).strip())
 
 
 class DeepScaleRTask(vf.Task[DeepScaleRData, vf.State, DeepScaleRTaskConfig]):
     @vf.metric
     async def exact_format(self, trace: vf.Trace) -> float:
-        return float(has_deepscaler_format(trace.last_reply))
+        return float(has_deepscaler_format(trace))
 
     @vf.reward(weight=1.0)
     async def correct(self, trace: vf.Trace) -> float:
-        if not has_deepscaler_format(trace.last_reply):
+        if not has_deepscaler_format(trace):
             return 0.0
+        response = trace.assistant_messages[-1]
         return vf.verify_boxed_math_answer(
-            trace.last_reply,
+            response.content,
             self.data.answer,
             timeout_seconds=self.config.math_verify_timeout,
         )

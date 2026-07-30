@@ -9,24 +9,27 @@ and local vLLM instance.
 The checked-in stage is a substantial consumer-hardware run, not an exact reproduction of
 the 8-A100 DeepScaleR phase. It performs 100 optimizer steps. Each step consumes 256
 rollouts (32 problems with 8 samples each), for up to 25,600 train rollouts. Training
-completions use temperature 0.6, top-p 1.0, and a 24,576-token cap. AIME 2024 greedy
+completions use temperature 0.6, top-p 0.95, and a 24,576-token cap. AIME 2024 greedy
 evaluations use a 32,768-token cap and run alongside training.
 
 ## Format and identity
 
-The model and dataset are pinned to immutable Hugging Face revisions. The tokenizer is
-deliberately pinned to the recipe-era revision before DeepSeek added an automatic
-`<think>` prefill to its chat template. Rendering is therefore:
+The model, tokenizer, and dataset are pinned to immutable Hugging Face revisions. The
+current official DeepSeek tokenizer enforces the model card's recommended `<think>`
+prefill. Rendering is therefore:
 
 ```text
-<｜begin▁of▁sentence｜><｜User｜>{problem} Let's think step by step and output the final answer within \boxed{}.<｜Assistant｜>
+<｜begin▁of▁sentence｜><｜User｜>{problem} Let's think step by step and output the final answer within \boxed{}.<｜Assistant｜><think>
 ```
 
-There is no system message. The policy must generate `<think>...</think>` itself and put
-its final answer in `\boxed{...}` after `</think>`. Do not stop generation at `</think>`;
-EOS or the token cap must end the rollout. The dataset's worked `solution` field is not
-used. Six rows with empty answers are excluded and two malformed gold strings are repaired.
-Scoring is local and deterministic, with no reference-model judge or API key.
+There is no system message. The opening `<think>` is prompt scaffold and is not a sampled
+training token. The policy generates the reasoning, `</think>`, and final content with its
+answer in `\boxed{...}`. Aether stores the generated reasoning and final answer separately
+as `reasoning_content` and `content`, while retaining all generated tokens in the training
+sample. Do not stop generation at `</think>`; EOS or the token cap must end the rollout.
+The dataset's worked `solution` field is not used. Six rows with empty answers are excluded
+and two malformed gold strings are repaired. Scoring is local and deterministic, with no
+reference-model judge or API key.
 
 ## Capacity
 
@@ -98,8 +101,8 @@ curl -fsS https://coordinator.example.com/api/v1/status \
   -H "Aether-Protocol-Version: 1"
 
 uv run --no-default-groups eval-report \
-  --run-root outputs/deepscaler-r1-qwen-1p5b-stage1-v2/server \
-  --source-id deepscaler-stage1-v2-aime24-eval \
+  --run-root outputs/deepscaler-r1-qwen-1p5b-stage1-v3/server \
+  --source-id deepscaler-stage1-v3-aime24-eval \
   --watch-seconds 20
 ```
 

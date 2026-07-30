@@ -13,7 +13,7 @@ alpha = 128.0
 
 [tokenizer]
 name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-revision = "164af3f02f5b3aedf8cbdb94aee9e2705ae31be5"
+revision = "ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562"
 
 [optim]
 type = "adamw"
@@ -38,7 +38,7 @@ filename = "metrics.jsonl"
 
 [wandb]
 project = "aether-rl-math"
-name = "deepscaler-r1-qwen-1p5b-stage1-v2"
+name = "deepscaler-r1-qwen-1p5b-stage1-v3"
 group = "deepscaler-1.5b"
 tags = ["grpo", "math", "deepscaler", "deepseek-r1", "lora", "distributed"]
 create_overview = false

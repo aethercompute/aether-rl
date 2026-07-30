@@ -9,11 +9,12 @@ problem followed by `Let's think step by step and output the final answer within
 as one user message. There is no system message and the worked `solution` column is not
 exposed to the model.
 
-Rewards are binary. A response must contain an ordered `<think>...</think>` block and a
-well-formed boxed final answer after the final `</think>`; `math-verify` then compares the
-boxed expression with the gold answer. Six rows with empty answers are excluded and two
-malformed gold strings are repaired, leaving 40,309 train tasks. No LLM judge or network
-call is used for scoring.
+Rewards are binary. The DeepSeek chat template supplies the opening `<think>` as masked
+prompt scaffold. A completion must produce non-empty reasoning, close it with `</think>`,
+and put a well-formed boxed answer in the final content. Aether's renderer stores these as
+structured `reasoning_content` and `content`; `math-verify` compares the boxed content with
+the gold answer. Six rows with empty answers are excluded and two malformed gold strings
+are repaired, leaving 40,309 train tasks. No LLM judge or network call is used for scoring.
 
 Setting `taskset.dataset = "aime24"` loads the pinned 30-problem AIME 2024 dataset with the
 same prompt and scoring protocol for in-run diagnostics.
