@@ -121,6 +121,7 @@ class WorkerVLLMSupervisor:
             f"name = {quoted(self.config.base_model.model_name)}",
             f"revision = {quoted(self.config.base_model.model_revision)}",
             f"trust_remote_code = {str(self.config.trust_remote_code).lower()}",
+            *([f"max_model_len = {self.config.max_model_len}"] if self.config.max_model_len is not None else []),
             "",
             "[tokenizer]",
             f"name = {quoted(self.config.base_model.tokenizer_name)}",

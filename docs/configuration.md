@@ -90,6 +90,7 @@ The canonical shape is [`examples/distributed/reverse-text/worker.toml`](../exam
 | `lease_wait_seconds` | `30` | Coordinator long-poll duration. |
 | `inference_port` | `8000` | Loopback vLLM port. |
 | `gpu_memory_utilization` | `0.9` | vLLM GPU-memory fraction. |
+| `max_model_len` | unset | Optional vLLM context cap; set this for long-context models when the native maximum would exhaust worker memory. |
 | `max_lora_rank` | `64` | Largest accepted adapter rank. |
 | `max_loaded_policies` | `8` | Local loaded-adapter limit. |
 | `adapter_cache_max_bytes` | 20 GiB | Verified adapter-cache budget. |

@@ -1,0 +1,52 @@
+run_id = "qwen3p5-4b-r2e-pilot-v1"
+run_root = "outputs/qwen3p5-4b-r2e-pilot-v1/server"
+host = "127.0.0.1"
+port = 8080
+trainer_config_path = "examples/distributed/qwen3.5-4b-r2e/trainer.toml"
+trainer_processes = 1
+training_batch_size = 32
+published_checkpoint_keep_last = 3
+lease_duration_seconds = 120
+
+[base_model]
+model_name = "Qwen/Qwen3.5-4B"
+model_revision = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+model_config_digest = "sha256:57110848d910672e3ebc6a62c28d0c07b6336b10bee0583e0afca209dfaaa853"
+tokenizer_name = "Qwen/Qwen3.5-4B"
+tokenizer_revision = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+tokenizer_digest = "sha256:22f1e64cd094544e114bffa61d3c9c7a294415fac25297e630f65f3ede721b23"
+chat_template_digest = "sha256:236c431143b4834ecaad743adcff17217307b7a7b2faa85a2167670f019342fb"
+vocab_size = 248077
+quantization = "none"
+
+[[sources]]
+source_id = "qwen3p5-4b-r2e-train-v1"
+kind = "train"
+environment_id = "r2e-gym-v1"
+environment_revision = "0.1.3"
+environment_config = { taskset = { id = "r2e-gym-v1", dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified", filter_fn = "lambda row: row['commit_hash'][-1] != '0'", shuffle_seed = 42 }, agent = { max_turns = 50, max_total_tokens = 24576, timeout = { setup = 900, rollout = 3600, finalize = 120, scoring = 1800 }, retries = { max_retries = 1, include = ["ProviderError", "SandboxError"] }, harness = { id = "mini-swe-agent", version = "2.4.5", runtime = { type = "docker" } } } }
+group_size = 8
+max_attempts = 3
+assignment_timeout_seconds = 7200
+result_size_limit_bytes = 67108864
+weight = 32.0
+sampling = { temperature = 0.6, top_p = 0.95, top_k = 20, min_p = 0.0, presence_penalty = 0.0, repetition_penalty = 1.0, max_tokens = 4096 }
+
+[sources.algorithm]
+type = "max_rl"
+
+[[sources.post_filters]]
+type = "zero_advantage"
+
+[[sources]]
+source_id = "qwen3p5-4b-r2e-holdout-v1"
+kind = "eval"
+environment_id = "r2e-gym-v1"
+environment_revision = "0.1.3"
+environment_config = { taskset = { id = "r2e-gym-v1", dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified", filter_fn = "lambda row: row['commit_hash'][-1] == '0'", shuffle_seed = 43 }, agent = { max_turns = 50, max_total_tokens = 24576, timeout = { setup = 900, rollout = 3600, finalize = 120, scoring = 1800 }, retries = { max_retries = 1, include = ["ProviderError", "SandboxError"] }, harness = { id = "mini-swe-agent", version = "2.4.5", runtime = { type = "docker" } } } }
+group_size = 1
+max_attempts = 3
+assignment_timeout_seconds = 7200
+result_size_limit_bytes = 67108864
+weight = 1.0
+sampling = { temperature = 0.0, top_p = 0.95, top_k = 20, min_p = 0.0, presence_penalty = 0.0, repetition_penalty = 1.0, max_tokens = 4096 }

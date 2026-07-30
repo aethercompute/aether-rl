@@ -44,6 +44,7 @@ class WorkerConfig(BaseConfig):
     inference_startup_timeout_seconds: float = Field(default=600, gt=0, allow_inf_nan=False)
     inference_shutdown_timeout_seconds: float = Field(default=60, gt=0, allow_inf_nan=False)
     gpu_memory_utilization: float = Field(default=0.9, gt=0, le=1, allow_inf_nan=False)
+    max_model_len: int | None = Field(default=None, ge=1)
     max_lora_rank: int = Field(default=64, ge=1)
     max_loaded_policies: int = Field(default=8, ge=1)
     adapter_cache_max_bytes: int = Field(default=20 * 1024**3, ge=1)

@@ -1,11 +1,13 @@
 import asyncio
 import json
+import tomllib
 from pathlib import Path
 
 import httpx
 import pytest
 import torch
 
+from aether_rl.configs.inference import InferenceConfig
 from aether_rl.configs.worker import WorkerConfig
 from aether_rl.protocol import canonical_json_bytes, sha256_digest
 from aether_rl.trainer.policy import publish_lora_policy
@@ -117,7 +119,7 @@ async def test_native_vllm_admin_never_uses_inplace_and_rejects_name_conflict(tm
 
 @pytest.mark.asyncio
 async def test_supervisor_config_is_loopback_and_pins_revisions(tmp_path: Path):
-    config: WorkerConfig = worker_config(tmp_path)
+    config: WorkerConfig = worker_config(tmp_path).model_copy(update={"max_model_len": 32768})
     with WorkerState(config.state_dir) as state:
         supervisor = WorkerVLLMSupervisor(config, state)
         supervisor._write_config()
@@ -126,4 +128,7 @@ async def test_supervisor_config_is_loopback_and_pins_revisions(tmp_path: Path):
         assert f'revision = "{config.base_model.model_revision}"' in contents
         assert f'name = "{config.base_model.tokenizer_name}"' in contents
         assert "enable_lora = true" in contents
+        assert "max_model_len = 32768" in contents
+        inference = InferenceConfig.model_validate(tomllib.loads(contents))
+        assert inference.model.max_model_len == 32768
         await supervisor.client.aclose()

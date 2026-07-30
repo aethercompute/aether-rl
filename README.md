@@ -56,6 +56,7 @@ Remote coordinator URLs must use HTTPS through an external reverse proxy, load b
 - [Configuration reference](docs/configuration.md)
 - [Operations, monitoring, restart, and upgrades](docs/operations.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Qwen3.5 4B agentic SWE training recipe](examples/distributed/qwen3.5-4b-r2e/README.md)
 
 ## Development
 

@@ -69,6 +69,7 @@ EXPECTED_PARSERS: list[tuple[str, str | None, str | None]] = [
     ("Qwen/Qwen3-Coder-Next", "qwen3_coder", None),
     # Qwen3.5 dense
     ("Qwen/Qwen3.5-0.8B", "qwen3_coder", "qwen3"),
+    ("Qwen/Qwen3.5-4B", "qwen3_coder", "qwen3"),
     ("Qwen/Qwen3.5-9B", "qwen3_coder", "qwen3"),
     ("Qwen/Qwen3.5-27B", "qwen3_coder", "qwen3"),
     # Qwen3.5 MoE

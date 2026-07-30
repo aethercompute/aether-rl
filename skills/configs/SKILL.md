@@ -33,5 +33,6 @@ Server `[[sources]]` define tasksets, sampling, groups, retry limits, and train/
 The coordinator owns trainer output and resume. Distributed trainer configs require LoRA, safetensors, complete checkpoints every step, and no trainer-owned pruning, resume, or partial-load overrides. Server `published_checkpoint_keep_last` can safely bound full-checkpoint retention after durable policy activation; unset retains all checkpoints.
 
 Workers generate and overwrite `<state_dir>/inference.toml`; configure worker-local inference through worker fields rather than maintaining that file.
+Use worker `max_model_len` to cap KV-cache context for models whose native context is too large for the rollout GPU.
 
 Use `docs/configuration.md` for field tables and invariants.
