@@ -649,7 +649,7 @@ def render_style() -> list[str]:
         ".chart { border: 1px solid #444; padding: 0.5rem; overflow: auto; }",
         "section { scroll-margin-top: 8rem; }",
         "svg { background: #181818; display: block; max-width: 100%; }",
-        "rect, polyline, text { stroke: #ddd; }",
+        "rect, polyline, line, text { stroke: #ddd; }",
         "text { fill: #ddd; stroke: none; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }",
         ".errors { border-color: #a55; }",
         "</style>",
@@ -785,17 +785,44 @@ def render_svg(points: Sequence[Mapping[str, float]], *, width: int = 900, heigh
         y = top + (y_max - point["y"]) / (y_max - y_min) * plot_height
         return f"{x:.1f},{y:.1f}"
 
+    x_ticks = axis_ticks(x_min, x_max)
+    y_ticks = axis_ticks(y_min, y_max)
+    x_labels = [render_x_tick(value, x_values) for value in x_ticks]
+    y_labels = [format_value(value) for value in y_ticks]
+    x_tick_marks = "".join(
+        f'<line x1="{left + (value - x_min) / (x_max - x_min) * plot_width:.1f}" y1="{top + plot_height}" '
+        f'x2="{left + (value - x_min) / (x_max - x_min) * plot_width:.1f}" y2="{top + plot_height + 4}"/>'
+        f'<text x="{left + (value - x_min) / (x_max - x_min) * plot_width - 20:.1f}" y="{height - 5}">{escape(label)}</text>'
+        for value, label in zip(x_ticks, x_labels, strict=True)
+    )
+    y_tick_marks = "".join(
+        f'<line x1="{left - 4}" y1="{top + (y_max - value) / (y_max - y_min) * plot_height:.1f}" '
+        f'x2="{left}" y2="{top + (y_max - value) / (y_max - y_min) * plot_height:.1f}"/>'
+        f'<text x="5" y="{top + (y_max - value) / (y_max - y_min) * plot_height + 4:.1f}">{escape(label)}</text>'
+        for value, label in zip(y_ticks, y_labels, strict=True)
+    )
     polyline = " ".join(px(point) for point in points)
     return (
         f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">'
         f'<rect x="{left}" y="{top}" width="{plot_width}" height="{plot_height}" fill="none" stroke="black"/>'
+        f"{x_tick_marks}"
+        f"{y_tick_marks}"
         f'<polyline points="{polyline}" fill="none" stroke="black" stroke-width="2"/>'
-        f'<text x="5" y="20">{escape(format_value(y_max))}</text>'
-        f'<text x="5" y="{height - bottom}">{escape(format_value(y_min))}</text>'
-        f'<text x="{left}" y="{height - 5}">{escape(format_value(x_min))}</text>'
-        f'<text x="{width - 180}" y="{height - 5}">{escape(format_value(x_max))}</text>'
         "</svg>"
     )
+
+
+def axis_ticks(min_value: float, max_value: float, *, count: int = 5) -> list[float]:
+    if count < 2:
+        raise ValueError("axis tick count must be at least 2")
+    step = (max_value - min_value) / (count - 1)
+    return [min_value + index * step for index in range(count)]
+
+
+def render_x_tick(value: float, x_values: Sequence[float]) -> str:
+    if x_values and min(x_values) > 1_000_000_000:
+        return time.strftime("%H:%M:%S", time.localtime(value))
+    return format_value(value)
 
 
 def format_time(timestamp: object) -> str:
