@@ -4,7 +4,7 @@ host = "127.0.0.1"
 port = 8080
 trainer_config_path = "examples/distributed/deepscaler-1.5b/trainer.toml"
 trainer_processes = 1
-training_batch_size = 256
+training_batch_size = 128
 published_checkpoint_keep_last = 3
 lease_duration_seconds = 120
 
@@ -41,5 +41,5 @@ environment_revision = "0.2.0"
 environment_config = { taskset = { id = "deepscaler-v1", dataset = "aime24", task = { math_verify_timeout = 5 } }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
 group_size = 1
 max_attempts = 3
-weight = 4.0
+weight = 1.0
 sampling = { temperature = 0.0, top_p = 0.95, max_tokens = 32768 }

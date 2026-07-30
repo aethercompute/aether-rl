@@ -53,6 +53,7 @@ dependencies = [
 [project.scripts]
 eval-report = "aether_rl.entrypoints.eval_report:main"
 inference = "aether_rl.entrypoints.inference:main"
+monitor-report = "aether_rl.entrypoints.monitor_report:main"
 model-identity = "aether_rl.entrypoints.model_identity:main"
 trainer = "aether_rl.entrypoints.trainer:main"
 server = "aether_rl.entrypoints.server:main"

@@ -36,6 +36,14 @@ uv run eval-report --run-root <run_root> --source-id <source-id>
 
 Use all-attempt `mean_reward` as the primary score and inspect the error count before considering effective reward.
 
+For a local plain HTML dashboard of durable coordinator/trainer state, run this on the coordinator host:
+
+```bash
+uv run monitor-report --run-root <run_root> --host 127.0.0.1 --port 8090 --refresh-seconds 10
+```
+
+Open `http://127.0.0.1:8090`. The monitor is read-only; it reads `<run_root>/coordinator.sqlite`, `<run_root>/trainer/metrics.jsonl`, and rollout result artifacts. It shows workers, queue counts, rollout speed windows, train/eval rewards and verifier metrics, token/truncation summaries, trainer graphs, recent rollouts, and recent failures. Use `/snapshot.json` for the same data as JSON.
+
 ## Workers
 
 Capture worker stdout/stderr with the service manager and inspect `<state_dir>/inference.log` for vLLM. The worker has no inbound health endpoint and currently emits limited lifecycle logging; coordinator status is the fleet view.

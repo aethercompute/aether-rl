@@ -6,11 +6,11 @@ and outbound rollout workers. The coordinator and single-GPU LoRA trainer are in
 for the RTX 3090 machine; each RTX 4090 or RTX 5090 machine runs an independent worker
 and local vLLM instance.
 
-The checked-in stage is a substantial consumer-hardware run, not an exact reproduction of
-the 8-A100 DeepScaleR phase. It performs 100 optimizer steps. Each step consumes 256
-rollouts (32 problems with 8 samples each), for up to 25,600 train rollouts. Training
-completions use temperature 0.6, top-p 0.95, and a 24,576-token cap. AIME 2024 greedy
-evaluations use a 32,768-token cap and run alongside training.
+The checked-in stage is a first consumer-hardware run, not an exact reproduction of the
+8-A100 DeepScaleR phase. It performs 50 optimizer steps. Each step consumes 128 rollouts
+(16 problems with 8 samples each), for up to 6,400 train rollouts. Training completions
+use temperature 0.6, top-p 0.95, and a 24,576-token cap. AIME 2024 greedy evaluations use
+a 32,768-token cap and run alongside training at low scheduler weight.
 
 ## Format and identity
 
@@ -41,8 +41,8 @@ optimizer-state CPU offload. Start with at least 64 GiB of system RAM on the tra
 Each full checkpoint is expected to use about 7.5 GiB. The coordinator keeps the active
 checkpoint and two prior checkpoints, and removes each redundant trainer broadcast after
 its immutable policy is activated. Published rank-64 policy adapters still use roughly
-28 GiB across 100 steps, and long rollout records also accumulate. Provision at least
-300 GiB on the filesystem containing `run_root`, then measure actual checkpoint and trace
+14 GiB across 50 steps, and long rollout records also accumulate. Provision at least
+200 GiB on the filesystem containing `run_root`, then measure actual checkpoint and trace
 growth during the first few steps. The original 1,040-step phase still needs substantially
 more policy, rollout, and operational storage as well as a much larger rollout fleet.
 
@@ -104,14 +104,22 @@ uv run --no-default-groups eval-report \
   --run-root outputs/deepscaler-r1-qwen-1p5b-stage1-v3/server \
   --source-id deepscaler-stage1-v3-aime24-eval \
   --watch-seconds 20
+
+uv run --no-default-groups monitor-report \
+  --run-root outputs/deepscaler-r1-qwen-1p5b-stage1-v3/server \
+  --host 127.0.0.1 \
+  --port 8090 \
+  --refresh-seconds 10
 ```
 
-Watch AIME reward and `exact_format` in `eval-report`, plus completion lengths, KL,
-gradient norm, wait-for-batch time, worker errors, and checkpoint disk space in the other
-run outputs. Policy 0 is the untouched base model. The final policy normally receives no
-new evaluation leases, so compare earlier policy versions as well as the terminal
-checkpoint. This single-sample greedy AIME series is a stable health metric, not directly
-comparable to DeepScaleR's published multi-sample evaluation at temperature 0.6.
+Open `http://127.0.0.1:8090` on the coordinator host to watch the plain HTML monitor. It
+reads the run directory and shows coordinator state, workers, rollout speed windows,
+trainer metrics, decoded train/eval reward and format metrics, token lengths, truncation,
+recent rollouts, and failures. Policy 0 is the untouched base model. The final policy
+normally receives no new evaluation leases, so compare earlier policy versions as well as
+the terminal checkpoint. This single-sample greedy AIME series is a stable health metric,
+not directly comparable to DeepScaleR's published multi-sample evaluation at temperature
+0.6.
 
 ## Scaling changes
 
