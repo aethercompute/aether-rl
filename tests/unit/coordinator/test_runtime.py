@@ -3,12 +3,61 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from safetensors.torch import save_file
 
 import aether_rl.coordinator.runtime as runtime_module
 from aether_rl.coordinator.runtime import CoordinatorRuntime, prune_published_trainer_artifacts
 from tests.unit.coordinator.test_database import base_policy
 from tests.unit.train.test_policy import adapter_state_dict
+
+
+def test_load_tasks_shuffles_finite_taskset_before_limit(monkeypatch):
+    class FiniteTaskset:
+        INFINITE = False
+
+        def load(self):
+            return range(10)
+
+    environment = SimpleNamespace(id="env", taskset=object())
+    monkeypatch.setattr(runtime_module, "resolve_env_config", lambda _: environment)
+    monkeypatch.setattr(runtime_module.vf, "load_taskset", lambda _: FiniteTaskset())
+    source = SimpleNamespace(
+        source_id="source",
+        environment_id="env",
+        environment_config={},
+        task_limit=4,
+        shuffle_seed=42,
+    )
+
+    first = CoordinatorRuntime._load_tasks(source)
+    second = CoordinatorRuntime._load_tasks(source)
+
+    assert first == second
+    assert len(first) == 4
+    assert sorted(first) != [0, 1, 2, 3]
+
+
+def test_load_tasks_rejects_shuffle_for_infinite_taskset(monkeypatch):
+    class InfiniteTaskset:
+        INFINITE = True
+
+        def load(self):
+            return iter(range(10))
+
+    environment = SimpleNamespace(id="env", taskset=object())
+    monkeypatch.setattr(runtime_module, "resolve_env_config", lambda _: environment)
+    monkeypatch.setattr(runtime_module.vf, "load_taskset", lambda _: InfiniteTaskset())
+    source = SimpleNamespace(
+        source_id="source",
+        environment_id="env",
+        environment_config={},
+        task_limit=4,
+        shuffle_seed=42,
+    )
+
+    with pytest.raises(ValueError, match="cannot shuffle an infinite taskset"):
+        CoordinatorRuntime._load_tasks(source)
 
 
 def make_step_dirs(root: Path, versions: range) -> None:

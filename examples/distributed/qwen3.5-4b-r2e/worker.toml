@@ -25,5 +25,5 @@ quantization = "none"
 [[environments]]
 id = "r2e-gym-v1"
 package = "r2e-gym-v1"
-revision = "0.1.3"
-config = { taskset = { id = "r2e-gym-v1", dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified", shuffle_seed = 42 }, agent = { max_turns = 50, max_total_tokens = 24576, timeout = { setup = 900, rollout = 3600, finalize = 120, scoring = 1800 }, retries = { max_retries = 1, include = ["ProviderError", "SandboxError"] }, harness = { id = "mini-swe-agent", version = "2.4.5", runtime = { type = "docker" } } } }
+revision = "0.1.2"
+config = { taskset = { id = "r2e-gym-v1", dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified" }, agent = { max_turns = 50, max_total_tokens = 24576, timeout = { setup = 900, rollout = 3600, finalize = 120, scoring = 1800 }, retries = { max_retries = 1, include = ["ProviderError", "SandboxError"] }, harness = { id = "mini-swe-agent", version = "2.4.5", runtime = { type = "docker" } } } }

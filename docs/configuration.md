@@ -51,7 +51,7 @@ sampling = { temperature = 1.0, max_tokens = 1024 }
 type = "grpo"
 ```
 
-Important source fields are `kind`, `group_size`, `max_attempts`, `task_limit`, `result_size_limit_bytes`, `assignment_timeout_seconds`, `weight`, `enabled`, and `processing_id`. Infinite tasksets require `task_limit`. Train sampling requires a positive temperature.
+Important source fields are `kind`, `group_size`, `max_attempts`, `task_limit`, `shuffle_seed`, `result_size_limit_bytes`, `assignment_timeout_seconds`, `weight`, `enabled`, and `processing_id`. `shuffle_seed` deterministically shuffles finite tasksets before applying `task_limit`; infinite tasksets require `task_limit` and cannot be shuffled. Train sampling requires a positive temperature.
 
 Persisted scheduling fields are immutable under a given `source_id`. Algorithm, processing ID, and filter settings are loaded from current config rather than stored with the source; do not change them while pending results exist. Prefer a new run or source ID for any source change.
 

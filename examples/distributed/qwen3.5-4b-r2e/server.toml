@@ -23,10 +23,11 @@ quantization = "none"
 source_id = "qwen3p5-4b-r2e-train-v1"
 kind = "train"
 environment_id = "r2e-gym-v1"
-environment_revision = "0.1.3"
-environment_config = { taskset = { id = "r2e-gym-v1", dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified", filter_fn = "lambda row: row['commit_hash'][-1] != '0'", shuffle_seed = 42 }, agent = { max_turns = 50, max_total_tokens = 24576, timeout = { setup = 900, rollout = 3600, finalize = 120, scoring = 1800 }, retries = { max_retries = 1, include = ["ProviderError", "SandboxError"] }, harness = { id = "mini-swe-agent", version = "2.4.5", runtime = { type = "docker" } } } }
+environment_revision = "0.1.2"
+environment_config = { taskset = { id = "r2e-gym-v1", dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified", filter_fn = "lambda row: row['commit_hash'][-1] != '0'" }, agent = { max_turns = 50, max_total_tokens = 24576, timeout = { setup = 900, rollout = 3600, finalize = 120, scoring = 1800 }, retries = { max_retries = 1, include = ["ProviderError", "SandboxError"] }, harness = { id = "mini-swe-agent", version = "2.4.5", runtime = { type = "docker" } } } }
 group_size = 8
 max_attempts = 3
+shuffle_seed = 42
 assignment_timeout_seconds = 7200
 result_size_limit_bytes = 67108864
 weight = 32.0
@@ -42,10 +43,11 @@ type = "zero_advantage"
 source_id = "qwen3p5-4b-r2e-holdout-v1"
 kind = "eval"
 environment_id = "r2e-gym-v1"
-environment_revision = "0.1.3"
-environment_config = { taskset = { id = "r2e-gym-v1", dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified", filter_fn = "lambda row: row['commit_hash'][-1] == '0'", shuffle_seed = 43 }, agent = { max_turns = 50, max_total_tokens = 24576, timeout = { setup = 900, rollout = 3600, finalize = 120, scoring = 1800 }, retries = { max_retries = 1, include = ["ProviderError", "SandboxError"] }, harness = { id = "mini-swe-agent", version = "2.4.5", runtime = { type = "docker" } } } }
+environment_revision = "0.1.2"
+environment_config = { taskset = { id = "r2e-gym-v1", dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified", filter_fn = "lambda row: row['commit_hash'][-1] == '0'" }, agent = { max_turns = 50, max_total_tokens = 24576, timeout = { setup = 900, rollout = 3600, finalize = 120, scoring = 1800 }, retries = { max_retries = 1, include = ["ProviderError", "SandboxError"] }, harness = { id = "mini-swe-agent", version = "2.4.5", runtime = { type = "docker" } } } }
 group_size = 1
 max_attempts = 3
+shuffle_seed = 43
 assignment_timeout_seconds = 7200
 result_size_limit_bytes = 67108864
 weight = 1.0

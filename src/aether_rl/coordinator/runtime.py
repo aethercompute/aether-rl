@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 import shutil
 import sys
 import time
@@ -219,10 +220,20 @@ class CoordinatorRuntime:
                 f"source {source.source_id} advertises {source.environment_id!r} but resolves {resolved_id!r}"
             )
         taskset = vf.load_taskset(environment.taskset)
-        tasks = taskset.load()
+        loaded = taskset.load()
         if type(taskset).INFINITE and source.task_limit is None:
             raise ValueError(f"source {source.source_id} has an infinite taskset and requires task_limit")
-        return list(tasks if source.task_limit is None else islice(tasks, source.task_limit))
+        if type(taskset).INFINITE:
+            if source.shuffle_seed is not None:
+                raise ValueError(f"source {source.source_id} cannot shuffle an infinite taskset")
+            tasks = list(islice(loaded, source.task_limit))
+        else:
+            tasks = list(loaded)
+            if source.shuffle_seed is not None:
+                random.Random(source.shuffle_seed).shuffle(tasks)
+            if source.task_limit is not None:
+                tasks = tasks[: source.task_limit]
+        return tasks
 
     async def _start_trainer(self) -> None:
         self.trainer_output_dir.mkdir(parents=True, exist_ok=True)

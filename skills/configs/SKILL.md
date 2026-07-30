@@ -28,7 +28,7 @@ uv run model-identity --model-name <repo> --model-revision <40-character-commit>
 
 The server and all workers require the same full model/tokenizer revisions, fingerprints, vocabulary size, and quantization identity. The trainer model name/revision must match; configure a distinct tokenizer and remote-code trust explicitly in trainer/worker settings. Environment packages are installed on both roles. Workers enforce configured package revisions; coordinator package alignment is operator-owned.
 
-Server `[[sources]]` define tasksets, sampling, groups, retry limits, and train/eval processing. Supported algorithms are GRPO, MaxRL, ECHO, and external-teacher OPD. Supported rollout filters are gibberish, repetition, and zero advantage.
+Server `[[sources]]` define tasksets, sampling, groups, retry limits, deterministic finite-taskset shuffling, and train/eval processing. Supported algorithms are GRPO, MaxRL, ECHO, and external-teacher OPD. Supported rollout filters are gibberish, repetition, and zero advantage.
 
 The coordinator owns trainer output and resume. Distributed trainer configs require LoRA, safetensors, complete checkpoints every step, and no trainer-owned pruning, resume, or partial-load overrides. Server `published_checkpoint_keep_last` can safely bound full-checkpoint retention after durable policy activation; unset retains all checkpoints.
 

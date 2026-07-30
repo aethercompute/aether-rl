@@ -32,6 +32,7 @@ class ServerSourceConfig(BaseConfig):
     group_size: int = Field(default=8, ge=1)
     max_attempts: int = Field(default=3, ge=1)
     task_limit: int | None = Field(default=None, ge=1)
+    shuffle_seed: int | None = None
     result_size_limit_bytes: int = Field(default=64 * 1024 * 1024, ge=1)
     assignment_timeout_seconds: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     weight: float = Field(default=1.0, gt=0, allow_inf_nan=False)
