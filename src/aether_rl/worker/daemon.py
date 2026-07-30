@@ -89,6 +89,8 @@ class WorkerDaemon:
         self.lease_lock = asyncio.Lock()
         self.active: dict[str, ActiveAssignment] = {}
         self._entry_events: dict[str, asyncio.Event] = {}
+        self._upload_claims: set[str] = set()
+        self._upload_claim_lock = asyncio.Lock()
         self._server_time_offset = 0.0
 
     async def run(self) -> None:
@@ -104,7 +106,10 @@ class WorkerDaemon:
         await self._register()
         heartbeat = asyncio.create_task(self._heartbeat_loop(), name="worker-heartbeat")
         watchdog = asyncio.create_task(self._lease_watchdog_loop(), name="worker-lease-watchdog")
-        uploader = asyncio.create_task(self._upload_loop(), name="worker-uploader")
+        uploaders = [
+            asyncio.create_task(self._upload_loop(), name=f"worker-uploader-{index}")
+            for index in range(self.config.result_upload_concurrency)
+        ]
         policy_monitor = (
             asyncio.create_task(self.policy_runtime.monitor(), name="worker-policy-runtime")
             if self.policy_runtime is not None
@@ -115,7 +120,7 @@ class WorkerDaemon:
             for index in range(self.config.execution_slots)
         ]
         stop_waiter = asyncio.create_task(self.stop_event.wait(), name="worker-stop")
-        tasks = [heartbeat, watchdog, uploader, *slots]
+        tasks = [heartbeat, watchdog, *uploaders, *slots]
         if policy_monitor is not None:
             tasks.append(policy_monitor)
         try:
@@ -348,32 +353,51 @@ class WorkerDaemon:
     async def _upload_loop(self) -> None:
         delay = self.config.retry_min_seconds
         while not self.stop_event.is_set() or self.spool.entries():
-            entries = self.spool.entries()
-            if not entries:
+            entry = await self._claim_upload_entry()
+            if entry is None:
                 delay = self.config.retry_min_seconds
                 await self._sleep(delay)
                 continue
-            entry = entries[0]
             try:
                 response = await self.client.submit(entry)
                 self.spool.acknowledge(entry, response)
             except (httpx.TransportError, httpx.TimeoutException, CoordinatorProtocolError):
-                await asyncio.sleep(delay)
+                try:
+                    await asyncio.sleep(delay)
+                finally:
+                    await self._release_upload_entry(entry)
                 delay = min(delay * 2, self.config.retry_max_seconds)
                 continue
             except CoordinatorAPIError as error:
                 if error.retryable:
-                    await asyncio.sleep(error.retry_after if error.retry_after is not None else delay)
+                    try:
+                        await asyncio.sleep(error.retry_after if error.retry_after is not None else delay)
+                    finally:
+                        await self._release_upload_entry(entry)
                     delay = min(delay * 2, self.config.retry_max_seconds)
                     continue
                 if error.status_code in {409, 413, 415, 422}:
                     self.spool.reject(entry)
                 else:
+                    await self._release_upload_entry(entry)
                     raise
             event = self._entry_events.get(entry.digest)
             if event is not None:
                 event.set()
+            await self._release_upload_entry(entry)
             delay = self.config.retry_min_seconds
+
+    async def _claim_upload_entry(self):
+        async with self._upload_claim_lock:
+            for entry in self.spool.entries():
+                if entry.digest not in self._upload_claims:
+                    self._upload_claims.add(entry.digest)
+                    return entry
+        return None
+
+    async def _release_upload_entry(self, entry) -> None:
+        async with self._upload_claim_lock:
+            self._upload_claims.discard(entry.digest)
 
     def _update_server_time(self, server_time: float, request_started_at: float) -> None:
         # The response timestamp was generated after the request started. Using
@@ -466,6 +490,7 @@ async def run_worker(config: WorkerConfig, executor: AssignmentExecutor | None =
             str(config.coordinator_url),
             token,
             timeout_seconds=config.request_timeout_seconds,
+            result_compression=config.result_compression,
         )
         policy_runtime = WorkerPolicyRuntime(config, state, client)
         daemon = WorkerDaemon(config, registration, client, spool, executor, policy_runtime=policy_runtime)

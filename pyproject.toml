@@ -48,6 +48,7 @@ dependencies = [
     "safetensors",
     "tomli-w>=1.2.0",
     "torchao>=0.17.0",
+    "zstandard>=0.23.0",
 ]
 
 [project.scripts]
@@ -55,6 +56,7 @@ eval-report = "aether_rl.entrypoints.eval_report:main"
 inference = "aether_rl.entrypoints.inference:main"
 monitor-report = "aether_rl.entrypoints.monitor_report:main"
 model-identity = "aether_rl.entrypoints.model_identity:main"
+policy-relay = "aether_rl.entrypoints.policy_relay:main"
 trainer = "aether_rl.entrypoints.trainer:main"
 server = "aether_rl.entrypoints.server:main"
 worker = "aether_rl.entrypoints.worker:main"
@@ -104,6 +106,7 @@ dev = [
 server = [
     "aether-rl[flash-attn]",
     "aiosqlite>=0.22.1",
+    "boto3>=1.35.0",
     "fastapi>=0.128.0",
     "uvicorn>=0.40.0",
 ]
@@ -113,6 +116,10 @@ worker = [
     "renderers",
     "verifiers[harbor]>=0.2.1",
     "vllm>=0.24.0",
+]
+relay = [
+    "httpx>=0.28.1",
+    "shardcast==0.3.2",
 ]
 
 [tool.uv]

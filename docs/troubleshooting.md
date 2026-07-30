@@ -61,6 +61,14 @@ Inspect status counts for active leases, accepted/pending results, processing re
 
 Do not delete pending worker spool files. They are the durable copy until coordinator acknowledgment.
 
+For zstd uploads, ensure the proxy preserves `Content-Encoding: zstd` rather than decompressing the body while forwarding the header. Result limits apply to decompressed bytes. If increasing `result_upload_concurrency`, also check coordinator/proxy connection limits and worker spool pressure.
+
+## External policy download fails
+
+An empty or mismatched `policy_download_allowed_origins` disables presigned URLs. Match the exact HTTPS scheme and authority from the generated URL; redirects are intentionally refused. Check coordinator boto3 credentials, bucket permissions, endpoint and region, clock skew, presigned expiry, and object SHA-256 metadata. With fallback enabled, workers retry through the coordinator.
+
+For SHARDCAST, verify the relay token, relay process output, HTTPS proxy, and `aether-policies.json`. A stale index, evicted version, missing shard, or digest mismatch causes the worker to try the next configured transport. Prefetch only warms the verified disk cache and does not load the adapter into vLLM.
+
 ## Rejected worker spool entries
 
 Files under `<state_dir>/spool/rejected/` represent nonretryable submissions and are not automatically resent. Preserve them for diagnosis. Typical causes include expired leases, identity conflicts, malformed traces, body limits, or incompatible policy reporting.

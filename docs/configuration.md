@@ -26,11 +26,27 @@ The canonical shape is [`examples/distributed/reverse-text/server.toml`](../exam
 | `host`, `port` | `127.0.0.1`, `8080` | HTTP listener behind external TLS. |
 | `lease_duration_seconds` | `30` | Initial worker lease lifetime. |
 | `max_policy_lag` | `0` | Allowed active-policy versions before train work is stale. |
-| `result_body_limit_bytes` | 64 MiB | Maximum HTTP result body. |
+| `result_body_limit_bytes` | 64 MiB | Maximum decompressed HTTP result body. |
 
 The remaining timing and body-limit fields are defined by `ServerConfig` in `packages/aether-rl-configs/src/aether_rl/configs/server.py`.
 
 `AETHER_COORDINATOR_TOKEN` is mandatory, ASCII-only, and intentionally not a config field.
+
+### External policy distribution
+
+The coordinator can copy each verified immutable adapter to S3-compatible storage and issue short-lived presigned locations:
+
+```toml
+[policy_distribution]
+type = "s3"
+bucket = "aether-policies"
+prefix = "production-run"
+endpoint_url = "https://ACCOUNT_ID.r2.cloudflarestorage.com"
+region = "auto"
+presign_ttl_seconds = 900
+```
+
+`endpoint_url` is optional for AWS S3. Credentials use the standard boto3 environment/configuration chain and must not be placed in TOML. Publication writes adapter files and metadata under `<prefix>/runs/<run_id>/policies/<policy_id>/`; existing objects must match their recorded size and SHA-256 metadata. The local `run_root` remains authoritative.
 
 ## Sources
 
@@ -94,10 +110,37 @@ The canonical shape is [`examples/distributed/reverse-text/worker.toml`](../exam
 | `max_lora_rank` | `64` | Largest accepted adapter rank. |
 | `max_loaded_policies` | `8` | Local loaded-adapter limit. |
 | `adapter_cache_max_bytes` | 20 GiB | Verified adapter-cache budget. |
+| `result_compression` | `zstd` | Compress MessagePack result uploads; `identity` disables compression. |
+| `result_upload_concurrency` | `2` | Concurrent durable-spool upload tasks, from 1 through 16. |
+| `policy_download_allowed_origins` | `[]` | Exact approved HTTPS origins for presigned adapter URLs. |
+| `shardcast_servers` | `[]` | Optional HTTPS SHARDCAST relay base URLs, tried first for safetensors. |
+| `shardcast_download_concurrency` | `4` | Concurrent SHARDCAST shard requests. |
+| `policy_download_attempts` | `3` | Verified download attempts with persistent HTTP Range resume. |
+| `policy_coordinator_fallback` | `true` | Fall back to authenticated coordinator file delivery. |
+| `policy_prefetch_interval_seconds` | `5` | Active-policy disk-cache polling interval; unset disables prefetch. |
 
 Each sorted, unique `[[environments]]` entry contains `id`, `package`, `revision`, and verifier `config`. The package must be installed, its version must equal `revision`, and its resolved environment ID must match `id`. Workers enforce package versions; operators must keep the coordinator's installed taskset package aligned with the advertised source revision.
 
 The worker generates `<state_dir>/inference.toml`; do not maintain that file manually. Configure the distributed inference subset through worker fields.
+
+External origins are exact scheme/authority matches and must use HTTPS. Coordinator authorization is never sent to these origins. Download order is SHARDCAST for `adapter_model.safetensors`, an approved presigned location, then the coordinator when fallback is enabled. SHARDCAST does not carry `adapter_config.json`, so disabling coordinator fallback also requires an approved presigned origin. Prefetch verifies the adapter into the disk cache; vLLM loads it only when an assignment uses it. Result limits in server and source configuration apply after zstd decompression.
+
+## Policy relay
+
+The optional relay downloads the current verified adapter and exposes SHARDCAST through an HTTPS proxy:
+
+```toml
+coordinator_url = "https://coordinator.example.com"
+state_dir = "policy-relay-state"
+port = 8000
+poll_interval_seconds = 2
+request_timeout_seconds = 300
+max_versions = 8
+shard_size_bytes = 8388608
+policy_download_allowed_origins = ["https://ACCOUNT_ID.r2.cloudflarestorage.com"]
+```
+
+`AETHER_COORDINATOR_TOKEN` is required. Run `scripts/setup-relay.sh`, then `scripts/run-relay.sh policy-relay.toml`. Put TLS in front of the relay and configure that HTTPS URL in worker `shardcast_servers`; do not expose its plain HTTP listener directly.
 
 ## Trainer
 

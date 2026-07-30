@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import tomllib
 from pathlib import Path
 
@@ -9,11 +10,18 @@ import torch
 
 from aether_rl.configs.inference import InferenceConfig
 from aether_rl.configs.worker import WorkerConfig
-from aether_rl.protocol import canonical_json_bytes, sha256_digest
+from aether_rl.protocol import (
+    PolicyFileLocation,
+    PolicyLocations,
+    canonical_json_bytes,
+    policy_manifest_digest,
+    sha256_digest,
+)
 from aether_rl.trainer.policy import publish_lora_policy
 from aether_rl.worker.client import CoordinatorClient
 from aether_rl.worker.policy_cache import AdapterCache
 from aether_rl.worker.policy_runtime import VLLMAdminClient, WorkerVLLMSupervisor
+from aether_rl.worker.policy_transport import PolicyFileTransport
 from aether_rl.worker.spool import WorkerState
 from tests.unit.coordinator.test_database import base_model
 from tests.unit.worker.test_worker import worker_config
@@ -82,6 +90,141 @@ async def test_adapter_cache_downloads_verifies_and_reuses_concurrently(tmp_path
         assert len(requests) == 3
         assert await cache.ensure(manifest) == first
         assert len(requests) == 3
+    await async_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_adapter_cache_resumes_from_external_policy_location_without_forwarding_auth(tmp_path: Path):
+    manifest, source = published_policy(tmp_path)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/manifest"):
+            body = canonical_json_bytes(manifest)
+            return httpx.Response(
+                200,
+                content=body,
+                headers={"Content-Type": "application/json", "ETag": f'"{sha256_digest(body)}"'},
+            )
+        if request.url.path.endswith("/locations"):
+            locations = PolicyLocations(
+                policy_id=manifest.policy_id,
+                policy_digest=policy_manifest_digest(manifest),
+                expires_at=time.time() + 60,
+                files=tuple(
+                    PolicyFileLocation(name=item.name, url=f"https://cdn.test/files/{item.name}")
+                    for item in manifest.adapter.files
+                ),
+            )
+            return httpx.Response(
+                200, content=canonical_json_bytes(locations), headers={"Content-Type": "application/json"}
+            )
+        name = request.url.path.rsplit("/", 1)[-1]
+        body = (source / name).read_bytes()
+        offset = 7 if request.headers.get("range") == "bytes=7-" else 0
+        content_type = "application/json" if name.endswith(".json") else "application/octet-stream"
+        if request.url.host == "cdn.test" and name == "adapter_config.json":
+            content_type = "text/plain"
+        headers = {
+            "Content-Type": content_type,
+            "Content-Length": str(len(body) - offset),
+        }
+        if request.url.host == "coordinator.test":
+            artifact = next(item for item in manifest.adapter.files if item.name == name)
+            headers["ETag"] = f'"{artifact.digest}"'
+        status = 200
+        if offset:
+            status = 206
+            headers["Content-Range"] = f"bytes {offset}-{len(body) - 1}/{len(body)}"
+        return httpx.Response(status, content=body[offset:], headers=headers)
+
+    async_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://coordinator.test")
+    config = worker_config(tmp_path).model_copy(update={"policy_download_allowed_origins": ["https://cdn.test"]})
+    coordinator = CoordinatorClient("https://coordinator.test", "token", timeout_seconds=5, client=async_client)
+    with WorkerState(tmp_path / "worker-external") as state:
+        transport = PolicyFileTransport(config, coordinator)
+        cache = AdapterCache(state, coordinator, max_bytes=1024**3, transport=transport)
+        weight = next(item for item in manifest.adapter.files if item.name == "adapter_model.safetensors")
+        partial = cache.incoming / f"{weight.digest.removeprefix('sha256:')}.{weight.name}.part"
+        partial.write_bytes((source / weight.name).read_bytes()[:7])
+        cached = await cache.ensure(manifest)
+        assert cached is not None
+        assert (cached.path / weight.name).read_bytes() == (source / weight.name).read_bytes()
+
+    external = [request for request in requests if request.url.host == "cdn.test"]
+    assert external
+    assert all("authorization" not in request.headers for request in external)
+    assert any(request.headers.get("range") == "bytes=7-" for request in external)
+    assert any(
+        request.url.host == "coordinator.test" and request.url.path.endswith("/files/adapter_config.json")
+        for request in requests
+    )
+    await async_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_adapter_cache_uses_shardcast_before_coordinator_file_download(tmp_path: Path):
+    manifest, source = published_policy(tmp_path)
+    weight = next(item for item in manifest.adapter.files if item.name == "adapter_model.safetensors")
+    weight_bytes = (source / weight.name).read_bytes()
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path.endswith("/manifest"):
+            body = canonical_json_bytes(manifest)
+            return httpx.Response(
+                200,
+                content=body,
+                headers={"Content-Type": "application/json", "ETag": f'"{sha256_digest(body)}"'},
+            )
+        if request.url.path == "/aether-policies.json":
+            return httpx.Response(
+                200,
+                json={
+                    "version": 1,
+                    "policies": {
+                        manifest.policy_id: {
+                            "policy_digest": policy_manifest_digest(manifest),
+                            "artifact_digest": weight.digest,
+                            "size_bytes": len(weight_bytes),
+                            "version": "v7",
+                            "shard_count": 1,
+                            "shard_size_bytes": 1024**2,
+                        }
+                    },
+                },
+            )
+        if request.url.path == "/v7/shard_00001.bin":
+            return httpx.Response(200, content=weight_bytes)
+        name = request.url.path.rsplit("/", 1)[-1]
+        body = (source / name).read_bytes()
+        artifact = next(item for item in manifest.adapter.files if item.name == name)
+        return httpx.Response(
+            200,
+            content=body,
+            headers={
+                "Content-Type": "application/json" if name.endswith(".json") else "application/octet-stream",
+                "Content-Length": str(len(body)),
+                "ETag": f'"{artifact.digest}"',
+            },
+        )
+
+    async_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://coordinator.test")
+    config = worker_config(tmp_path).model_copy(update={"shardcast_servers": ["https://relay.test"]})
+    coordinator = CoordinatorClient("https://coordinator.test", "token", timeout_seconds=5, client=async_client)
+    with WorkerState(tmp_path / "worker-shardcast") as state:
+        cache = AdapterCache(
+            state,
+            coordinator,
+            max_bytes=1024**3,
+            transport=PolicyFileTransport(config, coordinator),
+        )
+        cached = await cache.ensure(manifest)
+        assert cached is not None
+        assert (cached.path / weight.name).read_bytes() == weight_bytes
+    assert f"/api/v1/policies/{manifest.policy_id}/files/{weight.name}" not in requests
     await async_client.aclose()
 
 

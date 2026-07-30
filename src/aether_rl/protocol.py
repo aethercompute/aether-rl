@@ -119,6 +119,26 @@ class PolicyManifest(ProtocolModel):
         return self
 
 
+class PolicyFileLocation(ProtocolModel):
+    name: Literal["adapter_config.json", "adapter_model.safetensors"]
+    url: str = Field(min_length=1, max_length=8192)
+
+
+class PolicyLocations(ProtocolModel):
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+    policy_id: OpaqueId
+    policy_digest: Digest
+    expires_at: Timestamp
+    files: tuple[PolicyFileLocation, ...]
+
+    @model_validator(mode="after")
+    def validate_files(self) -> PolicyLocations:
+        expected = ("adapter_config.json", "adapter_model.safetensors")
+        if tuple(file.name for file in self.files) != expected:
+            raise ValueError(f"policy location files must be ordered exactly as {expected}")
+        return self
+
+
 class WorkerCapabilities(ProtocolModel):
     base_model: BaseModelIdentity
     runtime: RuntimeIdentity

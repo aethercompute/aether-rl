@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import signal
 import sys
@@ -17,6 +18,7 @@ from aether_rl.utils.process import DEFAULT_COMMON_ENV_VARS, DEFAULT_INFERENCE_E
 
 from .client import CoordinatorClient, CoordinatorProtocolError
 from .policy_cache import AdapterCache, CachedPolicy
+from .policy_transport import PolicyFileTransport
 from .spool import WorkerState
 
 
@@ -183,6 +185,9 @@ class PolicyRuntimeFatalError(RuntimeError):
     worker_fatal = True
 
 
+logger = logging.getLogger(__name__)
+
+
 class WorkerPolicyRuntime:
     def __init__(
         self,
@@ -195,14 +200,22 @@ class WorkerPolicyRuntime:
         self.config = config
         self.supervisor = supervisor or WorkerVLLMSupervisor(config, state)
         self.admin = VLLMAdminClient(self.supervisor.client)
-        self.cache = AdapterCache(state, coordinator, max_bytes=config.adapter_cache_max_bytes)
+        self.coordinator = coordinator
+        self.cache = AdapterCache(
+            state,
+            coordinator,
+            max_bytes=config.adapter_cache_max_bytes,
+            transport=PolicyFileTransport(config, coordinator),
+        )
         self._loaded: dict[str, CachedPolicy | None] = {}
         self._references: dict[str, int] = {}
         self._last_used: dict[str, float] = {}
         self._lock = asyncio.Lock()
         self._condition = asyncio.Condition(self._lock)
+        self._stop_event: asyncio.Event | None = None
 
     async def start(self, stop_event: asyncio.Event) -> None:
+        self._stop_event = stop_event
         await self.supervisor.start(stop_event)
 
     async def stop(self) -> None:
@@ -210,10 +223,38 @@ class WorkerPolicyRuntime:
         self._loaded.clear()
 
     async def monitor(self) -> None:
-        await self.supervisor.monitor()
+        if self.config.policy_prefetch_interval_seconds is None:
+            await self.supervisor.monitor()
+            return
+        supervisor = asyncio.create_task(self.supervisor.monitor(), name="worker-vllm-monitor")
+        prefetch = asyncio.create_task(self._prefetch_loop(), name="worker-policy-prefetch")
+        try:
+            done, _ = await asyncio.wait((supervisor, prefetch), return_when=asyncio.FIRST_COMPLETED)
+            await next(iter(done))
+        finally:
+            supervisor.cancel()
+            prefetch.cancel()
+            await asyncio.gather(supervisor, prefetch, return_exceptions=True)
 
     def loaded_policy_ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._loaded))
+
+    async def _prefetch_loop(self) -> None:
+        if self._stop_event is None or self.config.policy_prefetch_interval_seconds is None:
+            raise RuntimeError("policy prefetch started before the worker runtime")
+        while not self._stop_event.is_set():
+            try:
+                manifest = await self.coordinator.get_current_policy()
+                await self.cache.ensure(manifest)
+            except Exception as error:
+                logger.warning("policy prefetch failed: %s", error)
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self.config.policy_prefetch_interval_seconds,
+                )
+            except TimeoutError:
+                pass
 
     @asynccontextmanager
     async def acquire(self, manifest: PolicyManifest):

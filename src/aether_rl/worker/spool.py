@@ -150,7 +150,13 @@ class WorkerSpool:
             if path.is_file() or path.is_symlink():
                 path.unlink()
         state._fsync_directory(self.incoming)
-        self.entries()
+        self._entries: dict[Path, SpoolEntry] = {}
+        for path in sorted(self.pending.iterdir(), key=lambda item: (item.lstat().st_mtime_ns, item.name)):
+            try:
+                self._entries[path] = self._load(path)
+            except Exception as error:
+                self._quarantine(path)
+                raise SpoolCorruptionError(f"invalid pending worker spool entry: {path.name}") from error
 
     def publish(self, envelope: TerminalEnvelope) -> SpoolEntry:
         if isinstance(envelope, ResultEnvelope):
@@ -176,27 +182,33 @@ class WorkerSpool:
                 existing = self._load(final_path)
                 if existing.digest != digest or existing.body != body:
                     raise SpoolCorruptionError("existing spool entry conflicts with terminal envelope")
+                self._entries[final_path] = existing
                 return existing
             self.state._fsync_directory(self.pending)
         finally:
             temporary.unlink(missing_ok=True)
             self.state._fsync_directory(self.incoming)
-        return SpoolEntry(final_path, kind, digest, body, envelope)
+        entry = SpoolEntry(final_path, kind, digest, body, envelope)
+        self._entries[final_path] = entry
+        return entry
 
     def entries(self) -> tuple[SpoolEntry, ...]:
-        loaded: list[SpoolEntry] = []
-        for path in sorted(self.pending.iterdir(), key=lambda item: (item.lstat().st_mtime_ns, item.name)):
+        paths = set(self.pending.iterdir())
+        for path in sorted(paths - self._entries.keys(), key=lambda item: (item.lstat().st_mtime_ns, item.name)):
             try:
-                loaded.append(self._load(path))
+                self._entries[path] = self._load(path)
             except Exception as error:
                 self._quarantine(path)
                 raise SpoolCorruptionError(f"invalid pending worker spool entry: {path.name}") from error
-        return tuple(loaded)
+        for path in self._entries.keys() - paths:
+            self._entries.pop(path)
+        return tuple(self._entries.values())
 
     def acknowledge(self, entry: SpoolEntry, response: SubmissionResponse) -> None:
         if response.assignment_id != entry.envelope.assignment_id or response.envelope_digest != entry.digest:
             raise SpoolCorruptionError("submission acknowledgement does not match the spooled envelope")
         entry.path.unlink()
+        self._entries.pop(entry.path, None)
         self.state._fsync_directory(self.pending)
 
     def reject(self, entry: SpoolEntry) -> Path:
@@ -208,6 +220,7 @@ class WorkerSpool:
                 raise SpoolCorruptionError("rejected spool entry conflicts with pending bytes")
         self.state._fsync_directory(self.rejected)
         entry.path.unlink()
+        self._entries.pop(entry.path, None)
         self.state._fsync_directory(self.pending)
         return destination
 

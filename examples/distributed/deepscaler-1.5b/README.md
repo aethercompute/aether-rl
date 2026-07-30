@@ -66,7 +66,20 @@ export AETHER_COORDINATOR_TOKEN='<same-random-ascii-secret>'
 The coordinator binds to loopback. Put an HTTPS reverse proxy, VPN gateway, or secure mesh
 in front of it for remote Vast workers; do not expose port 8080 directly. The proxy must
 preserve `Authorization` and `Aether-Protocol-Version`, support long polling, and permit
-64 MiB request bodies.
+64 MiB decompressed request bodies. It must preserve `Content-Encoding: zstd` and HTTP
+Range headers used by resumable policy downloads.
+
+For optional R2 delivery, replace the placeholders in `server-r2.toml`, export standard
+boto3-compatible R2 credentials on the coordinator, and compose it after the base config:
+
+```bash
+scripts/run-server.sh examples/distributed/deepscaler-1.5b/server.toml \
+  @ examples/distributed/deepscaler-1.5b/server-r2.toml
+```
+
+The baseline worker config still uses coordinator delivery. To use R2 and an optional
+SHARDCAST endpoint, replace the origins in `worker-external-policy.toml` and compose it
+after `worker.toml`. Coordinator authorization is never forwarded to either endpoint.
 
 ## Launch
 
@@ -85,6 +98,18 @@ scripts/run-worker.sh \
   https://coordinator.example.com \
   --state-dir "/var/lib/aether/deepscaler-$(hostname)"
 ```
+
+To run the optional SHARDCAST bridge, replace placeholders in `policy-relay.toml`, put
+HTTPS in front of its port, then start it before workers:
+
+```bash
+scripts/setup-relay.sh
+scripts/run-relay.sh examples/distributed/deepscaler-1.5b/policy-relay.toml
+```
+
+Workers configured with `worker-external-policy.toml` try SHARDCAST, then R2, then the
+coordinator. Every path is size- and SHA-256-verified; the coordinator remains the source
+of truth and fallback.
 
 The default 16 execution slots are conservative for either GPU. Increase one machine at a
 time after watching GPU memory and generation throughput, for example

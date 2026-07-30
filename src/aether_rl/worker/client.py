@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Literal
 
 import httpx
+import zstandard
 from pydantic import ValidationError
 
 from aether_rl.protocol import (
@@ -14,6 +16,8 @@ from aether_rl.protocol import (
     LeaseRenewRequest,
     LeaseRenewResponse,
     LeaseRequest,
+    PolicyLocations,
+    PolicyManifest,
     ResultEnvelope,
     SubmissionResponse,
     WorkerHeartbeat,
@@ -53,6 +57,8 @@ class CoordinatorClient:
         *,
         timeout_seconds: float,
         client: httpx.AsyncClient | None = None,
+        artifact_client: httpx.AsyncClient | None = None,
+        result_compression: Literal["identity", "zstd"] = "identity",
     ):
         if not token:
             raise ValueError("coordinator token must not be empty")
@@ -62,10 +68,20 @@ class CoordinatorClient:
             timeout=httpx.Timeout(timeout_seconds),
             limits=httpx.Limits(max_connections=16, max_keepalive_connections=8),
         )
+        self._owns_artifact_client = artifact_client is None and client is None
+        self.artifact_client = artifact_client or client
+        if self.artifact_client is None:
+            self.artifact_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout_seconds),
+                limits=httpx.Limits(max_connections=8, max_keepalive_connections=4),
+                follow_redirects=False,
+            )
         self.headers = {
             "Authorization": f"Bearer {token}",
             "Aether-Protocol-Version": str(PROTOCOL_VERSION),
         }
+        self.result_compression = result_compression
+        self._compressor = zstandard.ZstdCompressor(level=3) if result_compression == "zstd" else None
 
     async def register(self, registration: WorkerRegistration) -> WorkerRegistrationResponse:
         response = await self._control("POST", "/api/v1/workers/register", registration)
@@ -86,12 +102,21 @@ class CoordinatorClient:
     async def submit(self, entry: SpoolEntry) -> SubmissionResponse:
         path = f"/api/v1/assignments/{entry.envelope.assignment_id}/"
         if isinstance(entry.envelope, ResultEnvelope):
-            response = await self._request(
-                "PUT",
-                path + "result",
-                content=entry.body,
-                headers={"Content-Type": "application/msgpack"},
-            )
+            body = entry.body if self._compressor is None else self._compressor.compress(entry.body)
+            headers = {"Content-Type": "application/msgpack"}
+            if self._compressor is not None:
+                headers["Content-Encoding"] = "zstd"
+            try:
+                response = await self._request("PUT", path + "result", content=body, headers=headers)
+            except CoordinatorAPIError as error:
+                if self._compressor is None or error.status_code != 415:
+                    raise
+                response = await self._request(
+                    "PUT",
+                    path + "result",
+                    content=entry.body,
+                    headers={"Content-Type": "application/msgpack"},
+                )
         elif isinstance(entry.envelope, FailureEnvelope):
             response = await self._request(
                 "POST",
@@ -112,15 +137,31 @@ class CoordinatorClient:
             raise self._api_error(response)
         return response
 
+    async def get_current_policy(self) -> PolicyManifest:
+        response = await self.client.get("/api/v1/policies/current", headers=self.headers)
+        if response.status_code != 200:
+            raise self._api_error(response)
+        return self._model(response, PolicyManifest)
+
+    async def get_policy_locations(self, policy_id: str) -> PolicyLocations:
+        response = await self.client.get(f"/api/v1/policies/{policy_id}/locations", headers=self.headers)
+        if response.status_code != 200:
+            raise self._api_error(response)
+        return self._model(response, PolicyLocations)
+
     @asynccontextmanager
-    async def stream_policy_file(self, policy_id: str, name: str):
+    async def stream_policy_file(self, policy_id: str, name: str, *, offset: int = 0):
+        headers = self.headers | {"Accept-Encoding": "identity"}
+        if offset:
+            headers["Range"] = f"bytes={offset}-"
         request = self.client.build_request(
             "GET",
             f"/api/v1/policies/{policy_id}/files/{name}",
-            headers=self.headers | {"Accept-Encoding": "identity"},
+            headers=headers,
         )
         response = await self.client.send(request, stream=True)
-        if response.status_code != 200:
+        expected = 206 if offset else 200
+        if response.status_code != expected:
             await response.aread()
             error = self._api_error(response)
             await response.aclose()
@@ -133,6 +174,8 @@ class CoordinatorClient:
     async def close(self) -> None:
         if self._owns_client:
             await self.client.aclose()
+        if self._owns_artifact_client:
+            await self.artifact_client.aclose()
 
     async def _control(self, method: str, path: str, model, *, expected: tuple[int, ...] = (200,)) -> httpx.Response:
         return await self._request(

@@ -90,6 +90,8 @@ curl -fsS http://127.0.0.1:8080/ready
 
 `/health` confirms only that the API process responds. `/ready` also checks the database, active policy integrity, result processing, and trainer health.
 
+Optional S3-compatible policy delivery is configured with server `[policy_distribution]`; use standard boto3 environment credentials and add the generated presigned URL's exact HTTPS origin to worker `policy_download_allowed_origins`. For SHARDCAST, run `scripts/setup-relay.sh` and `scripts/run-relay.sh <relay.toml>`, terminate TLS in front of it, verify `aether-policies.json`, and add its URL to worker `shardcast_servers`. Start the relay after coordinator readiness and before workers. These paths are accelerators; coordinator delivery remains the default fallback.
+
 ## 7. Preflight and launch workers
 
 Set `coordinator_url` to the externally reachable HTTPS origin and choose a unique persistent `state_dir` on each worker:
@@ -99,6 +101,8 @@ scripts/run-worker.sh examples/distributed/reverse-text/worker.toml https://coor
 ```
 
 Worker preflight checks GPU visibility, model/tokenizer fingerprints, installed environment versions, and environment resolution. It does not contact the coordinator, load model weights onto the GPU, start vLLM, execute an episode, or check available disk capacity.
+
+Proxies must preserve authorization, protocol, content encoding, range, content length, and content range headers. Configure body limits for decompressed results when zstd uploads are enabled.
 
 The worker starts vLLM itself and writes its output to `<state_dir>/inference.log`. Do not launch a separate inference process for a normal worker.
 

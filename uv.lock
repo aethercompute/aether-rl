@@ -201,6 +201,7 @@ dependencies = [
     { name = "vllm", version = "0.24.0+cu129", source = { url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl" }, marker = "platform_machine == 'x86_64'" },
     { name = "wandb" },
     { name = "wandb-workspaces" },
+    { name = "zstandard" },
 ]
 
 [package.optional-dependencies]
@@ -248,9 +249,14 @@ dev = [
 mamba-ssm = [
     { name = "mamba-ssm" },
 ]
+relay = [
+    { name = "httpx" },
+    { name = "shardcast" },
+]
 server = [
     { name = "aether-rl", extra = ["flash-attn"] },
     { name = "aiosqlite" },
+    { name = "boto3" },
     { name = "fastapi" },
     { name = "uvicorn" },
 ]
@@ -326,6 +332,7 @@ requires-dist = [
     { name = "vllm", marker = "platform_machine == 'x86_64'", url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl" },
     { name = "wandb", specifier = ">=0.26.1" },
     { name = "wandb-workspaces", specifier = ">=0.4.3" },
+    { name = "zstandard", specifier = ">=0.23.0" },
 ]
 provides-extras = ["flash-attn", "flash-attn-3", "flash-attn-cute", "expert-parallel", "gpt-oss", "quack", "all"]
 
@@ -339,9 +346,14 @@ dev = [
     { name = "ruff", specifier = ">=0.12.1" },
 ]
 mamba-ssm = [{ name = "mamba-ssm", specifier = ">=2.3.0" }]
+relay = [
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "shardcast", specifier = "==0.3.2" },
+]
 server = [
     { name = "aether-rl", extras = ["flash-attn"] },
     { name = "aiosqlite", specifier = ">=0.22.1" },
+    { name = "boto3", specifier = ">=1.35.0" },
     { name = "fastapi", specifier = ">=0.128.0" },
     { name = "uvicorn", specifier = ">=0.40.0" },
 ]
@@ -6483,6 +6495,18 @@ wheels = [
 ]
 
 [[package]]
+name = "shardcast"
+version = "0.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "blake3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2c/e2/de8cb58aae10895fe461d7897b7de0d62f6eb52a0b05c7b3d1ed83a8c8f1/shardcast-0.3.2.tar.gz", hash = "sha256:460c9404e2538d7bd74b29ee5b65f5a7bea2e5cdd9235a95224633bf7caecbce", size = 19073, upload-time = "2025-07-01T00:59:51.397Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/15/64/53149aff8d17df76047fa8057fedb18ec2cf24a0a048a806195f35554939/shardcast-0.3.2-py3-none-any.whl", hash = "sha256:0078d58eaac06b3f5f4d2972f595364dda98230ed67397873830c8a49cd53b96", size = 23206, upload-time = "2025-07-01T00:59:50.192Z" },
+]
+
+[[package]]
 name = "shellingham"
 version = "1.5.4"
 source = { registry = "https://pypi.org/simple" }
@@ -8569,4 +8593,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b9/d8/eab98a517c14134c0b2eb4e2387bc5f457334293ec5d2dd3857ec2966802/zipp-4.1.0.tar.gz", hash = "sha256:4cb57381f544315db7688e976e922a2b18cdb513d21cc194eb42232ba2a3e602", size = 26214, upload-time = "2026-05-18T20:08:57.967Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/13/547360d81e6d88d58492968ffda9f9542854f11310ee556fef14260cc886/zipp-4.1.0-py3-none-any.whl", hash = "sha256:25ad4e16390cd314347dd8f1de67a2ac538ae658ed4ab9db16029c07c188e97f", size = 10238, upload-time = "2026-05-18T20:08:57.045Z" },
+]
+
+[[package]]
+name = "zstandard"
+version = "0.25.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fd/aa/3e0508d5a5dd96529cdc5a97011299056e14c6505b678fd58938792794b1/zstandard-0.25.0.tar.gz", hash = "sha256:7713e1179d162cf5c7906da876ec2ccb9c3a9dcbdffef0cc7f70c3667a205f0b", size = 711513, upload-time = "2025-09-14T22:15:54.002Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/15/efef5a2f204a64bdb5571e6161d49f7ef0fffdbca953a615efbec045f60f/zstandard-0.25.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:6dffecc361d079bb48d7caef5d673c88c8988d3d33fb74ab95b7ee6da42652ea", size = 5063012, upload-time = "2025-09-14T22:17:01.156Z" },
+    { url = "https://files.pythonhosted.org/packages/53/60/7be26e610767316c028a2cbedb9a3beabdbe33e2182c373f71a1c0b88f36/zstandard-0.25.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:5a56ba0db2d244117ed744dfa8f6f5b366e14148e00de44723413b2f3938a902", size = 5546993, upload-time = "2025-09-14T22:17:06.781Z" },
+    { url = "https://files.pythonhosted.org/packages/85/c7/3483ad9ff0662623f3648479b0380d2de5510abf00990468c286c6b04017/zstandard-0.25.0-cp312-cp312-musllinux_1_1_aarch64.whl", hash = "sha256:10ef2a79ab8e2974e2075fb984e5b9806c64134810fac21576f0668e7ea19f8f", size = 5046806, upload-time = "2025-09-14T22:17:08.415Z" },
+    { url = "https://files.pythonhosted.org/packages/08/b3/206883dd25b8d1591a1caa44b54c2aad84badccf2f1de9e2d60a446f9a25/zstandard-0.25.0-cp312-cp312-musllinux_1_1_x86_64.whl", hash = "sha256:aaf21ba8fb76d102b696781bddaa0954b782536446083ae3fdaa6f16b25a1c4b", size = 5576659, upload-time = "2025-09-14T22:17:10.164Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/31/76c0779101453e6c117b0ff22565865c54f48f8bd807df2b00c2c404b8e0/zstandard-0.25.0-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:1869da9571d5e94a85a5e8d57e4e8807b175c9e4a6294e3b66fa4efb074d90f6", size = 4953933, upload-time = "2025-09-14T22:17:11.857Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/5f/75aafd4b9d11b5407b641b8e41a57864097663699f23e9ad4dbb91dc6bfe/zstandard-0.25.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:474d2596a2dbc241a556e965fb76002c1ce655445e4e3bf38e5477d413165ffa", size = 5360237, upload-time = "2025-09-14T22:17:19.954Z" },
 ]

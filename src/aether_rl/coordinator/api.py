@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Protocol
 
+import zstandard
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -29,6 +30,8 @@ from aether_rl.protocol import (
     LeaseRenewRequest,
     LeaseRenewResponse,
     LeaseRequest,
+    PolicyLocations,
+    PolicyManifest,
     ResultEnvelope,
     SubmissionResponse,
     WorkerHeartbeat,
@@ -125,6 +128,7 @@ def create_coordinator_app(
     token: str | None = None,
     lease_provider: LeaseProvider | None = None,
     trainer_ready: Callable[[], bool | Awaitable[bool]] = lambda: False,
+    policy_locations: Callable[[PolicyManifest], PolicyLocations | Awaitable[PolicyLocations]] | None = None,
     control_body_limit_bytes: int = 1024 * 1024,
     result_body_limit_bytes: int = 64 * 1024 * 1024,
     lease_duration_seconds: float = 30.0,
@@ -446,23 +450,30 @@ def create_coordinator_app(
 
     @app.put("/api/v1/assignments/{assignment_id}/result")
     async def result(assignment_id: str, request: Request) -> JSONResponse:
-        result_content_type = _validate_result_body(request, result_body_limit_bytes)
+        result_content_type, result_encoding = _validate_result_body(request, result_body_limit_bytes)
         assignment_limit = await service.call(repository.assignment_result_size_limit, assignment_id)
         effective_limit = min(result_body_limit_bytes, assignment_limit)
         incoming = repository.spool.incoming_dir
         temporary_path = incoming / f"upload-{uuid.uuid4().hex}.tmp"
         descriptor = os.open(temporary_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         size = 0
+        wire_limit = (
+            effective_limit + max(1024 * 1024, effective_limit // 100) if result_encoding == "zstd" else effective_limit
+        )
         try:
             with os.fdopen(descriptor, "wb") as file:
                 async for chunk in request.stream():
                     size += len(chunk)
-                    if size > effective_limit:
+                    if size > wire_limit:
                         raise APIError(413, "payload_too_large", "result body is too large")
                     await asyncio.to_thread(file.write, chunk)
                 await asyncio.to_thread(_flush_file, file)
             try:
                 envelope_bytes = await asyncio.to_thread(temporary_path.read_bytes)
+                if result_encoding == "zstd":
+                    envelope_bytes = await asyncio.to_thread(_decompress_result, envelope_bytes, effective_limit)
+                if len(envelope_bytes) > effective_limit:
+                    raise APIError(413, "payload_too_large", "result body is too large")
                 envelope = (
                     await asyncio.to_thread(decode_result_envelope, envelope_bytes)
                     if result_content_type == "application/msgpack"
@@ -474,7 +485,7 @@ def create_coordinator_app(
                 if any(item["loc"] and item["loc"][-1] == "protocol_version" for item in error.errors()):
                     raise APIError(400, "protocol_version", "body protocol_version must be 1") from error
                 raise APIError(422, "malformed_request", "result body is malformed") from error
-            except (ValueError, json.JSONDecodeError) as error:
+            except (ValueError, json.JSONDecodeError, zstandard.ZstdError) as error:
                 raise APIError(422, "malformed_request", "result body is malformed") from error
             if envelope.assignment_id != assignment_id:
                 raise APIError(409, "identity_mismatch", "body assignment does not match the path")
@@ -509,6 +520,15 @@ def create_coordinator_app(
         if _etag_matches(request.headers.get("if-none-match"), etag):
             return Response(status_code=304, headers=headers)
         return Response(content=canonical_json_bytes(manifest), media_type="application/json", headers=headers)
+
+    @app.get("/api/v1/policies/{policy_id}/locations")
+    async def policy_artifact_locations(policy_id: str) -> JSONResponse:
+        if policy_locations is None:
+            raise APIError(404, "policy_locations_unavailable", "external policy distribution is not configured")
+        manifest = await service.call(repository.get_policy, policy_id)
+        result = policy_locations(manifest)
+        locations = await result if inspect.isawaitable(result) else result
+        return JSONResponse(content=locations.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v1/policies/{policy_id}/files/{name}")
     async def policy_file(policy_id: str, name: str, request: Request) -> Response:
@@ -577,12 +597,13 @@ def _validate_json_body(request: Request, limit: int) -> None:
             raise APIError(413, "payload_too_large", "request body is too large")
 
 
-def _validate_result_body(request: Request, limit: int) -> str:
+def _validate_result_body(request: Request, limit: int) -> tuple[str, str]:
     content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if content_type not in {"application/json", "application/msgpack"}:
         raise APIError(415, "unsupported_media_type", "Content-Type must be application/json or application/msgpack")
-    if request.headers.get("content-encoding", "identity").lower() != "identity":
-        raise APIError(415, "unsupported_encoding", "Content-Encoding must be identity")
+    content_encoding = request.headers.get("content-encoding", "identity").lower()
+    if content_encoding not in {"identity", "zstd"}:
+        raise APIError(415, "unsupported_encoding", "Content-Encoding must be identity or zstd")
     content_length = request.headers.get("content-length")
     if content_length is not None:
         try:
@@ -591,9 +612,15 @@ def _validate_result_body(request: Request, limit: int) -> str:
             raise APIError(400, "invalid_content_length", "Content-Length must be an integer") from error
         if declared_size < 0:
             raise APIError(400, "invalid_content_length", "Content-Length must be non-negative")
-        if declared_size > limit:
+        wire_limit = limit + max(1024 * 1024, limit // 100) if content_encoding == "zstd" else limit
+        if declared_size > wire_limit:
             raise APIError(413, "payload_too_large", "request body is too large")
-    return content_type
+    return content_type, content_encoding
+
+
+def _decompress_result(data: bytes, limit: int) -> bytes:
+    with zstandard.ZstdDecompressor().stream_reader(data) as reader:
+        return reader.read(limit + 1)
 
 
 def _quoted_etag(digest: str) -> str:

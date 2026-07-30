@@ -10,8 +10,8 @@ from typing import Any, Callable
 
 import torch
 import torch.distributed as dist
-import wandb
 
+import wandb
 from aether_rl.utils.logger import get_logger
 
 # TODO: Change all imports to use utils.pathing

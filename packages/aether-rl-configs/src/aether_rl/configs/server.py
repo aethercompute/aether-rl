@@ -2,7 +2,7 @@ import time
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, HttpUrl, model_validator
 from verifiers.v1.types import SamplingConfig
 
 from aether_rl.configs.algorithm import AlgoConfig, GRPOAlgoConfig
@@ -43,6 +43,21 @@ class ServerSourceConfig(BaseConfig):
     post_filters: list[FilterConfig] = []
 
 
+class S3PolicyDistributionConfig(BaseConfig):
+    type: Literal["s3"] = "s3"
+    bucket: str = Field(min_length=1)
+    prefix: str = Field(default="aether-policies", min_length=1)
+    endpoint_url: HttpUrl | None = None
+    region: str = Field(default="auto", min_length=1)
+    presign_ttl_seconds: int = Field(default=900, ge=60, le=604800)
+
+    @model_validator(mode="after")
+    def validate_s3(self) -> "S3PolicyDistributionConfig":
+        if self.prefix.startswith("/") or self.prefix.endswith("/") or "//" in self.prefix:
+            raise ValueError("policy distribution prefix must not have leading, trailing, or repeated slashes")
+        return self
+
+
 class ServerConfig(BaseConfig):
     run_id: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@+~-]*$")
     run_root: Path = Path("server-state")
@@ -71,6 +86,7 @@ class ServerConfig(BaseConfig):
     stale_after_seconds: float = Field(default=60, gt=0, allow_inf_nan=False)
     lease_reaper_interval_seconds: float = Field(default=1, gt=0, allow_inf_nan=False)
     policy_verification_interval_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
+    policy_distribution: S3PolicyDistributionConfig | None = None
 
     @model_validator(mode="after")
     def validate_server(self) -> "ServerConfig":

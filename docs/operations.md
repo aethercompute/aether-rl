@@ -58,7 +58,20 @@ Default worker state:
 └── cache/policies/
 ```
 
+Optional policy relay state:
+
+```text
+<state_dir>/
+├── worker.lock
+├── identity/
+├── downloads/
+└── shardcast/
+    └── aether-policies.json
+```
+
 Capture coordinator and worker stdout/stderr with the service manager. Trainer output is appended to `<run_root>/logs/trainer.log`; worker-local vLLM output is appended to `<state_dir>/inference.log`. The worker daemon does not expose an HTTP health endpoint.
+
+Capture relay stdout/stderr too, and check `https://<relay>/aether-policies.json` when SHARDCAST delivery stalls. R2/S3 and relay storage accelerate distribution but do not replace the local policy tree or complete `run_root` backup. Relay state can rebuild the current policy; preserve it when older in-flight assignments may need retained versions and coordinator fallback is disabled.
 
 Optional trainer monitoring:
 
@@ -110,3 +123,5 @@ There is no guaranteed mixed-version rolling upgrade or database downgrade.
 Protocol version is exact rather than negotiated. Startup refuses databases newer than the running code. Keep model identity, environment revisions, run ID, source definitions, LoRA shape, trainer topology, and checkpoint-compatible optimizer settings unchanged for an existing run.
 
 Bearer-token rotation is restart-based and has no overlap window. Change the coordinator token, restart it, then restart workers with the same token; temporary authentication failures are expected during the transition.
+
+Rotate R2/S3 credentials on the coordinator, then restart it. The relay uses coordinator-issued presigned locations and needs only `AETHER_COORDINATOR_TOKEN`. Presigned URLs expire according to `presign_ttl_seconds`; workers request fresh locations on retry. Size `max_versions`, relay disk, object-store egress, `result_upload_concurrency`, and proxy connection limits for the fleet rather than treating their defaults as quotas.

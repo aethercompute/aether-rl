@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import re
 import shutil
 import time
 import uuid
@@ -10,10 +11,13 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
+
 from aether_rl.protocol import PolicyManifest, canonical_json_bytes, policy_manifest_digest, sha256_digest
 from aether_rl.trainer.policy import POLICY_MANIFEST_NAME, verify_lora_policy
 
 from .client import CoordinatorClient, CoordinatorProtocolError
+from .policy_transport import PolicyFileTransport
 from .spool import WorkerState
 
 
@@ -33,10 +37,18 @@ class CachedPolicy:
 
 
 class AdapterCache:
-    def __init__(self, state: WorkerState, client: CoordinatorClient, *, max_bytes: int):
+    def __init__(
+        self,
+        state: WorkerState,
+        client: CoordinatorClient,
+        *,
+        max_bytes: int,
+        transport: PolicyFileTransport | None = None,
+    ):
         self.state = state
         self.client = client
         self.max_bytes = max_bytes
+        self.transport = transport
         self.root = state.root / "cache" / "policies"
         self.incoming = self.root / "incoming"
         self.artifacts = self.root / "sha256"
@@ -112,7 +124,8 @@ class AdapterCache:
             cached = await asyncio.to_thread(self._verify, manifest, final_path)
             self._last_used[manifest.policy_id] = time.monotonic()
             return cached
-        await asyncio.to_thread(self._make_space, adapter_size)
+        partial_bytes = await asyncio.to_thread(self._prune_partial_files, manifest)
+        await asyncio.to_thread(self._make_space, adapter_size - partial_bytes)
         await self._validate_remote_manifest(manifest)
         temporary = self.incoming / f".{manifest.policy_id}.{uuid.uuid4().hex}.tmp"
         temporary.mkdir(mode=0o700)
@@ -133,7 +146,7 @@ class AdapterCache:
 
     def _make_space(self, required_bytes: int) -> None:
         entries = self._entries()
-        total = sum(entry.size_bytes for entry in entries)
+        total = sum(entry.size_bytes for entry in entries) + self._incoming_size()
         for entry in sorted(
             entries, key=lambda item: (self._last_used.get(item.manifest.policy_id, 0), item.path.name)
         ):
@@ -206,42 +219,121 @@ class AdapterCache:
         digest: str,
         directory: Path,
     ) -> None:
-        async with self.client.stream_policy_file(manifest.policy_id, name) as response:
-            if response.headers.get("content-encoding", "identity").lower() != "identity":
-                raise CoordinatorProtocolError("policy file uses unsupported content encoding")
-            expected_type = "application/json" if name == "adapter_config.json" else "application/octet-stream"
-            if response.headers.get("content-type", "").split(";", 1)[0].lower() != expected_type:
-                raise CoordinatorProtocolError("policy file has the wrong content type")
-            if response.headers.get("etag") != f'"{digest}"':
-                raise CoordinatorProtocolError("policy file ETag does not match its manifest")
-            if response.headers.get("content-range") is not None:
-                raise CoordinatorProtocolError("policy file unexpectedly returned a byte range")
+        part_path = self.incoming / f"{digest.removeprefix('sha256:')}.{name}.part"
+        if part_path.is_symlink() or (part_path.exists() and not part_path.is_file()):
+            raise AdapterCacheCorruptionError("partial policy file path is unsafe")
+        if part_path.exists() and part_path.stat().st_size > size_bytes:
+            part_path.unlink()
+
+        if self.transport is not None and not part_path.exists():
+            downloaded = await self.transport.download_shardcast(
+                manifest,
+                name,
+                size_bytes=size_bytes,
+                digest=digest,
+                destination=part_path,
+            )
+            if downloaded:
+                received, hasher = self._partial_digest(part_path)
+                if received != size_bytes or f"sha256:{hasher.hexdigest()}" != digest:
+                    part_path.unlink(missing_ok=True)
+
+        attempts = self.transport.attempts if self.transport is not None else 1
+        for attempt in range(attempts):
+            offset, hasher = self._partial_digest(part_path)
+            if offset == size_bytes:
+                break
+            if offset == 0 and part_path.exists():
+                part_path.unlink()
             try:
-                content_length = int(response.headers.get("content-length", ""))
-            except ValueError as error:
-                raise CoordinatorProtocolError("policy file Content-Length is invalid") from error
-            if content_length != size_bytes:
-                raise CoordinatorProtocolError("policy file Content-Length does not match its manifest")
-            path = directory / name
-            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            received = 0
-            hasher = hashlib.sha256()
-            try:
-                with os.fdopen(descriptor, "wb") as file:
-                    async for chunk in response.aiter_bytes():
-                        received += len(chunk)
-                        if received > size_bytes:
-                            raise CoordinatorProtocolError("policy file exceeds its declared size")
-                        file.write(chunk)
-                        hasher.update(chunk)
-                    file.flush()
-                    os.fsync(file.fileno())
-            except BaseException:
-                path.unlink(missing_ok=True)
-                raise
-            if received != size_bytes or f"sha256:{hasher.hexdigest()}" != digest:
-                path.unlink(missing_ok=True)
-                raise CoordinatorProtocolError("policy file bytes do not match its manifest")
+                if self.transport is None:
+                    stream = self.client.stream_policy_file(manifest.policy_id, name, offset=offset)
+                    require_digest_etag = True
+                else:
+                    stream = self.transport.stream(
+                        manifest,
+                        name,
+                        offset=offset,
+                        coordinator_only=attempt > 0 and self.transport.coordinator_fallback,
+                    )
+                    require_digest_etag = None
+                async with stream as streamed:
+                    if self.transport is None:
+                        response = streamed
+                    else:
+                        response = streamed.response
+                        require_digest_etag = streamed.require_digest_etag
+                    self._validate_response(
+                        response,
+                        name=name,
+                        size_bytes=size_bytes,
+                        digest=digest,
+                        offset=offset,
+                        require_digest_etag=bool(require_digest_etag),
+                    )
+                    flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW
+                    flags |= os.O_APPEND if offset else os.O_EXCL
+                    descriptor = os.open(part_path, flags, 0o600)
+                    with os.fdopen(descriptor, "ab" if offset else "wb") as file:
+                        async for chunk in response.aiter_bytes():
+                            offset += len(chunk)
+                            if offset > size_bytes:
+                                raise CoordinatorProtocolError("policy file exceeds its declared size")
+                            file.write(chunk)
+                            hasher.update(chunk)
+                        file.flush()
+                        os.fsync(file.fileno())
+            except (httpx.TransportError, httpx.TimeoutException, CoordinatorProtocolError):
+                if attempt + 1 >= attempts:
+                    raise
+                await asyncio.sleep(min(2**attempt, 5))
+
+        received, hasher = self._partial_digest(part_path)
+        if received != size_bytes or f"sha256:{hasher.hexdigest()}" != digest:
+            part_path.unlink(missing_ok=True)
+            raise CoordinatorProtocolError("policy file bytes do not match its manifest")
+        path = directory / name
+        os.replace(part_path, path)
+        self.state._fsync_directory(directory)
+
+    @staticmethod
+    def _partial_digest(path: Path) -> tuple[int, object]:
+        hasher = hashlib.sha256()
+        received = 0
+        if path.exists():
+            with open(path, "rb") as file:
+                while chunk := file.read(1024 * 1024):
+                    received += len(chunk)
+                    hasher.update(chunk)
+        return received, hasher
+
+    @staticmethod
+    def _validate_response(
+        response,
+        *,
+        name: str,
+        size_bytes: int,
+        digest: str,
+        offset: int,
+        require_digest_etag: bool,
+    ) -> None:
+        if response.headers.get("content-encoding", "identity").lower() != "identity":
+            raise CoordinatorProtocolError("policy file uses unsupported content encoding")
+        expected_type = "application/json" if name == "adapter_config.json" else "application/octet-stream"
+        if response.headers.get("content-type", "").split(";", 1)[0].lower() != expected_type:
+            raise CoordinatorProtocolError("policy file has the wrong content type")
+        if require_digest_etag and response.headers.get("etag") != f'"{digest}"':
+            raise CoordinatorProtocolError("policy file ETag does not match its manifest")
+        try:
+            content_length = int(response.headers.get("content-length", ""))
+        except ValueError as error:
+            raise CoordinatorProtocolError("policy file Content-Length is invalid") from error
+        if content_length != size_bytes - offset:
+            raise CoordinatorProtocolError("policy file Content-Length does not match its manifest")
+        content_range = response.headers.get("content-range")
+        expected_range = None if not offset else f"bytes {offset}-{size_bytes - 1}/{size_bytes}"
+        if content_range != expected_range:
+            raise CoordinatorProtocolError("policy file Content-Range does not match the requested offset")
 
     def _verify(self, manifest: PolicyManifest, path: Path) -> CachedPolicy:
         if path.is_symlink():
@@ -278,8 +370,36 @@ class AdapterCache:
 
     def _clean_incoming(self) -> None:
         for path in self.incoming.iterdir():
+            if (
+                path.is_file()
+                and not path.is_symlink()
+                and re.fullmatch(
+                    r"[0-9a-f]{64}\.(adapter_config\.json|adapter_model\.safetensors)\.part",
+                    path.name,
+                )
+            ):
+                continue
             self._remove_entry(path)
         self.state._fsync_directory(self.incoming)
+
+    def _prune_partial_files(self, manifest: PolicyManifest) -> int:
+        expected = {
+            f"{artifact.digest.removeprefix('sha256:')}.{artifact.name}.part": artifact.size_bytes
+            for artifact in manifest.adapter.files
+        }
+        total = 0
+        for path in self.incoming.iterdir():
+            if path.name not in expected or path.is_symlink() or not path.is_file():
+                self._remove_entry(path)
+            elif path.stat().st_size > expected[path.name]:
+                path.unlink()
+            else:
+                total += path.stat().st_size
+        self.state._fsync_directory(self.incoming)
+        return total
+
+    def _incoming_size(self) -> int:
+        return sum(path.stat().st_size for path in self.incoming.iterdir() if path.is_file() and not path.is_symlink())
 
     @staticmethod
     def _write_file(path: Path, data: bytes) -> None:

@@ -72,7 +72,7 @@ class VerifiersAssignmentExecutor:
                     rollout.cancel()
                     await asyncio.gather(rollout, return_exceptions=True)
                     raise asyncio.CancelledError
-                episode = vf.WireEpisode.model_validate_json((await rollout).model_dump_json())
+                episode = vf.WireEpisode.model_validate((await rollout).model_dump(mode="python"))
             finally:
                 if not rollout.done():
                     rollout.cancel()

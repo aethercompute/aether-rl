@@ -9,7 +9,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import wandb
 import wandb_workspaces.reports.v2 as wr
 import wandb_workspaces.workspaces as ws
 from transformers.tokenization_utils import PreTrainedTokenizer
@@ -17,6 +16,7 @@ from wandb.errors import CommError
 from wandb.sdk.mailbox.mailbox_handle import ServerResponseError
 from wandb_gql import gql
 
+import wandb
 from aether_rl.configs.shared import WandbConfig, WandbWithExtrasConfig
 from aether_rl.utils.config import BaseConfig
 from aether_rl.utils.logger import get_logger

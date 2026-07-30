@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 import torch
+import zstandard
 
 from aether_rl.coordinator import CoordinatorRepository, create_coordinator_app
 from aether_rl.protocol import (
@@ -352,7 +353,13 @@ async def test_chunked_result_failure_idempotency_and_temp_cleanup(tmp_path: Pat
                 headers=MSGPACK_HEADERS,
                 content=envelope,
             )
+            compressed_too_large = await client.put(
+                f"/api/v1/assignments/{result_assignment.assignment_id}/result",
+                headers={**MSGPACK_HEADERS, "Content-Encoding": "zstd"},
+                content=zstandard.ZstdCompressor().compress(envelope),
+            )
             assert too_large.status_code == 413
+            assert compressed_too_large.status_code == 413
             assert not tuple(repository.spool.incoming_dir.iterdir())
         limited_app.state.coordinator_service.close()
 
@@ -365,8 +372,8 @@ async def test_chunked_result_failure_idempotency_and_temp_cleanup(tmp_path: Pat
             )
             duplicate = await client.put(
                 f"/api/v1/assignments/{result_assignment.assignment_id}/result",
-                headers=MSGPACK_HEADERS,
-                content=envelope,
+                headers={**MSGPACK_HEADERS, "Content-Encoding": "zstd"},
+                content=zstandard.ZstdCompressor().compress(envelope),
             )
             mismatch = await client.put(
                 f"/api/v1/assignments/{failure_assignment.assignment_id}/result",

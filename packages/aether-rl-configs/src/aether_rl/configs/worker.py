@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, HttpUrl, JsonValue, model_validator
 
@@ -36,6 +37,8 @@ class WorkerConfig(BaseConfig):
     heartbeat_interval_seconds: float = Field(default=10, gt=0, allow_inf_nan=False)
     lease_wait_seconds: float = Field(default=30, ge=0, le=60, allow_inf_nan=False)
     request_timeout_seconds: float = Field(default=45, gt=0, allow_inf_nan=False)
+    result_compression: Literal["identity", "zstd"] = "zstd"
+    result_upload_concurrency: int = Field(default=2, ge=1, le=16)
     retry_min_seconds: float = Field(default=0.5, gt=0, allow_inf_nan=False)
     retry_max_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
     shutdown_grace_seconds: float = Field(default=30, ge=0, allow_inf_nan=False)
@@ -48,6 +51,12 @@ class WorkerConfig(BaseConfig):
     max_lora_rank: int = Field(default=64, ge=1)
     max_loaded_policies: int = Field(default=8, ge=1)
     adapter_cache_max_bytes: int = Field(default=20 * 1024**3, ge=1)
+    policy_download_allowed_origins: list[HttpUrl] = []
+    shardcast_servers: list[HttpUrl] = []
+    shardcast_download_concurrency: int = Field(default=4, ge=1, le=32)
+    policy_download_attempts: int = Field(default=3, ge=1, le=20)
+    policy_coordinator_fallback: bool = True
+    policy_prefetch_interval_seconds: float | None = Field(default=5, gt=0, allow_inf_nan=False)
     trust_remote_code: bool = False
     dry_run: bool = False
 
@@ -70,6 +79,16 @@ class WorkerConfig(BaseConfig):
             "::1",
         }:
             raise ValueError("coordinator_url must use HTTPS outside loopback")
+        for origin in self.policy_download_allowed_origins:
+            if origin.scheme != "https":
+                raise ValueError("policy download origins must use HTTPS")
+            if origin.path not in {None, "", "/"} or origin.query is not None:
+                raise ValueError("policy download origins must contain only scheme and authority")
+        for server in self.shardcast_servers:
+            if server.scheme != "https":
+                raise ValueError("SHARDCAST servers must use HTTPS")
+            if server.query is not None:
+                raise ValueError("SHARDCAST server URLs must not contain a query")
         if self.base_model.model_revision == "0" * 40 or self.base_model.tokenizer_revision == "0" * 40:
             raise ValueError("base model and tokenizer revisions must be real pinned commits, not placeholders")
         placeholder_digest = "sha256:" + "0" * 64

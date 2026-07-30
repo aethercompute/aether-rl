@@ -54,6 +54,7 @@ def main() -> None:
             stale_after_seconds=config.stale_after_seconds,
             lease_reaper_interval_seconds=config.lease_reaper_interval_seconds,
             policy_verification_interval_seconds=config.policy_verification_interval_seconds,
+            policy_locations=runtime.policy_locations if runtime.policy_distributor is not None else None,
             trainer_ready=runtime.ready,
             startup=runtime.start,
             shutdown=runtime.stop,

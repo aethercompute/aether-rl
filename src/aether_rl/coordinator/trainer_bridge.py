@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import uuid
 from pathlib import Path
@@ -20,27 +21,46 @@ class CoordinatorTrainingBatchExporter:
         self.trainer_output_dir = Path(trainer_output_dir)
         self.run_id = run_id
         self.run_config = run_config
+        self.last_exported_step = 0
 
     def export_available(self, *, limit: int | None = None) -> int:
         if limit is not None and limit < 1:
             raise ValueError("export limit must be positive")
         self._export_run_config()
         exported = 0
-        for record in self.repository.training_batches():
+        for record in self.repository.training_batches(after_step=self.last_exported_step):
             if limit is not None and exported >= limit:
                 break
             if self._export_record(record):
                 exported += 1
+            self.last_exported_step = record.step
         return exported
 
     def _export_record(self, record: TrainingBatchRecord) -> bool:
+        final_path = self._batch_path(record.step)
+        if final_path.is_symlink():
+            raise ArtifactCorruptionError("exported trainer batch path is unsafe")
+        if final_path.is_file():
+            if (
+                final_path.stat().st_size != record.size_bytes
+                or self._file_digest(final_path) != record.artifact_digest
+            ):
+                raise ArtifactCorruptionError("exported trainer batch conflicts with coordinator state")
+            return False
         data = record.artifact_path.read_bytes()
         if len(data) != record.size_bytes or sha256_digest(data) != record.artifact_digest:
             raise ArtifactCorruptionError("training batch artifact does not match durable state")
-        final_path = self._batch_path(record.step)
         return self._publish_file(
             final_path, data, conflict_message="exported trainer batch conflicts with coordinator state"
         )
+
+    @staticmethod
+    def _file_digest(path: Path) -> str:
+        hasher = hashlib.sha256()
+        with open(path, "rb") as file:
+            while chunk := file.read(1024 * 1024):
+                hasher.update(chunk)
+        return f"sha256:{hasher.hexdigest()}"
 
     def _export_run_config(self) -> None:
         final_path = self.trainer_output_dir / self.run_id / "control" / "orch.toml"

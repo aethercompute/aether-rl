@@ -24,6 +24,12 @@ Install the worker role plus every environment package it advertises:
 scripts/setup-worker.sh reverse-text-v1
 ```
 
+Install the optional CPU policy-relay role separately; only this role needs the SHARDCAST package:
+
+```bash
+scripts/setup-relay.sh
+```
+
 For development:
 
 ```bash

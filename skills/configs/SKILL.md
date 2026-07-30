@@ -35,4 +35,8 @@ The coordinator owns trainer output and resume. Distributed trainer configs requ
 Workers generate and overwrite `<state_dir>/inference.toml`; configure worker-local inference through worker fields rather than maintaining that file.
 Use worker `max_model_len` to cap KV-cache context for models whose native context is too large for the rollout GPU.
 
+Server `[policy_distribution]` optionally publishes immutable policies to S3/R2 with `type`, `bucket`, `prefix`, `endpoint_url`, `region`, and `presign_ttl_seconds`. Use the boto3 credential chain, never TOML secrets. Worker policy order is SHARDCAST, approved presigned HTTPS origin, then coordinator fallback. Configure `policy_download_allowed_origins`, `shardcast_servers`, shard concurrency, attempts, fallback, and prefetch interval. Prefetch warms disk only. Worker results default to zstd with two concurrent uploaders; server/source limits are decompressed limits.
+
+The `policy-relay` config requires `coordinator_url`; optional fields are `state_dir`, `port`, polling/request timeouts, `max_versions`, `shard_size_bytes`, and approved policy origins. It requires `AETHER_COORDINATOR_TOKEN` and external TLS.
+
 Use `docs/configuration.md` for field tables and invariants.

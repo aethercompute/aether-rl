@@ -1586,8 +1586,12 @@ class CoordinatorRepository:
                 ((step, batch_ordinal, *member) for batch_ordinal, member in enumerate(members)),
             )
 
-    def training_batches(self) -> tuple[TrainingBatchRecord, ...]:
-        rows = self.connection.execute("SELECT * FROM training_batches ORDER BY step").fetchall()
+    def training_batches(self, *, after_step: int = 0) -> tuple[TrainingBatchRecord, ...]:
+        if after_step < 0:
+            raise ValueError("after_step must be non-negative")
+        rows = self.connection.execute(
+            "SELECT * FROM training_batches WHERE step > ? ORDER BY step", (after_step,)
+        ).fetchall()
         return tuple(
             TrainingBatchRecord(
                 step=row["step"],

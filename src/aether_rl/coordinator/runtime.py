@@ -27,6 +27,7 @@ from aether_rl.utils.process import DEFAULT_COMMON_ENV_VARS, DEFAULT_TRAINER_ENV
 from .api import CoordinatorService
 from .database import CoordinatorRepository
 from .environments import EnvironmentSourceSpec, verifier_v1_task_payloads
+from .policy_distribution import S3PolicyDistributor
 from .results import RemoteResultProcessor, ResultProcessingSource
 from .trainer_bridge import CoordinatorTrainingBatchExporter
 
@@ -106,6 +107,9 @@ class CoordinatorRuntime:
         self.healthy = False
         self.resume_step: int | None = None
         self.trainer_config = self.validate_config(config)
+        self.policy_distributor = (
+            S3PolicyDistributor(config.policy_distribution) if config.policy_distribution is not None else None
+        )
         self.trainer_output_dir = config.trainer_output_dir or (config.run_root / "trainer")
         self.trainer_run_id = f"run_{config.run_id}"
 
@@ -129,6 +133,7 @@ class CoordinatorRuntime:
         active = await self.service.call(self.repository.active_policy)
         if not isinstance(active, PolicyManifest):
             raise TypeError("repository returned an invalid active policy")
+        await self._distribute_policy(active)
         await self._prune_published_artifacts(active.policy_version)
         self.resume_step = active.policy_version or None
         self.exporter = CoordinatorTrainingBatchExporter(
@@ -317,6 +322,7 @@ class CoordinatorRuntime:
             dropout=lora.dropout,
             created_at=time.time(),
         )
+        await self._distribute_policy(manifest)
         await self.service.call(
             self.repository.record_and_activate_policy,
             manifest,
@@ -324,6 +330,20 @@ class CoordinatorRuntime:
         )
         await self._prune_published_artifacts(version)
         return True
+
+    async def policy_locations(self, manifest: PolicyManifest):
+        if getattr(self, "policy_distributor", None) is None:
+            raise RuntimeError("external policy distribution is not configured")
+        return await asyncio.to_thread(self.policy_distributor.locations, manifest)
+
+    async def _distribute_policy(self, manifest: PolicyManifest) -> None:
+        if getattr(self, "policy_distributor", None) is None or manifest.adapter is None:
+            return
+        await asyncio.to_thread(
+            self.policy_distributor.publish,
+            manifest,
+            self.config.run_root / "policies" / manifest.policy_id,
+        )
 
     async def _prune_published_artifacts(self, active_version: int) -> None:
         keep_last = self.config.published_checkpoint_keep_last

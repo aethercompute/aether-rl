@@ -24,6 +24,8 @@ Wait for `/health` and `/ready` before workers. `/health` is API liveness only; 
 
 Expose remote coordinators through an external HTTPS proxy, load balancer, mesh, or VPN gateway. Aether RL does not terminate TLS. Preserve auth/protocol headers and support long polling and configured result body sizes.
 
+When server `[policy_distribution]` is configured, keep S3/R2 credentials only on the coordinator; the relay uses coordinator-issued presigned URLs. Optionally start `scripts/run-relay.sh <relay.toml>` after coordinator readiness, expose it through HTTPS, and verify `aether-policies.json` before workers. Worker approved origins and relay URLs must exactly match deployment URLs; leave coordinator fallback enabled unless every adapter file has another usable source.
+
 ## Worker
 
 ```bash
@@ -40,6 +42,7 @@ Workers initiate outbound connections only. `worker` starts vLLM on loopback, wr
 
 - `server`: normal coordinator, result processor, and trainer supervisor.
 - `worker`: normal outbound rollout worker and vLLM supervisor.
+- `policy-relay`: optional current-policy SHARDCAST bridge; requires external TLS.
 - `model-identity`: canonical pinned model/tokenizer fingerprint generator.
 - `trainer`: implementation/debug entrypoint; normally supervised by `server`.
 - `inference`: implementation/debug entrypoint; normally supervised by `worker`.

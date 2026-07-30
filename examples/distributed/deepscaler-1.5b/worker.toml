@@ -9,6 +9,14 @@ max_lora_rank = 64
 max_loaded_policies = 4
 adapter_cache_max_bytes = 21474836480
 spool_max_entries = 512
+result_compression = "zstd"
+result_upload_concurrency = 2
+policy_download_allowed_origins = []
+shardcast_servers = []
+shardcast_download_concurrency = 4
+policy_download_attempts = 3
+policy_coordinator_fallback = true
+policy_prefetch_interval_seconds = 5
 
 [base_model]
 model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"

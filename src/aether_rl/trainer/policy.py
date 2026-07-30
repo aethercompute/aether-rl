@@ -109,7 +109,9 @@ def publish_lora_policy(
 
         final_path = policies_dir / policy.policy_id
         if final_path.exists():
-            existing = verify_lora_policy(final_path, expected=policy)
+            existing = verify_lora_policy(final_path)
+            if policy_manifest_digest(existing) != policy_manifest_digest(policy):
+                raise ValueError("existing policy does not match the policy being published")
             _fsync_directory(policies_dir)
             return existing
         try:
@@ -117,7 +119,9 @@ def publish_lora_policy(
         except OSError as error:
             if error.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
                 raise
-            existing = verify_lora_policy(final_path, expected=policy)
+            existing = verify_lora_policy(final_path)
+            if policy_manifest_digest(existing) != policy_manifest_digest(policy):
+                raise ValueError("existing policy does not match the policy being published")
             _fsync_directory(policies_dir)
             return existing
         _fsync_directory(policies_dir)

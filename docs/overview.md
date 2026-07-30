@@ -16,6 +16,8 @@ flowchart LR
         Trainer --> Policies
         Policies --> API
     end
+    ObjectStore[(Optional S3/R2)]
+    Relay[Optional SHARDCAST relay]
     subgraph WorkerA[Worker]
         DaemonA[Worker daemon]
         VLLMA[vLLM on loopback]
@@ -26,6 +28,10 @@ flowchart LR
         DaemonA <--> SpoolA
     end
     WorkerA -->|outbound HTTPS long polling| API
+    Policies --> ObjectStore
+    ObjectStore --> Relay
+    ObjectStore -->|presigned HTTPS| WorkerA
+    Relay -->|HTTPS shards| WorkerA
 ```
 
 ## Responsibilities
@@ -52,7 +58,7 @@ Each worker:
 
 Policy version 0 is the pinned base model without an adapter. Each trainer step writes a full resumable checkpoint and a safetensors adapter. After both artifacts are stable, the coordinator publishes a content-addressed policy manifest and activates it transactionally. New groups use the active policy; existing groups remain pinned to their original policy.
 
-The full model never crosses the coordinator-worker network. Every machine downloads the same base model independently, and only LoRA artifacts are transferred after startup.
+The full model never crosses the coordinator-worker network. Every machine downloads the same base model independently, and only LoRA artifacts are transferred after startup. R2/S3 can hold verified immutable copies and a SHARDCAST relay can accelerate safetensors delivery; workers verify the final SHA-256 digest regardless of source and retain coordinator HTTP as the default fallback.
 
 ## Trust and security
 

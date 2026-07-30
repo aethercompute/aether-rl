@@ -32,7 +32,7 @@ def adapter_state_dict() -> dict[str, torch.Tensor]:
     }
 
 
-def publish(path: Path):
+def publish(path: Path, *, created_at: float = 10.0):
     return publish_lora_policy(
         path,
         run_id="run-1",
@@ -42,7 +42,7 @@ def publish(path: Path):
         rank=2,
         alpha=4,
         dropout=0.0,
-        created_at=10.0,
+        created_at=created_at,
     )
 
 
@@ -57,6 +57,7 @@ def test_publish_lora_policy_is_atomic_verifiable_and_idempotent(tmp_path: Path)
     }
     assert verify_lora_policy(policy_path) == manifest
     assert publish(tmp_path) == manifest
+    assert publish(tmp_path, created_at=11.0) == manifest
     assert not any(entry.name.startswith(".policy-") for entry in tmp_path.iterdir())
 
 
