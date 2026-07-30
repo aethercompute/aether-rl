@@ -49,6 +49,7 @@ members = [
     "color-codeword-v1",
     "compact",
     "deepdive-v1",
+    "deepscaler-v1",
     "deepwiki-v1",
     "enterprise-ops-gym-v1",
     "forth-lang-v1",
@@ -1647,6 +1648,21 @@ requires-dist = [
     { name = "datasets" },
     { name = "openai" },
     { name = "verifiers", specifier = ">=0.2.0" },
+]
+
+[[package]]
+name = "deepscaler-v1"
+version = "0.1.0"
+source = { editable = "environments/deepscaler_v1" }
+dependencies = [
+    { name = "datasets" },
+    { name = "verifiers" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "datasets" },
+    { name = "verifiers", editable = "deps/verifiers" },
 ]
 
 [[package]]

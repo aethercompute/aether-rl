@@ -22,6 +22,7 @@ The canonical shape is [`examples/distributed/reverse-text/server.toml`](../exam
 | `trainer_output_dir` | `<run_root>/trainer` | Checkpoints, rollouts, and adapter handoff. |
 | `trainer_processes` | `1` | Local `torch.distributed.run` process count. |
 | `training_batch_size` | `1` | Completed groups exported in each trainer batch. |
+| `published_checkpoint_keep_last` | unset | Total active/recent published full checkpoints to retain; unset retains all. |
 | `host`, `port` | `127.0.0.1`, `8080` | HTTP listener behind external TLS. |
 | `lease_duration_seconds` | `30` | Initial worker lease lifetime. |
 | `max_policy_lag` | `0` | Allowed active-policy versions before train work is stale. |
@@ -105,11 +106,13 @@ Distributed training requires:
 
 - `[model.lora]` with no `modules_to_save`.
 - `[ckpt] interval = 1` with complete optimizer, scheduler, dataloader, and progress state.
-- No checkpoint pruning, custom checkpoint output directory, `weights_only`, skip flags, or configured `resume_step`.
+- No trainer-owned checkpoint pruning, custom checkpoint output directory, `weights_only`, skip flags, or configured `resume_step`.
 - Filesystem weight broadcast in safetensors format.
 - Exactly one run.
 
 The coordinator sets the trainer output directory and resume step. Common trainer sections are `[model]`, `[model.lora]`, `[optim]`, `[scheduler]`, `[loss]`, `[ckpt]`, `[wandb]`, `[file_monitor]`, and `[metrics_server]`.
+
+Set server `published_checkpoint_keep_last` to bound full-checkpoint retention. Cleanup runs only after durable policy activation, never removes unpublished future checkpoints, and also removes the now-redundant trainer broadcast copy. Immutable published policy adapters remain retained. Lowering this value applies on the next publication or coordinator startup and irreversibly removes newly eligible checkpoints, so back up the stopped run first when rollback history matters. Leave trainer `ckpt.keep_last` and `ckpt.keep_interval` unset.
 
 Under `[wandb]`, set `log_metrics` to an exact metric-name allowlist to avoid auto-generating panels for every trainer diagnostic. Set `create_overview = false` when the generic project workspace is not useful for the run.
 

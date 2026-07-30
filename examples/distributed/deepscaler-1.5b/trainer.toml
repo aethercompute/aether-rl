@@ -1,0 +1,55 @@
+max_steps = 100
+
+[model]
+name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+revision = "ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562"
+seq_len = 12288
+impl = "hf"
+attn = "flash_attention_2"
+
+[model.lora]
+rank = 64
+alpha = 128.0
+
+[tokenizer]
+name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+revision = "164af3f02f5b3aedf8cbdb94aee9e2705ae31be5"
+
+[optim]
+type = "adamw"
+lr = 0.00001
+max_norm = 1.0
+
+[scheduler]
+type = "constant"
+
+[loss]
+type = "default"
+dppo_mask_low = 0.2
+dppo_mask_high = 0.2
+kl_tau = 0.001
+
+[ckpt]
+interval = 1
+weights = "None"
+
+[file_monitor]
+filename = "metrics.jsonl"
+
+[wandb]
+project = "aether-rl-math"
+name = "deepscaler-r1-qwen-1.5b-stage1"
+group = "deepscaler-1.5b"
+tags = ["grpo", "math", "deepscaler", "deepseek-r1", "lora", "distributed"]
+create_overview = false
+log_metrics = [
+    "loss/mean",
+    "entropy/all/mean",
+    "mismatch_kl/all/mean",
+    "optim/grad_norm",
+    "optim/lr",
+    "perf/throughput",
+    "time/step",
+    "time/wait_for_batch",
+    "system/ckpt_disk_free_gib",
+]

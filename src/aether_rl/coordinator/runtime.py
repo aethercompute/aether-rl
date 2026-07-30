@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import shutil
 import sys
 import time
 from itertools import islice
+from pathlib import Path
 
 import tomli
 import tomli_w
@@ -25,6 +28,67 @@ from .database import CoordinatorRepository
 from .environments import EnvironmentSourceSpec, verifier_v1_task_payloads
 from .results import RemoteResultProcessor, ResultProcessingSource
 from .trainer_bridge import CoordinatorTrainingBatchExporter
+
+logger = logging.getLogger(__name__)
+
+
+def _open_directory_chain(root: os.PathLike[str], parts: tuple[str, ...]) -> int:
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in parts:
+            next_descriptor = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def prune_published_trainer_artifacts(
+    trainer_output_dir: os.PathLike[str],
+    trainer_run_id: str,
+    *,
+    active_version: int,
+    checkpoint_keep_last: int,
+) -> None:
+    checkpoint_cutoff = active_version - checkpoint_keep_last
+    output_dir = Path(trainer_output_dir)
+    roots = (
+        (("checkpoints",), checkpoint_cutoff),
+        ((trainer_run_id, "broadcasts"), active_version),
+    )
+    for parts, cutoff in roots:
+        if cutoff < 1:
+            continue
+        root = output_dir.joinpath(*parts)
+        try:
+            descriptor = _open_directory_chain(output_dir, parts)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            logger.warning("failed to inspect published trainer artifacts under %s: %s", root, error)
+            continue
+        try:
+            with os.scandir(descriptor) as entries:
+                for entry in entries:
+                    prefix, separator, suffix = entry.name.partition("_")
+                    if (
+                        prefix != "step"
+                        or separator != "_"
+                        or not suffix.isdigit()
+                        or int(suffix) > cutoff
+                        or not entry.is_dir(follow_symlinks=False)
+                    ):
+                        continue
+                    try:
+                        shutil.rmtree(entry.name, dir_fd=descriptor)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as error:
+                        logger.warning("failed to prune published trainer artifact %s: %s", root / entry.name, error)
+        finally:
+            os.close(descriptor)
 
 
 class CoordinatorRuntime:
@@ -64,6 +128,7 @@ class CoordinatorRuntime:
         active = await self.service.call(self.repository.active_policy)
         if not isinstance(active, PolicyManifest):
             raise TypeError("repository returned an invalid active policy")
+        await self._prune_published_artifacts(active.policy_version)
         self.resume_step = active.policy_version or None
         self.exporter = CoordinatorTrainingBatchExporter(
             self.repository,
@@ -246,7 +311,20 @@ class CoordinatorRuntime:
             manifest,
             self.config.run_root / "policies" / manifest.policy_id,
         )
+        await self._prune_published_artifacts(version)
         return True
+
+    async def _prune_published_artifacts(self, active_version: int) -> None:
+        keep_last = self.config.published_checkpoint_keep_last
+        if keep_last is None or active_version < 1:
+            return
+        await asyncio.to_thread(
+            prune_published_trainer_artifacts,
+            self.trainer_output_dir,
+            self.trainer_run_id,
+            active_version=active_version,
+            checkpoint_keep_last=keep_last,
+        )
 
     @staticmethod
     def validate_config(config: ServerConfig) -> TrainerConfig:

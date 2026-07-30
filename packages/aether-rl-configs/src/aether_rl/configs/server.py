@@ -52,6 +52,8 @@ class ServerConfig(BaseConfig):
     trainer_output_dir: Path | None = None
     trainer_processes: int = Field(default=1, ge=1)
     training_batch_size: int = Field(default=1, ge=1)
+    published_checkpoint_keep_last: int | None = Field(default=None, ge=1)
+    """Retain this many active/recent full checkpoints after durable policy publication. None retains all checkpoints."""
     service_interval_seconds: float = Field(default=0.2, gt=0, allow_inf_nan=False)
     host: str = "127.0.0.1"
     port: int = Field(default=8080, ge=1, le=65535)

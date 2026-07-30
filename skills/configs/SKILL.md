@@ -30,7 +30,7 @@ The server and all workers require the same full model/tokenizer revisions, fing
 
 Server `[[sources]]` define tasksets, sampling, groups, retry limits, and train/eval processing. Supported algorithms are GRPO, MaxRL, ECHO, and external-teacher OPD. Supported rollout filters are gibberish, repetition, and zero advantage.
 
-The coordinator owns trainer output and resume. Distributed trainer configs require LoRA, safetensors, complete unpruned checkpoints every step, and no resume or partial-load overrides.
+The coordinator owns trainer output and resume. Distributed trainer configs require LoRA, safetensors, complete checkpoints every step, and no trainer-owned pruning, resume, or partial-load overrides. Server `published_checkpoint_keep_last` can safely bound full-checkpoint retention after durable policy activation; unset retains all checkpoints.
 
 Workers generate and overwrite `<state_dir>/inference.toml`; configure worker-local inference through worker fields rather than maintaining that file.
 

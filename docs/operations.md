@@ -79,6 +79,8 @@ Do not edit SQLite, spools, queues, policies, checkpoints, or generated inferenc
 
 Startup migrates older supported schemas, verifies referenced results and policies, removes abandoned incoming files, resets interrupted result processing, expires stale leases, and reconciles stable unpublished trainer artifacts. Resume uses the active policy's exact full checkpoint.
 
+When `published_checkpoint_keep_last` is configured, the coordinator prunes older full checkpoints only after the corresponding policy is durably activated. It also removes published trainer broadcast copies; immutable policy adapters remain under `policies/`. Startup repeats this cleanup to reconcile a crash between activation and deletion. Filesystem cleanup failures are logged without invalidating the activated policy and are retried on the next publication or restart, so monitor disk use rather than treating retention as a hard quota.
+
 If the trainer exits unexpectedly, readiness becomes false and new leases are gated. Restart the coordinator process after diagnosing the trainer log. A completed run whose active policy reached `max_steps` does not relaunch the trainer and is not reported ready for new leases.
 
 ### Worker

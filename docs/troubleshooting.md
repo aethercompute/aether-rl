@@ -67,10 +67,10 @@ Files under `<state_dir>/spool/rejected/` represent nonretryable submissions and
 
 ## Restart does not resume
 
-Confirm the complete run root and trainer output are present and that every active policy version has its full checkpoint. Do not point a new run at an old database, change source definitions under existing IDs, or set trainer `ckpt.resume_step` manually. Only one coordinator may hold a run root.
+Confirm the complete run root and trainer output are present and that the active policy version has its full checkpoint. Do not point a new run at an old database, change source definitions under existing IDs, or set trainer `ckpt.resume_step` manually. Only one coordinator may hold a run root.
 
 For workers, preserve the original `state_dir`. Starting two workers against one state directory fails its process lock and risks operational confusion.
 
 ## Disk growth
 
-Distributed checkpoints cannot be pruned while a run is active because restart and policy publication require every next stable version. Plan capacity for full per-step checkpoints, immutable policy adapters, accepted traces, and worker caches. Stop and archive completed runs instead of deleting referenced files in place.
+Trainer-owned checkpoint pruning is unsafe because publication may not have consumed the next stable version. Server `published_checkpoint_keep_last` enables coordinator-owned pruning after durable policy activation; unset retains every checkpoint. Plan capacity for retained full checkpoints, immutable policy adapters, accepted traces, and worker caches. Do not manually delete active or unpublished checkpoints or referenced policy files.
