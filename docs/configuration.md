@@ -83,8 +83,9 @@ Supported rollout filters are `gibberish`, `repetition`, and `zero_advantage`. A
 GRPO uses mean-centered group rewards without standard-deviation normalization. Its
 optional `shortest_correct` length penalty reads a named thinking-only trace metric,
 leaves the shortest correct rollout unchanged, and subtracts a flat penalty from
-longer correct rollouts before centering. It requires binary aggregate rewards and
-never reads total response length:
+longer correct rollouts before centering. It can also subtract a bounded
+thinking-length penalty from incorrect rollouts. It requires binary aggregate
+rewards and never reads total response length:
 
 ```toml
 [sources.algorithm]
@@ -94,6 +95,9 @@ type = "grpo"
 type = "shortest_correct"
 thinking_length_metric = "thinking_tokens"
 penalty = 0.5
+failure_length_penalty = 0.25
+failure_length_metric = "thinking_tokens"
+failure_length_denominator = 16384
 ```
 
 ## Base model identity

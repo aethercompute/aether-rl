@@ -204,6 +204,22 @@ def test_shortest_correct_penalty_requires_binary_rewards_and_valid_metric():
         _grpo([_make_rollout(1.0)], penalty)
 
 
+def test_shortest_correct_penalty_can_penalize_longer_failures():
+    penalty = ShortestCorrectLengthPenaltyConfig(failure_length_penalty=0.25, failure_length_denominator=40)
+    group = [
+        _make_rollout(0.0, metrics={"thinking_tokens": 10}),
+        _make_rollout(0.0, metrics={"thinking_tokens": 20}),
+        _make_rollout(0.0, metrics={"thinking_tokens": 40}),
+    ]
+    assert _grpo(group, penalty) == pytest.approx([1 / 12, 1 / 48, -5 / 48])
+
+
+def test_shortest_correct_penalty_validates_failure_metric():
+    penalty = ShortestCorrectLengthPenaltyConfig(failure_length_penalty=0.25)
+    with pytest.raises(ValueError, match="incorrect rollout has invalid 'thinking_tokens'"):
+        _grpo([_make_rollout(0.0)], penalty)
+
+
 def test_max_rl_mean_normalized():
     # mean 0.25: the success gets (1 - 0.25)/0.25 = 3, failures (0 - 0.25)/0.25 = -1
     assert _max_rl(_make_group(rewards=[1.0, 0.0, 0.0, 0.0])) == pytest.approx([3.0, -1.0, -1.0, -1.0])

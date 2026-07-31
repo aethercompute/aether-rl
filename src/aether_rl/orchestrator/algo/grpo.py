@@ -46,6 +46,7 @@ class GRPOAlgorithm(Algorithm):
                 raise ValueError("shortest-correct thinking penalty requires binary aggregate rewards")
             shaped_rewards = rewards.clone()
             correct = [index for index, reward in enumerate(reward_values) if reward == 1.0]
+            failed = [index for index, reward in enumerate(reward_values) if reward == 0.0]
             if correct:
                 lengths: dict[int, float] = {}
                 metric = length_penalty.thinking_length_metric
@@ -58,6 +59,18 @@ class GRPOAlgorithm(Algorithm):
                 for index, length in lengths.items():
                     if length > shortest:
                         shaped_rewards[index] -= length_penalty.penalty
+            if failed and length_penalty.failure_length_penalty > 0:
+                metric = length_penalty.failure_length_metric
+                lengths = {}
+                for index in failed:
+                    value = group[index].metrics.get(metric)
+                    if value is None or not math.isfinite(value) or value < 0:
+                        raise ValueError(f"incorrect rollout has invalid {metric!r} metric: {value!r}")
+                    lengths[index] = value
+                denominator = length_penalty.failure_length_denominator or max(lengths.values())
+                denominator = max(denominator, 1.0)
+                for index, length in lengths.items():
+                    shaped_rewards[index] -= length_penalty.failure_length_penalty * min(length / denominator, 1.0)
             advantages = shaped_rewards - shaped_rewards.mean()
         for rollout, advantage in zip(group, advantages.tolist(), strict=True):
             rollout.assign_advantages(advantage)

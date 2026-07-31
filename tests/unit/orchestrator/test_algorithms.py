@@ -84,10 +84,18 @@ def test_rl_loss_type_incompatible_with_frozen_sampling():
 def test_grpo_shortest_correct_length_penalty_config():
     algo = _build(
         type="grpo",
-        length_penalty={"type": "shortest_correct", "thinking_length_metric": "thinking_tokens", "penalty": 0.5},
+        length_penalty={
+            "type": "shortest_correct",
+            "thinking_length_metric": "thinking_tokens",
+            "penalty": 0.5,
+            "failure_length_penalty": 0.25,
+            "failure_length_denominator": 16384,
+        },
     )
     assert algo.length_penalty.type == "shortest_correct"
     assert algo.length_penalty.penalty == 0.5
+    assert algo.length_penalty.failure_length_penalty == 0.25
+    assert algo.length_penalty.failure_length_denominator == 16384
 
     with pytest.raises(ValueError):
         _build(type="grpo", length_penalty={"type": "shortest_correct", "penalty": 1.1})

@@ -1,5 +1,5 @@
 coordinator_url = "http://127.0.0.1:8080" # pass the remote HTTPS URL to run-worker.sh
-state_dir = "outputs/deepseek-r1-1p5b-dapo-efficient-v2/worker"
+state_dir = "outputs/deepseek-r1-1p5b-dapo-efficient-v3/worker"
 execution_slots = 4
 tensor_parallel_size = 1
 inference_port = 8000

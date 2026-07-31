@@ -1,8 +1,8 @@
 # Efficient DeepSeek R1 DAPO math run
 
-This short run trains `deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B` for ten optimizer
+This run trains `deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B` for 80 optimizer
 steps on the pinned English-only `open-r1/DAPO-Math-17k-Processed` subset. It uses
-eight rollouts per problem and eight complete groups per step, for 640 train
+eight rollouts per problem and eight complete groups per step, for 5,120 train
 rollouts. Failed groups may require replacement generation. The 128-task
 deterministic holdout is disjoint after lightweight prompt normalization.
 
@@ -17,26 +17,28 @@ normalization is avoided.
 The `grpo` algorithm mean-centers rewards without standard-deviation normalization.
 The trainer additionally uses Dr. GRPO's fixed 16,384-token response denominator
 and no KL term. Before centering, correct rollouts longer than the shortest correct
-thinking trace in their group receive a flat `0.5` penalty:
+thinking trace in their group receive a flat `0.5` penalty. Incorrect rollouts
+also receive up to a `0.25` penalty in proportion to thinking length, normalized
+by the 16,384-token completion budget:
 
 ```text
-wrong                         -> 0.0
+short wrong                   -> near 0.0
+token-limit wrong             -> -0.25
 shortest correct              -> 1.0
 other correct, longer thought -> 0.5
 ```
 
 Only sampled tokens before `</think>` enter `thinking_tokens`. Prompt tokens, the
 closing delimiter, boxed answer, EOS, and padding do not affect the length penalty.
-The flat penalty is intentionally strong while keeping every correct rollout above
-every incorrect rollout.
+The flat correct penalty is intentionally strong while keeping every correct
+rollout above every incorrect rollout.
 
 ## Limits
 
 Completions may use up to 16,384 tokens. Worker and trainer context are both 20,480
-tokens so the final answer is retained rather than silently truncated. The run is
-short by step and rollout count, but DeepSeek reasoning can still make wall time
-substantial; start with four worker execution slots and adjust only after measuring
-KV-cache utilization and generation throughput.
+tokens so the final answer is retained rather than silently truncated. DeepSeek
+reasoning can make wall time substantial; start with four worker execution slots
+and adjust only after measuring KV-cache utilization and generation throughput.
 
 ## Baseline evaluation
 
@@ -81,16 +83,16 @@ export AETHER_COORDINATOR_TOKEN='<same-random-ascii-secret>'
 scripts/run-worker.sh \
   examples/distributed/dapo-math-1.5b/worker.toml \
   https://coordinator.example.com \
-  --state-dir "/var/lib/aether/dapo-math-v2-$(hostname)"
+  --state-dir "/var/lib/aether/dapo-math-v3-$(hostname)"
 ```
 
 ## Final evaluation
 
-After policy version 10 is published, stop the distributed worker. In one terminal,
+After policy version 80 is published, stop the distributed worker. In one terminal,
 serve the final adapter from the coordinator host:
 
 ```bash
-FINAL_POLICY=$(ls -d outputs/deepseek-r1-1p5b-dapo-efficient-v2/server/policies/policy-v00000010-*)
+FINAL_POLICY=$(ls -d outputs/deepseek-r1-1p5b-dapo-efficient-v3/server/policies/policy-v00000080-*)
 uv run vllm serve deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
   --revision ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562 \
   --tokenizer-revision ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562 \

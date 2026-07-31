@@ -115,6 +115,15 @@ class ShortestCorrectLengthPenaltyConfig(BaseConfig):
     penalty: float = Field(default=0.5, gt=0, le=1, allow_inf_nan=False)
     """Flat amount subtracted from longer correct rollouts. At most 1 so correctness never becomes negative."""
 
+    failure_length_penalty: float = Field(default=0.0, ge=0, le=1, allow_inf_nan=False)
+    """Optional penalty subtracted from incorrect rollouts in proportion to thinking length."""
+
+    failure_length_metric: str = Field(default="thinking_tokens", min_length=1)
+    """Trace metric used when `failure_length_penalty` is enabled."""
+
+    failure_length_denominator: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    """Positive normalization denominator for incorrect thinking length; defaults to the group's max."""
+
 
 LengthPenaltyConfig: TypeAlias = Annotated[
     LinearLengthPenaltyConfig | ShortestCorrectLengthPenaltyConfig,
