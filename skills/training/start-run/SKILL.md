@@ -5,7 +5,7 @@ description: Launch Aether RL coordinator and outbound rollout workers. Use when
 
 # Start A Run
 
-Use persistent, unique `run_root` and worker `state_dir` paths. Install each selected verifier environment on the coordinator and every compatible worker. Generate immutable model identity values with `uv run model-identity`; checked-in zeros are placeholders.
+Use persistent, unique `run_root` and worker `state_dir` paths. Install each selected verifier environment on the coordinator and every compatible worker. Generate immutable model identity values with `uv run model-identity`.
 
 Both roles require the same `AETHER_COORDINATOR_TOKEN`.
 
@@ -13,7 +13,7 @@ Both roles require the same `AETHER_COORDINATOR_TOKEN`.
 
 ```bash
 export AETHER_COORDINATOR_TOKEN='<secret>'
-scripts/run-server.sh examples/distributed/reverse-text/server.toml
+scripts/run-server.sh server.toml
 ```
 
 The coordinator starts and supervises the central trainer. Do not launch another trainer for the same run. Preflight validates configuration, trainer model/tokenizer revisions, and distributed checkpoint compatibility, but does not start the trainer, load weights, open the production database, or test disk capacity.
@@ -29,9 +29,9 @@ When server `[policy_distribution]` is configured, keep S3/R2 credentials only o
 ## Worker
 
 ```bash
-scripts/setup-worker.sh reverse-text-v1
+scripts/setup-worker.sh 'your-environment-package'
 export AETHER_COORDINATOR_TOKEN='<same-secret>'
-scripts/run-worker.sh examples/distributed/reverse-text/worker.toml https://coordinator.example.com
+scripts/run-worker.sh worker.toml https://coordinator.example.com
 ```
 
 Worker preflight checks GPU visibility, artifact fingerprints, package versions, and environment resolution. It does not contact the coordinator, load model weights, start vLLM, execute a rollout, or check disk capacity.

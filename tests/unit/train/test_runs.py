@@ -4,7 +4,7 @@ from aether_rl.trainer.runs import MultiRunManager
 
 
 def test_discover_runs_preserves_dots_in_directory_name(tmp_path):
-    run_id = "run_deepscaler-r1-qwen-1.5b-stage1"
+    run_id = "run_model-1.5b-stage1"
     (tmp_path / run_id).mkdir()
     discovered = []
 

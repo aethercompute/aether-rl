@@ -9,7 +9,7 @@ def test_summarize_eval_groups_by_behavior_policy(tmp_path):
     groups_dir.mkdir()
     payload = ProcessedGroupPayload(
         group_id="group-1",
-        source_id="reverse-text-proof-eval",
+        source_id="evaluation",
         kind="eval",
         policy_id="policy-3",
         policy_version=3,
@@ -31,9 +31,9 @@ def test_summarize_eval_groups_by_behavior_policy(tmp_path):
     )
     (groups_dir / "group.msgpack").write_bytes(msgspec.msgpack.encode(payload))
 
-    assert summarize_eval(groups_dir, source_id="reverse-text-proof-eval") == [
+    assert summarize_eval(groups_dir, source_id="evaluation") == [
         {
-            "source_id": "reverse-text-proof-eval",
+            "source_id": "evaluation",
             "policy_version": 3,
             "policy_id": "policy-3",
             "groups": 1,

@@ -11,7 +11,7 @@ Multiple `@ file.toml` arguments compose from left to right, and later CLI value
 
 ## Server
 
-The canonical shape is [`examples/distributed/reverse-text/server.toml`](../examples/distributed/reverse-text/server.toml).
+The server configuration contains run identity, trainer supervision, model identity, and one or more sources.
 
 | Field | Default | Purpose |
 | --- | --- | --- |
@@ -54,11 +54,11 @@ Each `[[sources]]` entry defines train or evaluation work:
 
 ```toml
 [[sources]]
-source_id = "reverse-text-train"
+source_id = "train"
 kind = "train"
-environment_id = "reverse-text-v1"
+environment_id = "environment-v1"
 environment_revision = "0.1.0"
-environment_config = { taskset = { id = "reverse-text-v1" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
+environment_config = { taskset = { id = "environment-v1" }, agent = { harness = { id = "null", runtime = { type = "subprocess" } } } }
 group_size = 8
 max_attempts = 3
 sampling = { temperature = 1.0, max_tokens = 1024 }
@@ -93,7 +93,7 @@ Generate the table with `uv run model-identity`. Worker preflight downloads the 
 
 ## Worker
 
-The canonical shape is [`examples/distributed/reverse-text/worker.toml`](../examples/distributed/reverse-text/worker.toml).
+The worker configuration contains coordinator connectivity, local inference settings, the shared model identity, and its environment catalog.
 
 | Field | Default | Purpose |
 | --- | --- | --- |
@@ -144,7 +144,7 @@ policy_download_allowed_origins = ["https://ACCOUNT_ID.r2.cloudflarestorage.com"
 
 ## Trainer
 
-The coordinator owns trainer launch and resume. The canonical shape is [`examples/distributed/reverse-text/trainer.toml`](../examples/distributed/reverse-text/trainer.toml).
+The coordinator owns trainer launch and resume. The trainer configuration defines model, LoRA, optimization, checkpoint, and monitoring settings.
 
 Distributed training requires:
 

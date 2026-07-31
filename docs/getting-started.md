@@ -1,8 +1,6 @@
 # Getting started
 
-This guide launches the reverse-text example with one coordinator and one or more workers. The checked-in configuration contains identity placeholders and is not runnable until they are replaced.
-
-For a short end-to-end experiment with an objective RL learning signal, use the [distributed up repetition proof](../examples/distributed/up-50step/README.md).
+This guide launches a configured run with one coordinator and one or more workers. Run configurations are workload-specific and are not checked in; prepare `server.toml`, `worker.toml`, and `trainer.toml` using the [configuration reference](configuration.md).
 
 ## 1. Prepare every machine
 
@@ -20,13 +18,14 @@ Use persistent local paths for the server `run_root` and each worker `state_dir`
 The coordinator loads source tasksets, so install every environment package referenced by `server.toml`:
 
 ```bash
-scripts/setup-server.sh reverse-text-v1
+export ENVIRONMENT_PACKAGE='your-environment-package'
+scripts/setup-server.sh "$ENVIRONMENT_PACKAGE"
 ```
 
 Install the worker role and every advertised environment package on each worker:
 
 ```bash
-scripts/setup-worker.sh reverse-text-v1
+scripts/setup-worker.sh "$ENVIRONMENT_PACKAGE"
 ```
 
 Workspace environments are opt-in. Prefer repeated `--package <environment>` arguments instead of `--all-packages`; research environments can have incompatible dependency pins.
@@ -36,9 +35,11 @@ Workspace environments are opt-in. Prefer repeated `--package <environment>` arg
 Resolve the model to a full lowercase 40-character Hugging Face commit. Branches, tags, and mutable local paths are not valid run identities. Generate canonical fingerprints with the same implementation workers use:
 
 ```bash
+export MODEL_REPOSITORY='organization/model'
+export MODEL_REVISION='<40-character-commit>'
 uv run model-identity \
-  --model-name PrimeIntellect/Qwen3-0.6B-Reverse-Text-SFT \
-  --model-revision <40-character-commit>
+  --model-name "$MODEL_REPOSITORY" \
+  --model-revision "$MODEL_REVISION"
 ```
 
 If the tokenizer is in another repository or commit, add `--tokenizer-name` and `--tokenizer-revision`, then set the same values explicitly in the trainer's `[tokenizer]` table. Use `--trust-remote-code` only after reviewing the repository; also set `trust_remote_code = true` in worker config and trainer `[model]` so runtime loading matches identity generation. Private repositories use the normal Hugging Face authentication environment.
@@ -51,7 +52,7 @@ Only unquantized base models with `quantization = "none"` are currently accepted
 
 The coordinator source and worker environment must agree on environment ID, revision, and resolved verifier configuration. The configured package revision must equal the installed package version.
 
-For reverse text, keep `reverse-text-v1` version `0.1.0` installed on both roles. Workers enforce the installed package version; the coordinator resolves and loads its configured taskset but cannot verify that the advertised revision matches a package version. For another environment, update both `[[sources]]` in `server.toml` and `[[environments]]` in `worker.toml`.
+Keep each configured environment package and version installed on both roles. Workers enforce the installed package version; the coordinator resolves and loads its configured taskset but cannot verify that the advertised revision matches a package version. Update both `[[sources]]` in `server.toml` and `[[environments]]` in `worker.toml` together.
 
 ## 5. Secure the coordinator
 
@@ -76,7 +77,7 @@ A VPN alone does not change the worker's URL rule: a non-loopback `coordinator_u
 ## 6. Preflight and launch the coordinator
 
 ```bash
-scripts/run-server.sh examples/distributed/reverse-text/server.toml
+scripts/run-server.sh server.toml
 ```
 
 Server preflight validates configuration, identity shape, source resolution, trainer compatibility, and distributed checkpoint requirements. It does not bind the port, open the production database, load model weights, start the trainer, or test disk capacity.
@@ -97,7 +98,7 @@ Optional S3-compatible policy delivery is configured with server `[policy_distri
 Set `coordinator_url` to the externally reachable HTTPS origin and choose a unique persistent `state_dir` on each worker:
 
 ```bash
-scripts/run-worker.sh examples/distributed/reverse-text/worker.toml https://coordinator.example.com
+scripts/run-worker.sh worker.toml https://coordinator.example.com
 ```
 
 Worker preflight checks GPU visibility, model/tokenizer fingerprints, installed environment versions, and environment resolution. It does not contact the coordinator, load model weights onto the GPU, start vLLM, execute an episode, or check available disk capacity.

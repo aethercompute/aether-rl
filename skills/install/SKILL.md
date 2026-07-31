@@ -15,13 +15,13 @@ cd aether-rl
 The coordinator loads tasksets, so include every environment package referenced by server sources:
 
 ```bash
-scripts/setup-server.sh reverse-text-v1
+scripts/setup-server.sh 'your-environment-package'
 ```
 
 Install the worker role plus every environment package it advertises:
 
 ```bash
-scripts/setup-worker.sh reverse-text-v1
+scripts/setup-worker.sh 'your-environment-package'
 ```
 
 Install the optional CPU policy-relay role separately; only this role needs the SHARDCAST package:
@@ -46,7 +46,7 @@ If an earlier `git clone --recurse-submodules` failed on an SSH-form submodule U
 
 ```bash
 git submodule update --init --recursive --checkout --force deps/pydantic-config
-scripts/setup-worker.sh reverse-text-v1
+scripts/setup-worker.sh 'your-environment-package'
 ```
 
 Use the corresponding setup script and environment package for the intended role. The forced checkout is only for recovery of the incomplete initial clone, not routine setup.

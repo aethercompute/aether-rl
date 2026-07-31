@@ -14,37 +14,40 @@ The coordinator owns durable scheduling, result ingestion, group scoring, traini
 
 ## Quickstart
 
-Clone the repository and install the server plus the example environment. The setup script initializes recursive submodules over HTTPS:
+Clone the repository and install the server plus the environment packages selected by your server sources. The setup script initializes recursive submodules over HTTPS:
 
 ```bash
 git clone https://github.com/aethercompute/aether-rl.git
 cd aether-rl
-scripts/setup-server.sh reverse-text-v1
+export ENVIRONMENT_PACKAGE='your-environment-package'
+scripts/setup-server.sh "$ENVIRONMENT_PACKAGE"
 ```
 
 Generate the immutable identity block for a full Hugging Face commit, then place the output in both `server.toml` and `worker.toml`. Set the same revision in `trainer.toml`.
 
 ```bash
+export MODEL_REPOSITORY='organization/model'
+export MODEL_REVISION='<40-character-commit>'
 uv run model-identity \
-  --model-name PrimeIntellect/Qwen3-0.6B-Reverse-Text-SFT \
-  --model-revision <40-character-commit>
+  --model-name "$MODEL_REPOSITORY" \
+  --model-revision "$MODEL_REVISION"
 ```
 
-The checked-in reverse-text files are structural templates. Their all-zero identities intentionally fail preflight.
+Run configurations are workload-specific and are not checked in. Create `server.toml`, `worker.toml`, and `trainer.toml` as described in the configuration reference.
 
 Set one shared ASCII bearer token, validate the server configuration, and launch the coordinator. The coordinator starts and supervises the trainer.
 
 ```bash
 export AETHER_COORDINATOR_TOKEN='<random-secret>'
-scripts/run-server.sh examples/distributed/reverse-text/server.toml
+scripts/run-server.sh server.toml
 ```
 
 On each worker, install the worker role and environment, update `coordinator_url`, use a unique persistent `state_dir`, then preflight and launch:
 
 ```bash
-scripts/setup-worker.sh reverse-text-v1
+scripts/setup-worker.sh "$ENVIRONMENT_PACKAGE"
 export AETHER_COORDINATOR_TOKEN='<same-random-secret>'
-scripts/run-worker.sh examples/distributed/reverse-text/worker.toml https://coordinator.example.com
+scripts/run-worker.sh worker.toml https://coordinator.example.com
 ```
 
 Remote coordinator URLs must use HTTPS through an external reverse proxy, load balancer, mesh, or VPN gateway. Aether RL does not terminate TLS. Workers and their supervised vLLM processes require no inbound ports.
@@ -56,7 +59,6 @@ Remote coordinator URLs must use HTTPS through an external reverse proxy, load b
 - [Configuration reference](docs/configuration.md)
 - [Operations, monitoring, restart, and upgrades](docs/operations.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [Qwen3.5 4B agentic SWE training recipe](examples/distributed/qwen3.5-4b-r2e/README.md)
 
 ## Development
 

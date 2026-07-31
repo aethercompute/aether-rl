@@ -71,8 +71,8 @@ def rollout_assignment() -> RolloutAssignment:
         group_index=0,
         group_size=2,
         kind="train",
-        environment=EnvironmentIdentity(id="reverse-text-v1", revision="1.0.0"),
-        task_data={"idx": 1, "prompt": "reverse me"},
+        environment=EnvironmentIdentity(id="environment-v1", revision="1.0.0"),
+        task_data={"idx": 1, "prompt": "solve this"},
         sampling=SamplingConfig(max_tokens=32),
         policy=policy_manifest(),
         created_at=10.0,
@@ -213,8 +213,8 @@ def test_terminal_envelope_discriminator_roundtrips_result_and_failure():
         requested_policy_digest=policy_manifest_digest(policy_manifest()),
         served_policy_digest=policy_manifest_digest(policy_manifest()),
         completed_at=20.0,
-        result_digest=episode_digest(WireEpisode(id="episode-1", env="reverse-text-v1", ok=True)),
-        episode=WireEpisode(id="episode-1", env="reverse-text-v1", ok=True),
+        result_digest=episode_digest(WireEpisode(id="episode-1", env="environment-v1", ok=True)),
+        episode=WireEpisode(id="episode-1", env="environment-v1", ok=True),
     )
     decoded_result = adapter.validate_python(result.model_dump())
     assert isinstance(decoded_result, ResultEnvelope)

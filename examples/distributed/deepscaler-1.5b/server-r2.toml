@@ -1,7 +1,0 @@
-[policy_distribution]
-type = "s3"
-bucket = "aether-policies"
-prefix = "deepscaler-stage1-v3"
-endpoint_url = "https://0cc4711b33803a528e1d9c92f655bb21.r2.cloudflarestorage.com"
-region = "auto"
-presign_ttl_seconds = 900

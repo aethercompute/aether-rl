@@ -49,7 +49,6 @@ members = [
     "color-codeword-v1",
     "compact",
     "deepdive-v1",
-    "deepscaler-v1",
     "deepwiki-v1",
     "enterprise-ops-gym-v1",
     "forth-lang-v1",
@@ -96,7 +95,6 @@ members = [
     "proposer-solver-v1",
     "r2e-gym-v1",
     "redsearcher-v1",
-    "reverse-text-proof-v1",
     "reverse-text-v1",
     "s1-deepresearch-v1",
     "scaleswe-v1",
@@ -117,7 +115,6 @@ members = [
     "tmax-v1",
     "triviaqa-v1",
     "unscramble-v1",
-    "up-story-v1",
     "uuid-ctf-v1",
     "verbatim-copy-v1",
     "wideseek-v1",
@@ -1660,21 +1657,6 @@ requires-dist = [
     { name = "datasets" },
     { name = "openai" },
     { name = "verifiers", specifier = ">=0.2.0" },
-]
-
-[[package]]
-name = "deepscaler-v1"
-version = "0.2.0"
-source = { editable = "environments/deepscaler_v1" }
-dependencies = [
-    { name = "datasets" },
-    { name = "verifiers" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "datasets" },
-    { name = "verifiers", editable = "deps/verifiers" },
 ]
 
 [[package]]
@@ -6147,11 +6129,6 @@ wheels = [
 ]
 
 [[package]]
-name = "reverse-text-proof-v1"
-version = "0.1.0"
-source = { editable = "environments/reverse_text_proof_v1" }
-
-[[package]]
 name = "reverse-text-v1"
 version = "0.1.0"
 source = { editable = "deps/verifiers/environments/reverse_text_v1" }
@@ -7711,11 +7688,6 @@ requires-dist = [
     { name = "datasets" },
     { name = "verifiers", specifier = ">=0.2.0" },
 ]
-
-[[package]]
-name = "up-story-v1"
-version = "0.1.0"
-source = { editable = "environments/up_story_v1" }
 
 [[package]]
 name = "urllib3"
