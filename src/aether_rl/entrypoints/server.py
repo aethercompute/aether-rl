@@ -6,6 +6,7 @@ import uvicorn
 
 from aether_rl.configs.server import ServerConfig
 from aether_rl.coordinator import CoordinatorRepository, create_coordinator_app
+from aether_rl.coordinator.policy_distribution import S3PolicyDistributor
 from aether_rl.coordinator.runtime import CoordinatorRuntime
 from aether_rl.protocol import BaseModelIdentity, PolicyManifest
 from aether_rl.utils.config import cli
@@ -34,6 +35,8 @@ def main() -> None:
     base = base_policy(config)
     if config.dry_run:
         CoordinatorRuntime.validate_config(config)
+        if config.policy_distribution is not None:
+            S3PolicyDistributor(config.policy_distribution).validate()
         return
     database_path = config.database_path or (config.run_root / "coordinator.sqlite")
     repository = CoordinatorRepository(database_path, config.run_root)

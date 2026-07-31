@@ -94,6 +94,46 @@ async def test_adapter_cache_downloads_verifies_and_reuses_concurrently(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_adapter_cache_replaces_full_size_corrupt_partial(tmp_path: Path):
+    manifest, source = published_policy(tmp_path)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/manifest"):
+            body = canonical_json_bytes(manifest)
+            return httpx.Response(
+                200,
+                content=body,
+                headers={"Content-Type": "application/json", "ETag": f'"{sha256_digest(body)}"'},
+            )
+        name = request.url.path.rsplit("/", 1)[-1]
+        body = (source / name).read_bytes()
+        artifact = next(item for item in manifest.adapter.files if item.name == name)
+        return httpx.Response(
+            200,
+            content=body,
+            headers={
+                "Content-Type": "application/json" if name.endswith(".json") else "application/octet-stream",
+                "Content-Length": str(len(body)),
+                "ETag": f'"{artifact.digest}"',
+            },
+        )
+
+    async_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://coordinator.test")
+    coordinator = CoordinatorClient("https://coordinator.test", "token", timeout_seconds=5, client=async_client)
+    with WorkerState(tmp_path / "worker-corrupt-partial") as state:
+        cache = AdapterCache(state, coordinator, max_bytes=1024**3)
+        weight = next(item for item in manifest.adapter.files if item.name == "adapter_model.safetensors")
+        partial = cache.incoming / f"{weight.digest.removeprefix('sha256:')}.{weight.name}.part"
+        partial.write_bytes(b"x" * weight.size_bytes)
+
+        cached = await cache.ensure(manifest)
+
+        assert cached is not None
+        assert (cached.path / weight.name).read_bytes() == (source / weight.name).read_bytes()
+    await async_client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_adapter_cache_resumes_from_external_policy_location_without_forwarding_auth(tmp_path: Path):
     manifest, source = published_policy(tmp_path)
     requests: list[httpx.Request] = []
@@ -160,6 +200,7 @@ async def test_adapter_cache_resumes_from_external_policy_location_without_forwa
         request.url.host == "coordinator.test" and request.url.path.endswith("/files/adapter_config.json")
         for request in requests
     )
+    assert sum(request.url.path.endswith("/adapter_config.json") for request in external) == 2
     await async_client.aclose()
 
 

@@ -30,6 +30,8 @@ Install the optional CPU policy-relay role separately; only this role needs the 
 scripts/setup-relay.sh
 ```
 
+Relay setup is inexact and preserves environment packages already selected for a server or worker role in the same checkout.
+
 For development:
 
 ```bash

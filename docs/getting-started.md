@@ -90,7 +90,7 @@ curl -fsS http://127.0.0.1:8080/ready
 
 `/health` confirms only that the API process responds. `/ready` also checks the database, active policy integrity, result processing, and trainer health.
 
-Optional S3-compatible policy delivery is configured with server `[policy_distribution]`; use standard boto3 environment credentials and add the generated presigned URL's exact HTTPS origin to worker `policy_download_allowed_origins`. For SHARDCAST, run `scripts/setup-relay.sh` and `scripts/run-relay.sh <relay.toml>`, terminate TLS in front of it, verify `aether-policies.json`, and add its URL to worker `shardcast_servers`. Start the relay after coordinator readiness and before workers. These paths are accelerators; coordinator delivery remains the default fallback.
+Optional S3-compatible policy delivery is configured with server `[policy_distribution]`; use standard boto3 environment credentials and add the generated presigned URL's exact HTTPS origin to worker `policy_download_allowed_origins`. For SHARDCAST, run `scripts/setup-relay.sh` and `scripts/run-relay.sh <relay.toml>`, terminate TLS in front of it, verify `aether-policies.json`, and add its URL to worker `shardcast_servers`. Relay setup is inexact so it preserves taskset packages already selected for another role in the same checkout. Start the relay after coordinator readiness and before workers. These paths are accelerators; coordinator delivery remains the default fallback.
 
 ## 7. Preflight and launch workers
 

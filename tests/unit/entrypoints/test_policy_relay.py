@@ -14,6 +14,7 @@ from aether_rl.trainer.policy import publish_lora_policy
 from aether_rl.worker.client import CoordinatorClient
 from aether_rl.worker.spool import WorkerState
 from tests.unit.coordinator.test_database import base_model
+from tests.unit.worker.test_policy_runtime import published_policy
 
 
 @pytest.mark.asyncio
@@ -91,4 +92,53 @@ async def test_policy_relay_broadcasts_verified_external_adapter_once(tmp_path: 
     external = [request for request in requests if request.url.host == "cdn.test"]
     assert len(external) == 1
     assert "authorization" not in external[0].headers
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_policy_relay_falls_back_when_external_adapter_is_corrupt(tmp_path: Path):
+    manifest, source = published_policy(tmp_path)
+    artifact = next(file for file in manifest.adapter.files if file.name == "adapter_model.safetensors")
+    artifact_bytes = (source / artifact.name).read_bytes()
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/locations"):
+            locations = PolicyLocations(
+                policy_id=manifest.policy_id,
+                policy_digest=policy_manifest_digest(manifest),
+                expires_at=60,
+                files=tuple(
+                    PolicyFileLocation(name=file.name, url=f"https://cdn.test/{file.name}")
+                    for file in manifest.adapter.files
+                ),
+            )
+            return httpx.Response(200, json=locations.model_dump(mode="json"))
+        if request.url.host == "cdn.test":
+            return httpx.Response(200, content=b"x" * len(artifact_bytes))
+        if request.url.path.endswith(f"/files/{artifact.name}"):
+            return httpx.Response(200, content=artifact_bytes)
+        return httpx.Response(404)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://coordinator.test")
+    coordinator = CoordinatorClient("https://coordinator.test", "token", timeout_seconds=5, client=client)
+    config = PolicyRelayConfig(
+        coordinator_url="https://coordinator.test",
+        state_dir=tmp_path / "relay-fallback",
+        policy_download_allowed_origins=["https://cdn.test"],
+    )
+    with WorkerState(config.state_dir) as state:
+        destination = tmp_path / "adapter.safetensors"
+        await ShardcastPolicyRelay(config, coordinator, state)._download(
+            manifest,
+            artifact.name,
+            artifact.size_bytes,
+            artifact.digest,
+            destination,
+        )
+        assert destination.read_bytes() == artifact_bytes
+
+    assert any(request.url.host == "cdn.test" for request in requests)
+    assert any(request.url.path.endswith(f"/files/{artifact.name}") for request in requests)
     await client.aclose()

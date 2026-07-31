@@ -119,6 +119,8 @@ class CoordinatorRuntime:
     async def start(self) -> None:
         if self.service is None:
             raise RuntimeError("coordinator runtime is missing its database service")
+        if self.policy_distributor is not None:
+            await asyncio.to_thread(self.policy_distributor.validate)
         sources, processing_sources = await self._load_sources()
         for source in sources:
             await self.service.call(self.repository.register_scheduler_source, source)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 from pathlib import Path
 
@@ -32,6 +33,12 @@ class S3PolicyDistributor:
                 region_name=config.region,
             )
         self.client = client
+
+    def validate(self) -> None:
+        try:
+            self.client.head_bucket(Bucket=self.config.bucket)
+        except Exception as error:
+            raise PolicyDistributionError(f"cannot access policy distribution bucket {self.config.bucket!r}") from error
 
     def publish(self, manifest: PolicyManifest, policy_dir: Path) -> None:
         if manifest.adapter is None:
@@ -134,11 +141,28 @@ class S3PolicyDistributor:
         expected = (size, digest.removeprefix("sha256:"))
         if actual != expected:
             raise PolicyDistributionError(f"immutable policy object {key!r} conflicts with published content")
+        self._verify_body(key, size=size, digest=digest)
         return True
 
     def _verify(self, key: str, *, size: int, digest: str) -> None:
         if not self._matches(key, size=size, digest=digest):
             raise PolicyDistributionError(f"policy object {key!r} was not durable after upload")
+
+    def _verify_body(self, key: str, *, size: int, digest: str) -> None:
+        response = self.client.get_object(Bucket=self.config.bucket, Key=key)
+        body = response["Body"]
+        hasher = hashlib.sha256()
+        received = 0
+        try:
+            while chunk := body.read(1024 * 1024):
+                received += len(chunk)
+                hasher.update(chunk)
+        finally:
+            close = getattr(body, "close", None)
+            if close is not None:
+                close()
+        if received != size or f"sha256:{hasher.hexdigest()}" != digest:
+            raise PolicyDistributionError(f"policy object {key!r} bytes do not match published content")
 
     def _key(self, manifest: PolicyManifest, name: str) -> str:
         return f"{self.config.prefix}/runs/{manifest.run_id}/policies/{manifest.policy_id}/{name}"

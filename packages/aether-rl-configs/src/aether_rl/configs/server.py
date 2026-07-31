@@ -55,6 +55,15 @@ class S3PolicyDistributionConfig(BaseConfig):
     def validate_s3(self) -> "S3PolicyDistributionConfig":
         if self.prefix.startswith("/") or self.prefix.endswith("/") or "//" in self.prefix:
             raise ValueError("policy distribution prefix must not have leading, trailing, or repeated slashes")
+        if self.endpoint_url is not None:
+            if self.endpoint_url.host is None or self.endpoint_url.host.startswith("."):
+                raise ValueError("policy distribution endpoint must have a valid host")
+            if self.endpoint_url.scheme != "https" and self.endpoint_url.host not in {
+                "localhost",
+                "127.0.0.1",
+                "::1",
+            }:
+                raise ValueError("policy distribution endpoint must use HTTPS outside loopback")
         return self
 
 

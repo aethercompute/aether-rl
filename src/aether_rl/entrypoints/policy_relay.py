@@ -53,6 +53,7 @@ class ShardcastPolicyRelay:
         if manifest.adapter is None:
             return
         index = self._load_index()
+        self._reconcile_index(index)
         digest = policy_manifest_digest(manifest)
         existing = index["policies"].get(manifest.policy_id)
         if existing is not None and existing.get("policy_digest") == digest:
@@ -80,50 +81,52 @@ class ShardcastPolicyRelay:
                 "shard_count": shard_count,
                 "shard_size_bytes": self.config.shard_size_bytes,
             }
+            self._reconcile_index(index)
             self._publish_index(index)
         finally:
             temporary.unlink(missing_ok=True)
 
     async def _download(self, manifest: PolicyManifest, name: str, size: int, digest: str, path: Path) -> None:
-        response = None
         if self.allowed_origins:
-            locations = await self.coordinator.get_policy_locations(manifest.policy_id)
-            if locations.policy_digest != policy_manifest_digest(manifest):
-                raise CoordinatorProtocolError("policy locations do not match the active policy")
-            location = next(file for file in locations.files if file.name == name)
-            if self._origin(location.url) not in self.allowed_origins:
-                raise CoordinatorProtocolError("policy location uses an unapproved origin")
-            request = self.coordinator.artifact_client.build_request(
-                "GET", location.url, headers={"Accept-Encoding": "identity"}
-            )
-            response = await self.coordinator.artifact_client.send(request, stream=True)
-            if response.status_code != 200:
-                await response.aclose()
-                response = None
-        if response is None:
-            context = self.coordinator.stream_policy_file(manifest.policy_id, name)
-            response = await context.__aenter__()
-        else:
-            context = None
-        try:
-            hasher = hashlib.sha256()
-            received = 0
-            with open(path, "wb") as file:
-                async for chunk in response.aiter_bytes():
-                    received += len(chunk)
-                    if received > size:
-                        raise CoordinatorProtocolError("policy file exceeds its manifest size")
-                    file.write(chunk)
-                    hasher.update(chunk)
-                file.flush()
-                os.fsync(file.fileno())
-            if received != size or f"sha256:{hasher.hexdigest()}" != digest:
-                raise CoordinatorProtocolError("policy file does not match its manifest")
-        finally:
-            if context is None:
-                await response.aclose()
-            else:
-                await context.__aexit__(None, None, None)
+            try:
+                locations = await self.coordinator.get_policy_locations(manifest.policy_id)
+                if locations.policy_digest != policy_manifest_digest(manifest):
+                    raise CoordinatorProtocolError("policy locations do not match the active policy")
+                location = next((file for file in locations.files if file.name == name), None)
+                if location is None or self._origin(location.url) not in self.allowed_origins:
+                    raise CoordinatorProtocolError("policy location uses an unapproved origin")
+                request = self.coordinator.artifact_client.build_request(
+                    "GET", location.url, headers={"Accept-Encoding": "identity"}
+                )
+                response = await self.coordinator.artifact_client.send(request, stream=True)
+                try:
+                    if response.status_code != 200:
+                        raise CoordinatorProtocolError(f"external policy source returned HTTP {response.status_code}")
+                    await self._write_download(response, path, size=size, digest=digest)
+                    return
+                finally:
+                    await response.aclose()
+            except (httpx.HTTPError, CoordinatorAPIError, CoordinatorProtocolError):
+                path.unlink(missing_ok=True)
+
+        async with self.coordinator.stream_policy_file(manifest.policy_id, name) as response:
+            await self._write_download(response, path, size=size, digest=digest)
+
+    @staticmethod
+    async def _write_download(response: httpx.Response, path: Path, *, size: int, digest: str) -> None:
+        hasher = hashlib.sha256()
+        received = 0
+        with open(path, "wb") as file:
+            async for chunk in response.aiter_bytes():
+                received += len(chunk)
+                if received > size:
+                    raise CoordinatorProtocolError("policy file exceeds its manifest size")
+                file.write(chunk)
+                hasher.update(chunk)
+            file.flush()
+            os.fsync(file.fileno())
+        if received != size or f"sha256:{hasher.hexdigest()}" != digest:
+            raise CoordinatorProtocolError("policy file does not match its manifest")
 
     def _load_index(self) -> dict:
         if not self.index_path.exists():
@@ -132,6 +135,16 @@ class ShardcastPolicyRelay:
         if data.get("version") != 1 or not isinstance(data.get("policies"), dict):
             raise ValueError("SHARDCAST policy index is malformed")
         return data
+
+    def _reconcile_index(self, index: dict) -> None:
+        retained = {
+            policy_id: record
+            for policy_id, record in index["policies"].items()
+            if isinstance(record, dict)
+            and isinstance(record.get("version"), str)
+            and (self.data_dir / record["version"]).is_dir()
+        }
+        index["policies"] = dict(list(retained.items())[-self.config.max_versions :])
 
     def _publish_index(self, index: dict) -> None:
         data = canonical_json_bytes(index)

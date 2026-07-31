@@ -114,13 +114,16 @@ class PolicyFileTransport:
                             await response.aclose()
                     raise CoordinatorProtocolError(f"SHARDCAST could not download {filename}")
 
-            try:
-                shards = []
-                for start in range(0, shard_count, self.shardcast_download_concurrency):
-                    stop = min(start + self.shardcast_download_concurrency, shard_count)
-                    shards.extend(await asyncio.gather(*(download(index) for index in range(start, stop))))
-            except (httpx.TransportError, httpx.TimeoutException, CoordinatorProtocolError):
-                return False
+            shards = []
+            for start in range(0, shard_count, self.shardcast_download_concurrency):
+                stop = min(start + self.shardcast_download_concurrency, shard_count)
+                results = await asyncio.gather(
+                    *(download(index) for index in range(start, stop)),
+                    return_exceptions=True,
+                )
+                if any(isinstance(result, BaseException) for result in results):
+                    return False
+                shards.extend(results)
             with open(destination, "wb") as output:
                 for path in shards:
                     with open(path, "rb") as shard:
@@ -155,19 +158,14 @@ class PolicyFileTransport:
     @asynccontextmanager
     async def stream(self, manifest: PolicyManifest, name: str, *, offset: int = 0, coordinator_only: bool = False):
         if self.allowed_origins and not coordinator_only:
-            try:
-                external_url = await self._external_url(manifest, name)
-                response = None if external_url is None else await self._open_external(external_url, offset=offset)
-            except (httpx.TransportError, httpx.TimeoutException, CoordinatorProtocolError):
-                if not self.coordinator_fallback:
-                    raise
-            else:
-                if response is not None:
-                    try:
-                        yield PolicyFileResponse(response, require_digest_etag=False)
-                    finally:
-                        await response.aclose()
-                    return
+            external_url = await self._external_url(manifest, name)
+            response = None if external_url is None else await self._open_external(external_url, offset=offset)
+            if response is not None:
+                try:
+                    yield PolicyFileResponse(response, require_digest_etag=False)
+                finally:
+                    await response.aclose()
+                return
         if not self.coordinator_fallback:
             raise CoordinatorProtocolError("no usable external policy source is available")
         async with self.coordinator.stream_policy_file(manifest.policy_id, name, offset=offset) as response:

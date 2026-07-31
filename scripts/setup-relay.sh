@@ -8,5 +8,5 @@ git -c url.https://github.com/.insteadOf=git@github.com: \
   -c url.https://github.com/.insteadOf=ssh://git@github.com/ \
   submodule update --init --recursive
 
-uv sync --no-default-groups --group relay --package aether-rl
+uv sync --inexact --no-default-groups --group relay --package aether-rl
 printf 'Policy relay setup complete.\n'

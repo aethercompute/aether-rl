@@ -16,7 +16,7 @@ import httpx
 from aether_rl.protocol import PolicyManifest, canonical_json_bytes, policy_manifest_digest, sha256_digest
 from aether_rl.trainer.policy import POLICY_MANIFEST_NAME, verify_lora_policy
 
-from .client import CoordinatorClient, CoordinatorProtocolError
+from .client import CoordinatorAPIError, CoordinatorClient, CoordinatorProtocolError
 from .policy_transport import PolicyFileTransport
 from .spool import WorkerState
 
@@ -54,12 +54,14 @@ class AdapterCache:
         self.artifacts = self.root / "sha256"
         for directory in (state.root / "cache", self.root, self.incoming, self.artifacts):
             state._create_directory(directory)
+        self._cached: dict[Path, CachedPolicy] = {}
         self._clean_incoming()
         self._locks: dict[str, asyncio.Lock] = {}
         self._capacity_lock = asyncio.Lock()
         self._references: dict[str, int] = {}
         self._loaded: set[str] = set()
         self._last_used: dict[str, float] = {}
+        self._cached = {entry.path: entry for entry in self._scan_entries()}
         self.enforce_retention()
 
     async def ensure(self, manifest: PolicyManifest) -> CachedPolicy | None:
@@ -121,7 +123,10 @@ class AdapterCache:
         if final_path.is_symlink():
             raise AdapterCacheCorruptionError("cached policy directory must not be a symlink")
         if final_path.exists():
-            cached = await asyncio.to_thread(self._verify, manifest, final_path)
+            cached = self._cached.get(final_path)
+            if cached is None:
+                cached = await asyncio.to_thread(self._verify, manifest, final_path)
+                self._cached[final_path] = cached
             self._last_used[manifest.policy_id] = time.monotonic()
             return cached
         partial_bytes = await asyncio.to_thread(self._prune_partial_files, manifest)
@@ -138,6 +143,7 @@ class AdapterCache:
             await asyncio.to_thread(verify_lora_policy, temporary, expected=manifest)
             self._publish_directory(temporary, final_path)
             cached = await asyncio.to_thread(self._verify, manifest, final_path)
+            self._cached[final_path] = cached
         finally:
             if temporary.exists() or temporary.is_symlink():
                 self._remove_entry(temporary)
@@ -242,7 +248,10 @@ class AdapterCache:
         for attempt in range(attempts):
             offset, hasher = self._partial_digest(part_path)
             if offset == size_bytes:
-                break
+                if f"sha256:{hasher.hexdigest()}" == digest:
+                    break
+                part_path.unlink()
+                offset, hasher = 0, hashlib.sha256()
             if offset == 0 and part_path.exists():
                 part_path.unlink()
             try:
@@ -254,7 +263,9 @@ class AdapterCache:
                         manifest,
                         name,
                         offset=offset,
-                        coordinator_only=attempt > 0 and self.transport.coordinator_fallback,
+                        coordinator_only=(
+                            self.transport.coordinator_fallback and attempts > 1 and attempt == attempts - 1
+                        ),
                     )
                     require_digest_etag = None
                 async with stream as streamed:
@@ -283,6 +294,13 @@ class AdapterCache:
                             hasher.update(chunk)
                         file.flush()
                         os.fsync(file.fileno())
+                if offset != size_bytes or f"sha256:{hasher.hexdigest()}" != digest:
+                    part_path.unlink(missing_ok=True)
+                    raise CoordinatorProtocolError("policy file bytes do not match its manifest")
+            except CoordinatorAPIError as error:
+                if not error.retryable or attempt + 1 >= attempts:
+                    raise
+                await asyncio.sleep(error.retry_after or min(2**attempt, 5))
             except (httpx.TransportError, httpx.TimeoutException, CoordinatorProtocolError):
                 if attempt + 1 >= attempts:
                     raise
@@ -345,7 +363,7 @@ class AdapterCache:
         size = sum(artifact.size_bytes for artifact in verified.adapter.files) if verified.adapter else 0
         return CachedPolicy(verified, path, size)
 
-    def _entries(self) -> list[CachedPolicy]:
+    def _scan_entries(self) -> list[CachedPolicy]:
         entries: list[CachedPolicy] = []
         for digest_dir in self.artifacts.iterdir():
             if digest_dir.is_symlink() or not digest_dir.is_dir():
@@ -363,6 +381,9 @@ class AdapterCache:
                         raise
                     raise AdapterCacheCorruptionError("adapter cache contains an invalid policy") from error
         return entries
+
+    def _entries(self) -> list[CachedPolicy]:
+        return list(self._cached.values())
 
     def _path(self, manifest: PolicyManifest) -> Path:
         digest = policy_manifest_digest(manifest).removeprefix("sha256:")
@@ -409,8 +430,8 @@ class AdapterCache:
             file.flush()
             os.fsync(file.fileno())
 
-    @staticmethod
-    def _remove_entry(path: Path) -> None:
+    def _remove_entry(self, path: Path) -> None:
+        self._cached.pop(path, None)
         if path.is_symlink() or path.is_file():
             path.unlink()
         elif path.is_dir():

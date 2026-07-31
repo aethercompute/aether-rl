@@ -46,7 +46,7 @@ region = "auto"
 presign_ttl_seconds = 900
 ```
 
-`endpoint_url` is optional for AWS S3. Credentials use the standard boto3 environment/configuration chain and must not be placed in TOML. Publication writes adapter files and metadata under `<prefix>/runs/<run_id>/policies/<policy_id>/`; existing objects must match their recorded size and SHA-256 metadata. The local `run_root` remains authoritative.
+`endpoint_url` is optional for AWS S3 and must use HTTPS outside loopback. Credentials use the standard boto3 environment/configuration chain and must not be placed in TOML. Preflight verifies bucket access. Publication writes adapter files and metadata under `<prefix>/runs/<run_id>/policies/<policy_id>/`; existing objects must match their recorded size, SHA-256 metadata, and body digest. The local `run_root` remains authoritative.
 
 ## Sources
 

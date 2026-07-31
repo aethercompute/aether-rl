@@ -65,7 +65,7 @@ For zstd uploads, ensure the proxy preserves `Content-Encoding: zstd` rather tha
 
 ## External policy download fails
 
-An empty or mismatched `policy_download_allowed_origins` disables presigned URLs. Match the exact HTTPS scheme and authority from the generated URL; redirects are intentionally refused. Check coordinator boto3 credentials, bucket permissions, endpoint and region, clock skew, presigned expiry, and object SHA-256 metadata. With fallback enabled, workers retry through the coordinator.
+An empty or mismatched `policy_download_allowed_origins` disables presigned URLs. Match the exact HTTPS scheme and authority from the generated URL; redirects are intentionally refused. Check coordinator boto3 credentials, bucket permissions, endpoint and region, clock skew, presigned expiry, and object SHA-256 metadata. Server preflight probes bucket access. Workers retry external downloads with fresh locations and use coordinator delivery on the final configured attempt when fallback is enabled.
 
 For SHARDCAST, verify the relay token, relay process output, HTTPS proxy, and `aether-policies.json`. A stale index, evicted version, missing shard, or digest mismatch causes the worker to try the next configured transport. Prefetch only warms the verified disk cache and does not load the adapter into vLLM.
 

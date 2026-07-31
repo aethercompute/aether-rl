@@ -73,9 +73,14 @@ For optional R2 delivery, replace the placeholders in `server-r2.toml`, export s
 boto3-compatible R2 credentials on the coordinator, and compose it after the base config:
 
 ```bash
+export AWS_ACCESS_KEY_ID='<r2-access-key-id>'
+export AWS_SECRET_ACCESS_KEY='<r2-secret-access-key>'
 scripts/run-server.sh examples/distributed/deepscaler-1.5b/server.toml \
   @ examples/distributed/deepscaler-1.5b/server-r2.toml
 ```
+
+The endpoint must include the Cloudflare account ID. Preflight checks endpoint validity and
+bucket access before the trainer starts.
 
 The baseline worker config still uses coordinator delivery. To use R2 and an optional
 SHARDCAST endpoint, replace the origins in `worker-external-policy.toml` and compose it
@@ -106,6 +111,8 @@ HTTPS in front of its port, then start it before workers:
 scripts/setup-relay.sh
 scripts/run-relay.sh examples/distributed/deepscaler-1.5b/policy-relay.toml
 ```
+
+Relay setup preserves environment packages already installed for the server or worker role.
 
 Workers configured with `worker-external-policy.toml` try SHARDCAST, then R2, then the
 coordinator. Every path is size- and SHA-256-verified; the coordinator remains the source

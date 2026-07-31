@@ -1,3 +1,4 @@
+import io
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,12 @@ class FakeS3:
         except KeyError:
             raise MissingObject from None
 
+    def head_bucket(self, *, Bucket):
+        assert Bucket
+
+    def get_object(self, *, Bucket, Key):
+        return {"Body": io.BytesIO(self.objects[(Bucket, Key)]["Body"])}
+
     def put_object(self, *, Bucket, Key, Body, ContentLength, ContentType, CacheControl, Metadata):
         data = Body.read() if hasattr(Body, "read") else Body
         assert len(data) == ContentLength
@@ -46,6 +53,7 @@ def test_s3_policy_distribution_is_verified_idempotent_and_presigned(tmp_path: P
     config = S3PolicyDistributionConfig(bucket="policies", endpoint_url="https://r2.test", presign_ttl_seconds=60)
     distributor = S3PolicyDistributor(config, client=client, clock=lambda: 10)
 
+    distributor.validate()
     distributor.publish(manifest, policy_dir)
     assert client.puts == 4
     distributor.publish(manifest, policy_dir)
@@ -58,6 +66,15 @@ def test_s3_policy_distribution_is_verified_idempotent_and_presigned(tmp_path: P
     assert [file.name for file in locations.files] == ["adapter_config.json", "adapter_model.safetensors"]
 
     object_key = next(key for key in client.objects if key[1].endswith("adapter_model.safetensors"))
-    client.objects[object_key]["ContentLength"] += 1
-    with pytest.raises(PolicyDistributionError, match="conflicts"):
+    client.objects[object_key]["Body"] = b"x" * client.objects[object_key]["ContentLength"]
+    with pytest.raises(PolicyDistributionError, match="bytes do not match"):
         distributor.publish(manifest, policy_dir)
+
+
+def test_s3_policy_distribution_rejects_insecure_and_invalid_endpoints():
+    with pytest.raises(ValueError, match="HTTPS"):
+        S3PolicyDistributionConfig(bucket="policies", endpoint_url="http://r2.test")
+    with pytest.raises(ValueError, match="valid host"):
+        S3PolicyDistributionConfig(bucket="policies", endpoint_url="https://.r2.cloudflarestorage.com")
+
+    S3PolicyDistributionConfig(bucket="policies", endpoint_url="http://127.0.0.1:9000")
