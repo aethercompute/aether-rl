@@ -97,6 +97,7 @@ uv run vllm serve deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
   --served-model-name base \
   --max-model-len 20480 \
   --enable-lora \
+  --max-lora-rank 32 \
   --lora-modules "dapo-candidate=$FINAL_POLICY"
 ```
 
