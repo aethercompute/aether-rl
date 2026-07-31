@@ -1,0 +1,35 @@
+model = "dapo-candidate"
+num_tasks = 128
+num_rollouts = 1
+max_concurrent = 4
+shuffle = false
+push = false
+
+[client]
+type = "train"
+base_url = "http://127.0.0.1:8000/v1"
+renderer_model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+renderer_model_revision = "ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562"
+
+[sampling]
+temperature = 0.0
+top_p = 0.95
+max_tokens = 16384
+
+[env.taskset]
+id = "dapo-math-v1"
+partition = "eval"
+holdout_modulus = 16
+
+[env.agent]
+max_turns = 1
+max_output_tokens = 16384
+
+[env.agent.timeout]
+rollout = 1800
+
+[env.agent.harness]
+id = "null"
+
+[env.agent.harness.runtime]
+type = "subprocess"

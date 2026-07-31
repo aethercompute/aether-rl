@@ -1,0 +1,42 @@
+run_id = "deepseek-r1-1p5b-dapo-efficient-v1"
+run_root = "outputs/deepseek-r1-1p5b-dapo-efficient-v1/server"
+host = "127.0.0.1"
+port = 8080
+trainer_config_path = "examples/distributed/dapo-math-1.5b/trainer.toml"
+trainer_processes = 1
+training_batch_size = 64
+published_checkpoint_keep_last = 2
+lease_duration_seconds = 120
+
+[base_model]
+model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+model_revision = "ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562"
+model_config_digest = "sha256:3aa3cb40c0c8ecafe298c52184816832c6602b9cd4e8c75cb9f9405a64480ee2"
+tokenizer_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+tokenizer_revision = "ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562"
+tokenizer_digest = "sha256:28cdbcac254eb93e703d61654c6ec031f9267f04858ef834ab7217577d3901c8"
+chat_template_digest = "sha256:71616e28c0fb4700e5b766a9b2d64c750695050d6be39ec687b7947e655550b5"
+vocab_size = 151665
+quantization = "none"
+
+[[sources]]
+source_id = "dapo-en-train-v1"
+kind = "train"
+environment_id = "dapo-math-v1"
+environment_revision = "0.1.0"
+environment_config = { taskset = { id = "dapo-math-v1", partition = "train", holdout_modulus = 16 }, agent = { max_turns = 1, max_output_tokens = 16384, timeout = { rollout = 1800 }, harness = { id = "null", runtime = { type = "subprocess" } } } }
+group_size = 8
+max_attempts = 3
+task_limit = 1024
+shuffle_seed = 42
+assignment_timeout_seconds = 2400
+weight = 8.0
+sampling = { temperature = 0.6, top_p = 0.95, max_tokens = 16384 }
+
+[sources.algorithm]
+type = "grpo"
+
+[sources.algorithm.length_penalty]
+type = "shortest_correct"
+thinking_length_metric = "thinking_tokens"
+penalty = 0.5

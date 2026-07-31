@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import torch
@@ -26,7 +27,7 @@ class GRPOAlgorithm(Algorithm):
         length_penalty = self.length_penalty
         if length_penalty is None:
             advantages = rewards - rewards.mean()
-        else:
+        elif length_penalty.type == "linear":
             output = torch.tensor([rollout.num_output_tokens for rollout in group], dtype=rewards.dtype)
             total = torch.tensor([rollout.num_total_tokens for rollout in group], dtype=rewards.dtype)
             turns = torch.tensor([rollout.num_turns for rollout in group], dtype=rewards.dtype)
@@ -38,6 +39,25 @@ class GRPOAlgorithm(Algorithm):
             )
             penalty = rewards.mean() * penalty_frac
             shaped_rewards = rewards - penalty
+            advantages = shaped_rewards - shaped_rewards.mean()
+        else:
+            reward_values = rewards.tolist()
+            if any(reward not in (0.0, 1.0) for reward in reward_values):
+                raise ValueError("shortest-correct thinking penalty requires binary aggregate rewards")
+            shaped_rewards = rewards.clone()
+            correct = [index for index, reward in enumerate(reward_values) if reward == 1.0]
+            if correct:
+                lengths: dict[int, float] = {}
+                metric = length_penalty.thinking_length_metric
+                for index in correct:
+                    value = group[index].metrics.get(metric)
+                    if value is None or not math.isfinite(value) or value < 0:
+                        raise ValueError(f"correct rollout has invalid {metric!r} metric: {value!r}")
+                    lengths[index] = value
+                shortest = min(lengths.values())
+                for index, length in lengths.items():
+                    if length > shortest:
+                        shaped_rewards[index] -= length_penalty.penalty
             advantages = shaped_rewards - shaped_rewards.mean()
         for rollout, advantage in zip(group, advantages.tolist(), strict=True):
             rollout.assign_advantages(advantage)

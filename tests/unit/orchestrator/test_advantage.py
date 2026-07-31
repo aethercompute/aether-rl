@@ -7,6 +7,7 @@ from aether_rl.configs.algorithm import (
     GRPOAlgoConfig,
     LinearLengthPenaltyConfig,
     MaxRLAlgoConfig,
+    ShortestCorrectLengthPenaltyConfig,
 )
 from aether_rl.orchestrator.algo.grpo import GRPOAlgorithm
 from aether_rl.orchestrator.algo.max_rl import MaxRLAlgorithm
@@ -172,6 +173,35 @@ def test_grpo_plain_mean():
 def test_grpo_singleton_group_is_zero():
     # A group of size 1 has reward == mean, so its advantage is 0.
     assert _grpo([_build_rollout(0.7, sampled_lengths=[2])]) == pytest.approx([0.0], abs=1e-6)
+
+
+def test_shortest_correct_penalty_uses_only_correct_thinking_lengths():
+    penalty = ShortestCorrectLengthPenaltyConfig(penalty=0.5)
+    group = [
+        _make_rollout(1.0, metrics={"thinking_tokens": 100}),
+        _make_rollout(1.0, metrics={"thinking_tokens": 300}),
+        _make_rollout(0.0, metrics={"thinking_tokens": 10}),
+        _make_rollout(0.0),
+    ]
+    assert _grpo(group, penalty) == pytest.approx([0.625, 0.125, -0.375, -0.375])
+
+
+def test_shortest_correct_penalty_rewards_tied_shortest_rollouts():
+    penalty = ShortestCorrectLengthPenaltyConfig(penalty=0.5)
+    group = [
+        _make_rollout(1.0, metrics={"thinking_tokens": 100}),
+        _make_rollout(1.0, metrics={"thinking_tokens": 100}),
+        _make_rollout(1.0, metrics={"thinking_tokens": 200}),
+    ]
+    assert _grpo(group, penalty) == pytest.approx([1 / 6, 1 / 6, -1 / 3])
+
+
+def test_shortest_correct_penalty_requires_binary_rewards_and_valid_metric():
+    penalty = ShortestCorrectLengthPenaltyConfig()
+    with pytest.raises(ValueError, match="binary"):
+        _grpo([_make_rollout(0.5, metrics={"thinking_tokens": 1})], penalty)
+    with pytest.raises(ValueError, match="invalid 'thinking_tokens'"):
+        _grpo([_make_rollout(1.0)], penalty)
 
 
 def test_max_rl_mean_normalized():

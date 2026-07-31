@@ -128,6 +128,7 @@ async def test_executor_runs_verifiers_episode_against_loopback_policy(tmp_path:
     assert fake_env.gate is not None
     assert captured_client_config.base_url == "http://127.0.0.1:8000/v1"
     assert captured_client_config.renderer_model_name == base_model().model_name
+    assert captured_client_config.renderer_model_revision == base_model().tokenizer_revision
     assert fake_client.closed
 
 

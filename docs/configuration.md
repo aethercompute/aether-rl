@@ -80,6 +80,22 @@ Supported algorithms are:
 
 Supported rollout filters are `gibberish`, `repetition`, and `zero_advantage`. Add them with `[[sources.pre_filters]]` or `[[sources.post_filters]]`; `enforce = false` records detection metrics without removing samples.
 
+GRPO uses mean-centered group rewards without standard-deviation normalization. Its
+optional `shortest_correct` length penalty reads a named thinking-only trace metric,
+leaves the shortest correct rollout unchanged, and subtracts a flat penalty from
+longer correct rollouts before centering. It requires binary aggregate rewards and
+never reads total response length:
+
+```toml
+[sources.algorithm]
+type = "grpo"
+
+[sources.algorithm.length_penalty]
+type = "shortest_correct"
+thinking_length_metric = "thinking_tokens"
+penalty = 0.5
+```
+
 ## Base model identity
 
 The `[base_model]` table must match on the server and all workers:

@@ -61,6 +61,7 @@ class VerifiersAssignmentExecutor:
         client_config = TrainClientConfig(
             base_url=f"http://127.0.0.1:{self.config.inference_port}/v1",
             renderer_model_name=self.config.base_model.model_name,
+            renderer_model_revision=self.config.base_model.tokenizer_revision,
         )
         client = resolve_client(client_config)
         try:

@@ -282,6 +282,14 @@ def setup_rl_loss_fn(loss_config: LossConfig) -> LossFn:
     return rl_fn
 
 
+def rl_normalization_scale(loss_config, active_tokens: int, sequences: int, cp_size: int) -> int:
+    if getattr(loss_config, "rl_normalization", None) == "dr_grpo":
+        if cp_size < 1 or sequences % cp_size:
+            raise ValueError("global Dr. GRPO sequence count must be divisible by context parallelism")
+        return max(sequences * loss_config.dr_grpo_max_completion_tokens, 1)
+    return max(active_tokens, 1)
+
+
 def compute_loss(
     trainer_logprobs: list[Float[Tensor, " seq_i"]],
     inference_logprobs: list[Float[Tensor, " seq_i"]],

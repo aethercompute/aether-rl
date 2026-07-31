@@ -81,6 +81,18 @@ def test_rl_loss_type_incompatible_with_frozen_sampling():
         _build(type="grpo", sampling={"source": FROZEN})
 
 
+def test_grpo_shortest_correct_length_penalty_config():
+    algo = _build(
+        type="grpo",
+        length_penalty={"type": "shortest_correct", "thinking_length_metric": "thinking_tokens", "penalty": 0.5},
+    )
+    assert algo.length_penalty.type == "shortest_correct"
+    assert algo.length_penalty.penalty == 0.5
+
+    with pytest.raises(ValueError):
+        _build(type="grpo", length_penalty={"type": "shortest_correct", "penalty": 1.1})
+
+
 # --------------------------------------------------------------------------
 # Routing / advantage stamping over the FLAT TrainingSample data model.
 #

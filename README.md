@@ -59,6 +59,7 @@ Remote coordinator URLs must use HTTPS through an external reverse proxy, load b
 - [Configuration reference](docs/configuration.md)
 - [Operations, monitoring, restart, and upgrades](docs/operations.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Efficient DeepSeek R1 DAPO math recipe](examples/distributed/dapo-math-1.5b/README.md)
 
 ## Development
 

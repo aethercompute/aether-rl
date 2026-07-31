@@ -29,6 +29,7 @@ from aether_rl.trainer.rl.loss import (
     compute_entropy,
     compute_loss,
     compute_importance_ratio_and_mismatch_kl,
+    rl_normalization_scale,
     selective_log_softmax,
     setup_rl_loss_fn,
     shift_tensor_left,
@@ -284,22 +285,38 @@ def train(config: TrainerConfig):
         # fsdp_gradient_divide_factor. One batched collective keeps every rank issuing the same
         # op regardless of which components its samples carry.
         local_rl_scale = 0
+        local_rl_sequences = 0
         local_ce_scale = 0
         local_ref_kl_scale = 0
         for micro_batch in micro_batches:
             mask = micro_batch["loss_mask"]
             rl_w = micro_batch["rl_weights"]
-            local_rl_scale += int((mask & (rl_w != 0)).sum()) if rl_w is not None else int(mask.sum())
+            rl_mask = mask & (rl_w != 0) if rl_w is not None else mask
+            local_rl_scale += int(rl_mask.sum())
+            offset = 0
+            for length in micro_batch["sequence_lengths"]:
+                local_rl_sequences += int(bool(rl_mask[offset : offset + length].any()))
+                offset += length
             if micro_batch["ce_weights"] is not None:
                 local_ce_scale += int((micro_batch["ce_weights"] != 0).sum())
             if micro_batch["ref_kl_weights"] is not None:
                 local_ref_kl_scale += int((micro_batch["ref_kl_weights"] != 0).sum())
         global_scales = torch.tensor(
-            [local_rl_scale, local_ce_scale, local_ref_kl_scale], dtype=torch.int64, device="cuda"
+            [local_rl_scale, local_ce_scale, local_ref_kl_scale, local_rl_sequences],
+            dtype=torch.int64,
+            device="cuda",
         )
         dp_cp_group = parallel_dims.get_mesh("dp_cp").get_group()
         dist.all_reduce(global_scales, op=dist.ReduceOp.SUM, group=dp_cp_group)
-        rl_scale, ce_scale, ref_kl_scale = (max(scale, 1) for scale in global_scales.tolist())
+        global_rl_scale, ce_scale, ref_kl_scale, global_rl_sequences = global_scales.tolist()
+        rl_scale = rl_normalization_scale(
+            config.loss,
+            global_rl_scale,
+            global_rl_sequences,
+            parallel_dims.cp,
+        )
+        ce_scale = max(ce_scale, 1)
+        ref_kl_scale = max(ref_kl_scale, 1)
 
         logger.debug(f"Starting forward and backward pass ({batch_size=})")
         tensors = Tensors()  # Used to accumulate tensor statistics across micro-batches and ranks for logging

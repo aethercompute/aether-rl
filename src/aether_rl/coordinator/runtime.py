@@ -390,6 +390,27 @@ class CoordinatorRuntime:
             )
         ):
             raise ValueError("distributed trainer checkpoints must restore complete training state")
+        if getattr(trainer.loss, "rl_normalization", None) == "dr_grpo":
+            expected_tokens = trainer.loss.dr_grpo_max_completion_tokens
+            for source in config.sources:
+                if source.kind != "train":
+                    continue
+                if source.algorithm.type not in {"grpo", "echo"}:
+                    raise ValueError("Dr. GRPO normalization requires GRPO or ECHO train sources")
+                if source.sampling.max_tokens != expected_tokens:
+                    raise ValueError(
+                        f"source {source.source_id} max_tokens must match the Dr. GRPO completion denominator"
+                    )
+                environment = resolve_env_config(source.environment_config)
+                for role in environment.agent_harnesses():
+                    agent = getattr(environment, role)
+                    if agent.max_turns != 1:
+                        raise ValueError(f"source {source.source_id} agent {role} must set max_turns=1 for Dr. GRPO")
+                    if agent.max_output_tokens != expected_tokens:
+                        raise ValueError(
+                            f"source {source.source_id} agent {role} max_output_tokens must match "
+                            "the Dr. GRPO completion denominator"
+                        )
         for source in config.sources:
             environment = resolve_env_config(source.environment_config)
             resolved_id = environment.id or environment.taskset.id

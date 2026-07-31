@@ -105,7 +105,21 @@ class LinearLengthPenaltyConfig(BaseConfig):
     """Scale on the turns term (``pass_rate * (rollout num_turns / group's max num_turns)``). 0 disables the term."""
 
 
-LengthPenaltyConfig: TypeAlias = LinearLengthPenaltyConfig
+class ShortestCorrectLengthPenaltyConfig(BaseConfig):
+    """Penalize correct rollouts whose thinking is longer than the shortest correct rollout in the group."""
+
+    type: Literal["shortest_correct"] = "shortest_correct"
+    thinking_length_metric: str = Field(default="thinking_tokens", min_length=1)
+    """Trace metric containing only the model's sampled thinking-token count."""
+
+    penalty: float = Field(default=0.5, gt=0, le=1, allow_inf_nan=False)
+    """Flat amount subtracted from longer correct rollouts. At most 1 so correctness never becomes negative."""
+
+
+LengthPenaltyConfig: TypeAlias = Annotated[
+    LinearLengthPenaltyConfig | ShortestCorrectLengthPenaltyConfig,
+    Field(discriminator="type"),
+]
 
 
 class EchoRoleConfig(BaseConfig):
@@ -191,7 +205,7 @@ class GRPOAlgoConfig(BaseAlgoConfig):
     action_loss_type: ClassVar[ActionLossType] = "rl"
 
     length_penalty: LengthPenaltyConfig | None = None
-    """Linear length penalty subtracted from each reward before the GRPO baseline (see ``LinearLengthPenaltyConfig``): a ``pass_rate``-scaled sum of output-token, input-token, and turns terms, each normalized by the group's own max for that quantity. None disables it."""
+    """Optional reward shaping before the group baseline. Linear shaping can use full rollout lengths; shortest-correct shaping reads an explicit thinking-only metric. None disables it."""
 
 
 class EchoAlgoConfig(GRPOAlgoConfig):

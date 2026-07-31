@@ -458,6 +458,20 @@ class DefaultLossConfig(BaseConfig):
     kl_tau: float = Field(1e-3, ge=0)
     """Temperature for the KL term."""
 
+    rl_normalization: Literal["active_tokens", "dr_grpo"] = "active_tokens"
+    """RL denominator. Dr. GRPO divides each response's token-loss sum by one fixed maximum completion length."""
+
+    dr_grpo_max_completion_tokens: int | None = Field(default=None, ge=1)
+    """Fixed per-response denominator for Dr. GRPO; required when ``rl_normalization = "dr_grpo"``."""
+
+    @model_validator(mode="after")
+    def validate_rl_normalization(self):
+        if self.rl_normalization == "dr_grpo" and self.dr_grpo_max_completion_tokens is None:
+            raise ValueError("dr_grpo normalization requires dr_grpo_max_completion_tokens")
+        if self.rl_normalization != "dr_grpo" and self.dr_grpo_max_completion_tokens is not None:
+            raise ValueError("dr_grpo_max_completion_tokens requires dr_grpo normalization")
+        return self
+
 
 class IPOLossConfig(BaseConfig):
     type: Literal["ipo"] = "ipo"
