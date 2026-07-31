@@ -42,7 +42,7 @@ filename = "metrics.jsonl"
 
 [wandb]
 project = "aether-rl-math"
-name = "deepseek-r1-1p5b-dapo-efficient-v1"
+name = "deepseek-r1-1p5b-dapo-efficient-v2"
 group = "dapo-math-1.5b"
 tags = ["dr-grpo", "math", "dapo", "deepseek-r1", "thinking-efficiency", "lora"]
 create_overview = false

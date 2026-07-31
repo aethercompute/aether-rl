@@ -1,5 +1,5 @@
-run_id = "deepseek-r1-1p5b-dapo-efficient-v1"
-run_root = "outputs/deepseek-r1-1p5b-dapo-efficient-v1/server"
+run_id = "deepseek-r1-1p5b-dapo-efficient-v2"
+run_root = "outputs/deepseek-r1-1p5b-dapo-efficient-v2/server"
 host = "127.0.0.1"
 port = 8080
 trainer_config_path = "examples/distributed/dapo-math-1.5b/trainer.toml"
@@ -20,10 +20,10 @@ vocab_size = 151665
 quantization = "none"
 
 [[sources]]
-source_id = "dapo-en-train-v1"
+source_id = "dapo-en-train-v2"
 kind = "train"
 environment_id = "dapo-math-v1"
-environment_revision = "0.1.0"
+environment_revision = "0.1.1"
 environment_config = { taskset = { id = "dapo-math-v1", partition = "train", holdout_modulus = 16 }, agent = { max_turns = 1, max_output_tokens = 16384, timeout = { rollout = 1800 }, harness = { id = "null", runtime = { type = "subprocess" } } } }
 group_size = 8
 max_attempts = 3

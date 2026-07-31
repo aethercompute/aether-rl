@@ -1,6 +1,6 @@
 [project]
 name = "dapo-math-v1"
-version = "0.1.0"
+version = "0.1.1"
 description = "Single-turn English DAPO math with strict integer grading."
 requires-python = ">=3.11"
 dependencies = ["datasets", "transformers", "verifiers>=0.2.2.dev5"]

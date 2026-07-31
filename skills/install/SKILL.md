@@ -24,6 +24,13 @@ Install the worker role plus every environment package it advertises:
 scripts/setup-worker.sh 'your-environment-package'
 ```
 
+The pinned x86_64 vLLM wheel uses CUDA 12.9. Worker hosts therefore need an NVIDIA
+driver that supports CUDA 12.9 (Linux driver 575.51.03 or newer). If
+`inference.log` reports `cudaErrorUnsupportedPtxVersion`, compare `nvidia-smi`'s
+CUDA version with the vLLM wheel before changing Python packages. Upgrade the host
+driver or select a newer GPU image; installing a newer user-space CUDA toolkit does
+not upgrade the host driver's PTX support.
+
 Install the optional CPU policy-relay role separately; only this role needs the SHARDCAST package:
 
 ```bash

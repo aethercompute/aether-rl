@@ -9,8 +9,9 @@ deterministic holdout is disjoint after lightweight prompt normalization.
 ## Objective
 
 The environment gives binary correctness only for a closed reasoning response
-whose only non-whitespace final content is `Answer: \boxed{<integer>}`. Every
-published English DAPO gold is prevalidated as an integer, so broad symbolic
+whose last boxed value is a signed integer matching the gold. `format_valid`
+separately requires the final content to be exactly `Answer: \boxed{<integer>}`.
+Every published English DAPO gold is prevalidated as an integer, so broad symbolic
 normalization is avoided.
 
 The `grpo` algorithm mean-centers rewards without standard-deviation normalization.
@@ -80,7 +81,7 @@ export AETHER_COORDINATOR_TOKEN='<same-random-ascii-secret>'
 scripts/run-worker.sh \
   examples/distributed/dapo-math-1.5b/worker.toml \
   https://coordinator.example.com \
-  --state-dir "/var/lib/aether/dapo-math-$(hostname)"
+  --state-dir "/var/lib/aether/dapo-math-v2-$(hostname)"
 ```
 
 ## Final evaluation
@@ -89,7 +90,7 @@ After policy version 10 is published, stop the distributed worker. In one termin
 serve the final adapter from the coordinator host:
 
 ```bash
-FINAL_POLICY=$(ls -d outputs/deepseek-r1-1p5b-dapo-efficient-v1/server/policies/policy-v00000010-*)
+FINAL_POLICY=$(ls -d outputs/deepseek-r1-1p5b-dapo-efficient-v2/server/policies/policy-v00000010-*)
 uv run vllm serve deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
   --revision ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562 \
   --tokenizer-revision ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562 \

@@ -24,6 +24,14 @@ Inspect:
 - `<run_root>/spool/results/`, `training-queue/`, `policies/`, and default `trainer/` paths for durable progress.
 - Optional trainer W&B, JSONL file monitor, or explicitly configured metrics server.
 
+If reward remains exactly zero, inspect raw rollout messages before allowing more
+optimizer steps. `optim/zero_grad_ratio = 1`, `optim/grad_norm = 0`, and zero loss
+mean the trainer is publishing no-op policies. Compare a sampled response with its
+reward and format metrics; repeated `Ġ`/`Ċ` text indicates a tokenizer decoder
+mismatch, while correct boxed answers with `format_valid = 0` indicate an overly
+strict extraction contract. Stop the run and start a fresh run identity after
+fixing either issue rather than resuming no-op checkpoints.
+
 If the trainer repeats `No orchestrator config found`, compare the logged and exported `run_<id>` directory names exactly. Dots in `run_id` are preserved; a shortened name indicates mismatched or outdated code and no optimizer steps can begin.
 
 The coordinator has no Prometheus endpoint. Do not edit SQLite or state files while it runs.

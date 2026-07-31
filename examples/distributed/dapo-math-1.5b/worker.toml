@@ -1,5 +1,5 @@
 coordinator_url = "http://127.0.0.1:8080" # pass the remote HTTPS URL to run-worker.sh
-state_dir = "outputs/deepseek-r1-1p5b-dapo-efficient-v1/worker"
+state_dir = "outputs/deepseek-r1-1p5b-dapo-efficient-v2/worker"
 execution_slots = 4
 tensor_parallel_size = 1
 inference_port = 8000
@@ -25,5 +25,5 @@ quantization = "none"
 [[environments]]
 id = "dapo-math-v1"
 package = "dapo-math-v1"
-revision = "0.1.0"
+revision = "0.1.1"
 config = { taskset = { id = "dapo-math-v1", partition = "train", holdout_modulus = 16 }, agent = { max_turns = 1, max_output_tokens = 16384, timeout = { rollout = 1800 }, harness = { id = "null", runtime = { type = "subprocess" } } } }

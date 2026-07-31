@@ -1,5 +1,10 @@
 import verifiers.v1 as vf
-from dapo_math_v1.taskset import extract_final_integer, partition_bucket, thinking_token_count
+from dapo_math_v1.taskset import (
+    extract_final_integer,
+    extract_last_boxed_integer,
+    partition_bucket,
+    thinking_token_count,
+)
 
 
 class PieceTokenizer:
@@ -19,6 +24,8 @@ def test_extract_final_integer_requires_exact_boxed_answer_line():
     assert extract_final_integer("Answer: 42") is None
     assert extract_final_integer("Explanation\nAnswer: \\boxed{42}") is None
     assert extract_final_integer("Answer: \\boxed{42} trailing") is None
+    assert extract_last_boxed_integer("Reasoning with \\boxed{1}; therefore \\boxed{-7}.") == -7
+    assert extract_last_boxed_integer("Answer: 42") is None
 
 
 def test_partition_groups_normalized_prompt_variants():

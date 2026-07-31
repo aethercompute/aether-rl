@@ -8,7 +8,7 @@ from typing import Literal
 
 import verifiers.v1 as vf
 from pydantic import Field
-from transformers import AutoTokenizer
+from transformers import PreTrainedTokenizerFast
 from verifiers.v1.types import AssistantMessage
 
 DATASET_NAME = "open-r1/DAPO-Math-17k-Processed"
@@ -16,6 +16,7 @@ DATASET_REVISION = "31dd309567e3da778038cc87d868b6097a3ccf68"
 MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
 MODEL_REVISION = "ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562"
 FINAL_ANSWER = re.compile(r"\s*Answer:\s*\\boxed\{([+-]?\d+)\}\s*")
+BOXED_INTEGER = re.compile(r"\\boxed\{([+-]?\d+)\}")
 INTEGER = re.compile(r"[+-]?\d+")
 PROMPT_TEMPLATE = (
     "Solve this math problem step by step:\n\n{question}\n\n"
@@ -29,6 +30,11 @@ def extract_final_integer(response: str) -> int | None:
     return int(match.group(1)) if match is not None else None
 
 
+def extract_last_boxed_integer(response: str) -> int | None:
+    matches = BOXED_INTEGER.findall(response)
+    return int(matches[-1]) if matches else None
+
+
 def partition_bucket(question: str, modulus: int) -> int:
     normalized = " ".join(unicodedata.normalize("NFKC", question).casefold().split())
     return int.from_bytes(hashlib.sha256(normalized.encode()).digest()[:8], "big") % modulus
@@ -36,7 +42,7 @@ def partition_bucket(question: str, modulus: int) -> int:
 
 @cache
 def _tokenizer(name: str, revision: str):
-    return AutoTokenizer.from_pretrained(name, revision=revision)
+    return PreTrainedTokenizerFast.from_pretrained(name, revision=revision)
 
 
 def thinking_token_count(trace: vf.Trace, tokenizer) -> int:
@@ -75,7 +81,7 @@ class DAPOMathTask(vf.Task[DAPOMathData]):
         messages = trace.assistant_messages
         if trace.is_truncated or not messages or messages[-1].reasoning_content is None:
             return 0.0
-        prediction = extract_final_integer(trace.last_reply)
+        prediction = extract_last_boxed_integer(trace.last_reply)
         return float(prediction is not None and prediction == self.data.answer)
 
     @vf.metric

@@ -22,7 +22,14 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import CPUOffloadPolicy, FSDPModule, MixedPrecisionPolicy, OffloadPolicy, fully_shard
 from torch.distributed.tensor.parallel import parallelize_module
 from torchtitan.distributed.expert_parallel import ExpertParallel
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, GenerationConfig, PretrainedConfig
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    GenerationConfig,
+    PretrainedConfig,
+    PreTrainedTokenizerFast,
+)
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers.utils.import_utils import is_flash_attn_3_available
 
@@ -735,11 +742,17 @@ def get_model(
 
 def setup_tokenizer(config: TokenizerConfig) -> PreTrainedTokenizer:
     logger = get_logger()
-    tokenizer = AutoTokenizer.from_pretrained(
-        config.name,
-        revision=config.revision,
-        trust_remote_code=config.trust_remote_code,
-    )
+    if config.name == "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B":
+        tokenizer = PreTrainedTokenizerFast.from_pretrained(
+            config.name,
+            revision=config.revision,
+        )
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(
+            config.name,
+            revision=config.revision,
+            trust_remote_code=config.trust_remote_code,
+        )
     if config.chat_template is not None:
         path = Path(config.chat_template)
         if path.is_file():

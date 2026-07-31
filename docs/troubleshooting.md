@@ -55,6 +55,24 @@ Worker preflight intentionally does not test coordinator connectivity.
 
 Inspect `<state_dir>/inference.log`. Check GPU memory, model access, CUDA compatibility, `tensor_parallel_size`, LoRA rank limits, and whether another process owns `inference_port`. The worker does not automatically restart vLLM after an unexpected exit; restart the worker after fixing the cause.
 
+`cudaErrorUnsupportedPtxVersion` means a bundled CUDA kernel was compiled by a
+toolchain newer than the host NVIDIA driver supports. The pinned x86_64 vLLM wheel
+uses CUDA 12.9, which requires Linux driver 575.51.03 or newer. Upgrade the host
+driver or use a machine image with a compatible driver, then restart the worker
+with its existing state directory. Reinstalling the CUDA toolkit inside a
+container does not change the host driver's PTX support.
+
+## Reward and gradients remain zero
+
+Inspect raw rollout responses before continuing. Trainer metrics with
+`optim/zero_grad_ratio = 1`, `optim/grad_norm = 0`, and zero loss mean every group
+has uniform advantages and published policies are no-ops. Raw `Ġ` and `Ċ`
+characters in responses indicate that a byte-level tokenizer was loaded through
+the wrong decoder. Otherwise compare mathematically correct responses against the
+environment's answer-extraction and format contracts. After correcting the cause,
+start a fresh run identity instead of resuming checkpoints created from zero
+gradients.
+
 ## Results are not progressing
 
 Inspect status counts for active leases, accepted/pending results, processing results, and groups. Confirm workers remain connected and their local pending spool is below `spool_max_entries`. Check server disk capacity and permissions for SQLite, spools, training queue, policies, and trainer output.
