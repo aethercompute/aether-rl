@@ -1,0 +1,43 @@
+model = "r2e-candidate"
+num_tasks = 281
+num_rollouts = 1
+max_concurrent = 8
+shuffle = false
+push = false
+
+[client]
+type = "train"
+base_url = "http://127.0.0.1:8000/v1"
+renderer_model_name = "Qwen/Qwen3-4B-Instruct-2507"
+renderer_model_revision = "cdbee75f17c01a7cc42f958dc650907174af0554"
+pool_size = 8
+
+[sampling]
+temperature = 0.7
+top_p = 0.8
+max_tokens = 32768
+
+[env.taskset]
+id = "r2e_gym_v1"
+dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified"
+split = "train"
+filter_fn = "lambda row: row['repo_name'] in {'coveragepy', 'datalad'}"
+
+[env.agent]
+max_turns = 30
+max_total_tokens = 32768
+
+[env.agent.timeout]
+setup = 1800
+rollout = 7200
+finalize = 600
+scoring = 3600
+
+[env.agent.harness]
+id = "bash"
+edit = true
+search = false
+
+[env.agent.harness.runtime]
+type = "docker"
+allow = []

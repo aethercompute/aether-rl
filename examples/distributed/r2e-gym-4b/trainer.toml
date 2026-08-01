@@ -1,0 +1,61 @@
+max_steps = 16
+
+[model]
+name = "Qwen/Qwen3-4B-Instruct-2507"
+revision = "cdbee75f17c01a7cc42f958dc650907174af0554"
+seq_len = 32768
+impl = "hf"
+attn = "flash_attention_2"
+
+[model.lora]
+rank = 32
+alpha = 64.0
+dropout = 0.0
+target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+
+[tokenizer]
+name = "Qwen/Qwen3-4B-Instruct-2507"
+revision = "cdbee75f17c01a7cc42f958dc650907174af0554"
+
+[optim]
+type = "adamw"
+lr = 0.00001
+max_norm = 1.0
+
+[scheduler]
+type = "constant"
+
+[loss]
+type = "default"
+dppo_mask_low = 0.2
+dppo_mask_high = 0.2
+kl_tau = 0.0
+rl_normalization = "active_tokens"
+
+[ckpt]
+interval = 1
+weights = "None"
+
+[file_monitor]
+filename = "metrics.jsonl"
+
+[wandb]
+project = "aether-rl-swe"
+name = "qwen3-4b-r2e-gym-smoke-v1"
+group = "r2e-gym-4b"
+tags = ["grpo", "swe", "r2e-gym", "qwen3", "lora", "smoke"]
+create_overview = false
+log_metrics = [
+    "loss/mean",
+    "entropy/all/mean",
+    "mismatch_kl/all/mean",
+    "optim/grad_norm",
+    "optim/lr",
+    "perf/throughput",
+    "time/step",
+    "time/wait_for_batch",
+    "system/ckpt_disk_free_gib",
+    "inference/agg/informative_group_fraction",
+    "inference/agg/stale_drops",
+    "inference/agg/mixed_policy_batch_attempts",
+]

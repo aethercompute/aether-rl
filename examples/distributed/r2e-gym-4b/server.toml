@@ -1,0 +1,39 @@
+run_id = "qwen3-4b-r2e-gym-smoke-v1"
+run_root = "outputs/qwen3-4b-r2e-gym-smoke-v1/server"
+host = "127.0.0.1"
+port = 8080
+trainer_config_path = "examples/distributed/r2e-gym-4b/trainer.toml"
+trainer_processes = 8
+training_batch_size = 64
+published_checkpoint_keep_last = 2
+lease_duration_seconds = 120
+max_policy_lag = 1
+result_body_limit_bytes = 134217728
+
+[base_model]
+model_name = "Qwen/Qwen3-4B-Instruct-2507"
+model_revision = "cdbee75f17c01a7cc42f958dc650907174af0554"
+model_config_digest = "sha256:c03ba50d35dd85f9e197e78bb923f55d4ef69c75e08d55154dbaa82cf19523a0"
+tokenizer_name = "Qwen/Qwen3-4B-Instruct-2507"
+tokenizer_revision = "cdbee75f17c01a7cc42f958dc650907174af0554"
+tokenizer_digest = "sha256:49cedb5843afb50585116d34be5c9513fe926faace0bd42d264d31e66a394625"
+chat_template_digest = "sha256:e814241780d296277a995d782b8ea5d4b6c7759439f08d58de538d4779cca96b"
+vocab_size = 151669
+quantization = "none"
+
+[[sources]]
+source_id = "r2e-gym-train-smoke-v1"
+kind = "train"
+environment_id = "r2e_gym_v1"
+environment_revision = "0.1.2"
+environment_config = { taskset = { id = "r2e_gym_v1", dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified", split = "train", filter_fn = "lambda row: row['repo_name'] not in {'coveragepy', 'datalad'}" }, agent = { max_turns = 30, max_total_tokens = 32768, timeout = { setup = 1800, rollout = 7200, finalize = 600, scoring = 3600 }, harness = { id = "bash", edit = true, search = false, runtime = { type = "docker", allow = [] } } } }
+group_size = 8
+max_attempts = 3
+task_limit = 128
+shuffle_seed = 20260801
+result_size_limit_bytes = 134217728
+assignment_timeout_seconds = 10800
+sampling = { temperature = 0.7, top_p = 0.8, max_tokens = 32768 }
+
+[sources.algorithm]
+type = "grpo"
