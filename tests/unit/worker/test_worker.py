@@ -21,6 +21,7 @@ from tests.unit.coordinator.test_database import (
     assignments,
     base_model,
     base_policy,
+    capabilities,
     failure_envelope,
     registration,
     result_envelope,
@@ -54,6 +55,21 @@ def assignment_lease() -> AssignmentLease:
     )
     return AssignmentLease(
         lease_id="lease-1",
+        attempt=1,
+        worker_id="worker-1",
+        worker_session_id="session-1",
+        issued_at=3,
+        expires_at=100,
+        assignment=assignment,
+    )
+
+
+def assignment_lease_for_group(index: int, *, size: int = 2) -> AssignmentLease:
+    assignment = assignments(base_policy(), size=size)[index].model_copy(
+        update={"sampling": SamplingConfig(temperature=1, max_tokens=8)}
+    )
+    return AssignmentLease(
+        lease_id=f"lease-{index}",
         attempt=1,
         worker_id="worker-1",
         worker_session_id="session-1",
@@ -331,3 +347,64 @@ async def test_multi_slot_requests_reserve_one_slot_and_auth_failure_preserves_s
         with pytest.raises(CoordinatorAPIError, match="unauthorized"):
             await daemon._upload_loop()
         assert spool.entries() == (entry,)
+
+
+class GroupLeaseClient(FakeCoordinatorClient):
+    def __init__(self, leases):
+        super().__init__(leases[0])
+        self.leases = tuple(leases)
+        self.group_lease_requests = []
+
+    async def lease_group(self, request):
+        self.group_lease_requests.append(request)
+        if len(self.group_lease_requests) == 1:
+            return self.leases
+        return ()
+
+    async def lease(self, request):
+        self.lease_requests.append(request)
+        return None
+
+    async def submit(self, entry):
+        self.submissions.append(entry.body)
+        if len(self.submissions) == len(self.leases):
+            assert self.daemon is not None
+            self.daemon.stop()
+        return SubmissionResponse(
+            assignment_id=entry.envelope.assignment_id,
+            envelope_digest=entry.digest,
+            duplicate=False,
+            terminal=True,
+        )
+
+
+class GroupExecutor:
+    def __init__(self):
+        self.groups = []
+
+    async def execute(self, lease, cancel_event):
+        raise AssertionError("single execution should not be used for grouped leases")
+
+    async def execute_group(self, leases_and_cancellations):
+        self.groups.append(tuple(lease for lease, _ in leases_and_cancellations))
+        return [result_envelope(lease) for lease, _ in leases_and_cancellations]
+
+
+@pytest.mark.asyncio
+async def test_daemon_executes_grouped_leases_and_uploads_individual_results(tmp_path: Path):
+    config = worker_config(tmp_path).model_copy(update={"execution_slots": 2, "spool_max_entries": 4})
+    leases = (assignment_lease_for_group(0), assignment_lease_for_group(1))
+    client = GroupLeaseClient(leases)
+    executor = GroupExecutor()
+    with WorkerState(config.state_dir) as state:
+        spool = WorkerSpool(state)
+        daemon = WorkerDaemon(config, registration(caps=capabilities(capacity=2)), client, spool, executor)
+        client.daemon = daemon
+        await daemon.run()
+        assert len(client.group_lease_requests) == 1
+        assert client.group_lease_requests[0].available_slots == 2
+        assert client.lease_requests == []
+        assert executor.groups == [leases]
+        assert len(client.submissions) == 2
+        assert spool.entries() == ()
+        assert daemon.active == {}

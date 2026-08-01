@@ -25,6 +25,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from aether_rl.protocol import (
     PROTOCOL_VERSION,
     AssignmentLease,
+    AssignmentLeaseBatch,
     FailureEnvelope,
     LeaseRenewal,
     LeaseRenewRequest,
@@ -64,12 +65,17 @@ class LeaseProvider(Protocol):
 
     async def try_lease(self, request: LeaseRequest) -> AssignmentLease | None: ...
 
+    async def try_lease_group(self, request: LeaseRequest) -> tuple[AssignmentLease, ...]: ...
+
 
 class NoLeaseProvider:
     durable_mutations = False
 
     async def try_lease(self, request: LeaseRequest) -> AssignmentLease | None:
         return None
+
+    async def try_lease_group(self, request: LeaseRequest) -> tuple[AssignmentLease, ...]:
+        return ()
 
 
 class CoordinatorService:
@@ -107,6 +113,13 @@ def _lease_response(lease: AssignmentLease | None) -> JSONResponse:
     if lease is None:
         raise InvalidStateError("leased request is missing its durable lease")
     return JSONResponse(content=lease.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
+
+
+def _lease_batch_response(leases: tuple[AssignmentLease, ...]) -> JSONResponse:
+    return JSONResponse(
+        content=AssignmentLeaseBatch(leases=leases).model_dump(mode="json"),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _no_work_response() -> Response:
@@ -422,6 +435,30 @@ def create_coordinator_app(
                 return await _complete_no_work(service, repository, lease_request.request_id)
             await asyncio.sleep(min(lease_poll_interval_seconds, remaining))
             initial_attempt = False
+
+    @app.post("/api/v1/assignments/lease-group")
+    async def lease_group(request: Request) -> Response:
+        if not await lease_gate_open():
+            raise APIError(503, "trainer_unavailable", "trainer or coordinator processing is unavailable")
+        lease_request = await parse_control_body(request, LeaseRequest)
+        disposition = await service.call(repository.validate_lease_request, lease_request)
+        if not isinstance(disposition, LeaseRequestDisposition):
+            raise TypeError("repository returned an invalid lease request disposition")
+        if disposition.state == "leased":
+            if disposition.lease is None:
+                raise InvalidStateError("leased request is missing its durable lease")
+            return _lease_batch_response((disposition.lease,))
+        if disposition.state == "no_work" or lease_request.available_slots < 2:
+            return await _complete_no_work(service, repository, lease_request.request_id)
+        offered = await provider.try_lease_group(lease_request)
+        if not offered:
+            return await _complete_no_work(service, repository, lease_request.request_id)
+        if not await lease_gate_open():
+            for lease in offered:
+                await service.call(repository.release_unoffered_lease, lease.lease_id)
+            raise APIError(503, "trainer_unavailable", "trainer or coordinator processing is unavailable")
+        await service.call(repository.associate_offered_leases, lease_request, offered)
+        return _lease_batch_response(offered)
 
     @app.post("/api/v1/assignments/{assignment_id}/renew")
     async def renew(assignment_id: str, request: Request) -> LeaseRenewResponse:

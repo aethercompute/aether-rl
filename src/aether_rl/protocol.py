@@ -229,6 +229,23 @@ class AssignmentLease(ProtocolModel):
         return self
 
 
+class AssignmentLeaseBatch(ProtocolModel):
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+    leases: tuple[AssignmentLease, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_batch(self) -> AssignmentLeaseBatch:
+        if len({lease.lease_id for lease in self.leases}) != len(self.leases):
+            raise ValueError("lease IDs must be unique")
+        if len({lease.assignment.assignment_id for lease in self.leases}) != len(self.leases):
+            raise ValueError("assignment IDs must be unique")
+        first = self.leases[0]
+        common = (first.worker_id, first.worker_session_id, first.assignment.group_id)
+        if any((lease.worker_id, lease.worker_session_id, lease.assignment.group_id) != common for lease in self.leases):
+            raise ValueError("lease batch must belong to one worker session and assignment group")
+        return self
+
+
 class WorkerHeartbeat(ProtocolModel):
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
     worker_id: OpaqueId

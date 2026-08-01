@@ -419,6 +419,59 @@ async def test_chunked_result_failure_idempotency_and_temp_cleanup(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_group_lease_endpoint_reserves_group_and_retries_after_disconnect(tmp_path: Path):
+    clock = FakeClock()
+    with make_repository(tmp_path, clock) as repository:
+        repository.register_worker(registration(caps=capabilities(capacity=2)))
+        group = assignments(base_policy(), size=2)
+        repository.create_group(group, max_attempts=2)
+        app = create_coordinator_app(repository, token=TOKEN, trainer_ready=lambda: True, lease_duration_seconds=5)
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                request = LeaseRequest(
+                    request_id="group-request-1",
+                    worker_id="worker-1",
+                    worker_session_id="session-1",
+                    sent_at=clock.now,
+                    environments=registration().capabilities.environments,
+                    available_slots=2,
+                )
+                response = await client.post(
+                    "/api/v1/assignments/lease-group",
+                    headers=JSON_HEADERS,
+                    content=canonical_json_bytes(request),
+                )
+                assert response.status_code == 200
+                leases = response.json()["leases"]
+                assert [lease["assignment"]["assignment_id"] for lease in leases] == [
+                    group[0].assignment_id,
+                    group[1].assignment_id,
+                ]
+                assert {lease["lease_id"] for lease in leases} == {
+                    repository._assignment(item.assignment_id)["current_lease_id"] for item in group
+                }
+
+                clock.now = 16
+                repository.expire_leases()
+                assert [repository.assignment_state(item.assignment_id) for item in group] == [
+                    "retry_wait",
+                    "retry_wait",
+                ]
+
+                clock.now = 18
+                retry = request.model_copy(update={"request_id": "group-request-2", "sent_at": clock.now})
+                retry_response = await client.post(
+                    "/api/v1/assignments/lease-group",
+                    headers=JSON_HEADERS,
+                    content=canonical_json_bytes(retry),
+                )
+                assert retry_response.status_code == 200
+                assert [lease["attempt"] for lease in retry_response.json()["leases"]] == [2, 2]
+        finally:
+            app.state.coordinator_service.close()
+
+
+@pytest.mark.asyncio
 async def test_policy_etags_allowlist_corruption_and_trainer_readiness(tmp_path: Path):
     clock = FakeClock()
     with make_repository(tmp_path, clock) as repository:

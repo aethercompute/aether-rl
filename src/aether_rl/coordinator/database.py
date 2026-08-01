@@ -599,6 +599,35 @@ class CoordinatorRepository:
             )
         return LeaseRequestDisposition("leased", offered)
 
+    def associate_offered_leases(self, request: LeaseRequest, offered: Sequence[AssignmentLease]) -> None:
+        if not offered:
+            raise ValueError("offered lease batch must not be empty")
+        with self._transaction():
+            request_row = self.connection.execute(
+                "SELECT * FROM lease_requests WHERE request_id = ?", (request.request_id,)
+            ).fetchone()
+            if request_row is None:
+                raise InvalidStateError("lease request has not been validated")
+            disposition = self._lease_request_disposition(request_row)
+            if disposition.state != "pending":
+                if disposition.lease == offered[0]:
+                    return
+                raise ConflictError("lease request already has a different disposition")
+            for lease in offered:
+                self._validate_offered_lease(request, lease)
+            associated = self.connection.execute(
+                f"SELECT request_id FROM lease_requests WHERE lease_id IN ({','.join('?' for _ in offered)}) "
+                "AND request_id != ?",
+                tuple(lease.lease_id for lease in offered) + (request.request_id,),
+            ).fetchone()
+            if associated is not None:
+                raise ConflictError("lease is already associated with a different request")
+            self.connection.execute(
+                "UPDATE lease_requests SET state = 'leased', lease_id = ?, completed_at = ? "
+                "WHERE request_id = ? AND state = 'pending'",
+                (offered[0].lease_id, self.clock(), request.request_id),
+            )
+
     def release_unoffered_lease(self, lease_id: str) -> None:
         with self._transaction():
             lease = self.connection.execute(
@@ -1007,6 +1036,132 @@ class CoordinatorRepository:
         if created is None:
             return None
         return self.lease_next_compatible(request, lease_duration_seconds=lease_duration_seconds)
+
+    def lease_group_next_compatible(
+        self,
+        request: LeaseRequest,
+        *,
+        lease_duration_seconds: float,
+        lease_id_factory: Callable[[], str] = lambda: f"lease-{secrets.token_hex(32)}",
+    ) -> tuple[AssignmentLease, ...]:
+        if lease_duration_seconds <= 0:
+            raise ValueError("lease duration must be positive")
+        now = self.clock()
+        with self._transaction():
+            self._expire_leases(now)
+            session = self.connection.execute(
+                "SELECT * FROM worker_sessions WHERE worker_session_id = ?",
+                (request.worker_session_id,),
+            ).fetchone()
+            if session is None or session["worker_id"] != request.worker_id:
+                raise IncompatibleWorkerError("worker session is not registered for this worker")
+            capabilities = WorkerCapabilities.model_validate_json(session["capabilities_json"])
+            requested = set(request.environments)
+            if not requested.issubset(capabilities.environments):
+                raise IncompatibleWorkerError("lease request contains an unsupported environment")
+            self._validate_policy_ids(request.loaded_policy_ids)
+            settings = self._scheduler_settings()
+            if settings["max_policy_lag"] is None or settings["loaded_policy_preference_seconds"] is None:
+                raise InvalidStateError("scheduler settings have not been configured")
+            self._cancel_stale_train_groups(settings["max_policy_lag"], now)
+            active_count = self.connection.execute(
+                "SELECT COUNT(*) AS count FROM lease_attempts l JOIN assignments a USING (assignment_id) "
+                "LEFT JOIN lease_cancellations c USING (lease_id) "
+                "WHERE l.worker_id = ? AND l.worker_session_id = ? AND l.state = 'active' AND l.expires_at > ? "
+                "AND (a.deadline_at IS NULL OR a.deadline_at > ?) "
+                "AND (c.lease_id IS NULL OR c.delivered_at IS NULL)",
+                (request.worker_id, request.worker_session_id, now, now),
+            ).fetchone()["count"]
+            remaining_capacity = min(
+                request.available_slots,
+                capabilities.max_concurrent_assignments - active_count,
+            )
+            if remaining_capacity < 2:
+                return ()
+            environment_clauses = " OR ".join(
+                "(g.environment_id = ? AND g.environment_revision = ?)" for _ in request.environments
+            )
+            environment_values = tuple(
+                value for environment in request.environments for value in (environment.id, environment.revision)
+            )
+            groups = self.connection.execute(
+                "SELECT g.group_id, g.group_size, g.sequence, g.environment_id, g.environment_revision "
+                "FROM rollout_groups g "
+                "WHERE g.state = 'collecting' "
+                f"AND ({environment_clauses}) "
+                "ORDER BY g.sequence, g.group_id",
+                environment_values,
+            ).fetchall()
+            for group in groups:
+                if group["group_size"] > remaining_capacity:
+                    continue
+                rows = self.connection.execute(
+                    "SELECT a.* FROM assignments a "
+                    "LEFT JOIN assignment_cancellations c USING (assignment_id) "
+                    "WHERE a.group_id = ? AND a.state IN ('pending', 'retry_wait') "
+                    "AND a.available_at <= ? AND (a.deadline_at IS NULL OR a.deadline_at > ?) "
+                    "AND c.assignment_id IS NULL "
+                    "ORDER BY a.group_index, a.assignment_id",
+                    (group["group_id"], now, now),
+                ).fetchall()
+                if len(rows) != group["group_size"]:
+                    continue
+                deadline = min(
+                    (row["deadline_at"] for row in rows if row["deadline_at"] is not None),
+                    default=None,
+                )
+                expires_at = (
+                    min(now + lease_duration_seconds, deadline)
+                    if deadline is not None
+                    else now + lease_duration_seconds
+                )
+                leases = []
+                for row in rows:
+                    attempt = row["attempt_count"] + 1
+                    lease_id = lease_id_factory()
+                    self.connection.execute(
+                        "INSERT INTO lease_attempts "
+                        "(lease_id, assignment_id, attempt, worker_id, worker_session_id, issued_at, expires_at, state) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, 'active')",
+                        (
+                            lease_id,
+                            row["assignment_id"],
+                            attempt,
+                            request.worker_id,
+                            request.worker_session_id,
+                            now,
+                            expires_at,
+                        ),
+                    )
+                    self.connection.execute(
+                        "UPDATE assignments SET state = 'leased', attempt_count = ?, current_lease_id = ? "
+                        "WHERE assignment_id = ?",
+                        (attempt, lease_id, row["assignment_id"]),
+                    )
+                    leases.append(
+                        AssignmentLease(
+                            lease_id=lease_id,
+                            attempt=attempt,
+                            worker_id=request.worker_id,
+                            worker_session_id=request.worker_session_id,
+                            issued_at=now,
+                            expires_at=expires_at,
+                            assignment=RolloutAssignment.model_validate_json(row["assignment_json"]),
+                        )
+                    )
+                return tuple(leases)
+        return ()
+
+    def lease_group_or_create_next_compatible(
+        self, request: LeaseRequest, *, lease_duration_seconds: float
+    ) -> tuple[AssignmentLease, ...]:
+        leases = self.lease_group_next_compatible(request, lease_duration_seconds=lease_duration_seconds)
+        if leases or not self._lease_request_can_generate(request):
+            return leases
+        created = self.create_next_group(None, environments=request.environments)
+        if created is None:
+            return ()
+        return self.lease_group_next_compatible(request, lease_duration_seconds=lease_duration_seconds)
 
     def create_lease(
         self,

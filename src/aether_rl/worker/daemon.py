@@ -6,7 +6,7 @@ import os
 import platform
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Protocol
@@ -175,44 +175,67 @@ class WorkerDaemon:
             if len(self.spool.entries()) + self.config.execution_slots > self.config.spool_max_entries:
                 await self._sleep(self.config.retry_min_seconds)
                 continue
-            lease = await self._acquire_lease()
-            if lease is None:
+            leases = await self._acquire_leases()
+            if not leases:
                 await self._sleep(self.config.retry_min_seconds)
                 continue
-            self._validate_lease(lease)
-            if lease.expires_at <= self._server_now():
+            actives = []
+            for lease in leases:
+                self._validate_lease(lease)
+                if lease.expires_at <= self._server_now():
+                    continue
+                active = ActiveAssignment(lease, asyncio.Event(), lease.expires_at)
+                if self.stop_event.is_set():
+                    active.cancel_event.set()
+                if lease.lease_id in self.active:
+                    raise RuntimeError("coordinator returned an already active lease")
+                self.active[lease.lease_id] = active
+                actives.append(active)
+            if not actives:
                 continue
-            active = ActiveAssignment(lease, asyncio.Event(), lease.expires_at)
-            if self.stop_event.is_set():
-                active.cancel_event.set()
-            if lease.lease_id in self.active:
-                raise RuntimeError("coordinator returned an already active lease")
-            self.active[lease.lease_id] = active
             try:
                 try:
                     if self.policy_runtime is None:
-                        envelope = await self._execute(active)
+                        envelopes = await self._execute_group(actives)
                     else:
-                        async with self.policy_runtime.acquire(lease.assignment.policy):
-                            envelope = await self._execute(active)
+                        async with self.policy_runtime.acquire(actives[0].lease.assignment.policy):
+                            envelopes = await self._execute_group(actives)
                 except asyncio.CancelledError:
-                    if active.cancel_event.is_set() and not self.stop_event.is_set():
+                    if all(active.cancel_event.is_set() for active in actives) and not self.stop_event.is_set():
                         continue
                     raise
                 except Exception as error:
                     if getattr(error, "worker_fatal", False):
                         raise
-                    envelope = self._failure_envelope(active, error)
-                self._validate_terminal_envelope(lease, envelope)
-                entry = self.spool.publish(envelope)
-                event = self._entry_events.setdefault(entry.digest, asyncio.Event())
-                while not event.is_set():
-                    await self._wait_for_event(event, self.config.heartbeat_interval_seconds)
+                    envelopes = [self._failure_envelope(active, error) for active in actives]
+                events = []
+                for active, envelope in zip(actives, envelopes, strict=True):
+                    if envelope is None:
+                        continue
+                    self._validate_terminal_envelope(active.lease, envelope)
+                    entry = self.spool.publish(envelope)
+                    events.append(self._entry_events.setdefault(entry.digest, asyncio.Event()))
+                while events and not all(event.is_set() for event in events):
+                    await asyncio.gather(
+                        *(self._wait_for_event(event, self.config.heartbeat_interval_seconds) for event in events)
+                    )
             finally:
-                self.active.pop(lease.lease_id, None)
+                for active in actives:
+                    self.active.pop(active.lease.lease_id, None)
 
     async def _acquire_lease(self) -> AssignmentLease | None:
+        leases = await self._acquire_leases(max_slots=1)
+        if len(leases) > 1:
+            raise RuntimeError("single-lease acquisition received a lease group")
+        return leases[0] if leases else None
+
+    async def _acquire_leases(self, *, max_slots: int | None = None) -> tuple[AssignmentLease, ...]:
         async with self.lease_lock:
+            free_slots = max(0, self.config.execution_slots - len(self.active))
+            if max_slots is not None:
+                free_slots = min(free_slots, max_slots)
+            if free_slots < 1:
+                return ()
             request = LeaseRequest(
                 request_id=self.request_id_factory(),
                 worker_id=self.registration.worker_id,
@@ -220,13 +243,18 @@ class WorkerDaemon:
                 sent_at=self.timestamps.next(),
                 loaded_policy_ids=tuple(sorted(self.loaded_policy_ids())),
                 environments=self.registration.capabilities.environments,
-                available_slots=1,
+                available_slots=free_slots,
                 wait_seconds=self.config.lease_wait_seconds,
             )
             delay = self.config.retry_min_seconds
             while not self.stop_event.is_set():
                 try:
-                    return await self.client.lease(request)
+                    if free_slots > 1 and hasattr(self.client, "lease_group"):
+                        leases = await self.client.lease_group(request)
+                        if leases:
+                            return leases
+                    lease = await self.client.lease(request)
+                    return () if lease is None else (lease,)
                 except (httpx.TransportError, httpx.TimeoutException, CoordinatorProtocolError):
                     await self._sleep(delay)
                     delay = min(delay * 2, self.config.retry_max_seconds)
@@ -244,7 +272,7 @@ class WorkerDaemon:
                         raise
                     await self._sleep(error.retry_after if error.retry_after is not None else delay)
                     delay = min(delay * 2, self.config.retry_max_seconds)
-        return None
+        return ()
 
     async def _execute(self, active: ActiveAssignment) -> TerminalEnvelope:
         try:
@@ -253,6 +281,44 @@ class WorkerDaemon:
             raise
         except Exception as error:
             return self._failure_envelope(active, error)
+
+    async def _execute_group(self, actives: Sequence[ActiveAssignment]) -> list[TerminalEnvelope | None]:
+        if len(actives) == 1:
+            return [await self._execute(actives[0])]
+        execute_group = getattr(self.executor, "execute_group", None)
+        if execute_group is not None and self._can_execute_as_group(actives):
+            results = await execute_group([(active.lease, active.cancel_event) for active in actives])
+        else:
+            results = await asyncio.gather(*(self._execute(active) for active in actives), return_exceptions=True)
+        envelopes: list[TerminalEnvelope | None] = []
+        for active, result in zip(actives, results, strict=True):
+            if isinstance(result, asyncio.CancelledError):
+                if len(actives) == 1 and active.cancel_event.is_set() and not self.stop_event.is_set():
+                    raise result
+                if active.cancel_event.is_set():
+                    envelopes.append(None)
+                    continue
+                raise result
+            if isinstance(result, BaseException):
+                if getattr(result, "worker_fatal", False):
+                    raise result
+                envelopes.append(self._failure_envelope(active, result))
+            else:
+                envelopes.append(result)
+        return envelopes
+
+    @staticmethod
+    def _can_execute_as_group(actives: Sequence[ActiveAssignment]) -> bool:
+        if len(actives) < 2:
+            return False
+        first = actives[0].lease.assignment
+        common = (first.group_id, first.environment, first.task_data, first.sampling, first.policy)
+        return all(
+            (active.lease.assignment.group_id, active.lease.assignment.environment, active.lease.assignment.task_data,
+             active.lease.assignment.sampling, active.lease.assignment.policy)
+            == common
+            for active in actives
+        )
 
     def _failure_envelope(self, active: ActiveAssignment, error: Exception) -> FailureEnvelope:
         message = str(error) or type(error).__name__

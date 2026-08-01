@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from aether_rl.protocol import (
     PROTOCOL_VERSION,
     AssignmentLease,
+    AssignmentLeaseBatch,
     FailureEnvelope,
     LeaseRenewRequest,
     LeaseRenewResponse,
@@ -94,6 +95,12 @@ class CoordinatorClient:
     async def lease(self, request: LeaseRequest) -> AssignmentLease | None:
         response = await self._control("POST", "/api/v1/assignments/lease", request, expected=(200, 204))
         return None if response.status_code == 204 else self._model(response, AssignmentLease)
+
+    async def lease_group(self, request: LeaseRequest) -> tuple[AssignmentLease, ...]:
+        response = await self._control("POST", "/api/v1/assignments/lease-group", request, expected=(200, 204))
+        if response.status_code == 204:
+            return ()
+        return self._model(response, AssignmentLeaseBatch).leases
 
     async def renew(self, request: LeaseRenewRequest) -> LeaseRenewResponse:
         response = await self._control("POST", f"/api/v1/assignments/{request.assignment_id}/renew", request)
