@@ -132,19 +132,13 @@ Track:
 | Signal | Source |
 | --- | --- |
 | Solved rate | Train/eval reward summaries; `solved` is the only reward component. |
-| Informative groups | `inference/agg/informative_group_fraction`. |
+| Informative groups | Monitor train summary `informative_group_fraction`. |
 | Turns and tokens | Monitor rollout `num_turns`, `num_output_tokens`, and `num_total_tokens`. |
-| Tool errors | Raw trace tool results containing `error:` plus harness/error summaries. |
+| Tool errors | Monitor tool-error distribution and inspectable sample transcripts. |
 | Sandbox failures | Rollout `SandboxError` counts and coordinator recent failures. |
 | Test timeouts | Scoring-stage `TaskError` timeout messages and scoring duration. |
-| Patch size | UTF-8 byte length of `trace.info.patch`; inspect `patch_truncated` at the 2 MB cap. |
-| Stale drops | `inference/agg/stale_drops`; also watch policy lag and pending processed rollouts. |
-
-The `inference/agg/*` names are the existing processor counters, but the outbound
-coordinator does not yet persist them into trainer JSONL or W&B. Tool-error and
-patch-size aggregates likewise require a trace collector. Treat that collector
-wiring as a blocker before scaling beyond this smoke run; the durable monitor and
-raw result artifacts remain the source of truth meanwhile.
+| Patch size | Monitor patch-size distribution and `patch_truncated` rate; samples show the patch. |
+| Stale drops | Monitor stale assignment and discarded processed-rollout counts. |
 
 Stop immediately if hidden tests or grading material become visible during a
 rollout, train/eval repositories overlap, a batch mixes policy identity, a failed

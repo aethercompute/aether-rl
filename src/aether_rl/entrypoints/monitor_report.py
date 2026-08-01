@@ -47,10 +47,19 @@ ROLLOUT_CHARTS = (
     "eval_output_tokens",
     "eval_truncated",
 )
+SAMPLE_LIMIT = 20
+SAMPLE_PROMPT_CHARS = 12_000
+SAMPLE_TRANSCRIPT_CHARS = 60_000
+SAMPLE_PATCH_CHARS = 30_000
 
 
 @dataclass(frozen=True)
 class ResultRow:
+    assignment_id: str
+    group_id: str
+    group_size: int
+    worker_id: str
+    worker_session_id: str
     completed_at: float
     kind: str
     source_id: str | None
@@ -153,7 +162,7 @@ def build_snapshot(options: MonitorOptions) -> dict[str, Any]:
         snapshot["errors"].append(f"coordinator database unavailable: {error}")
         result_rows = []
 
-    rollout_summary, rollout_errors = summarize_rollout_artifacts(options.run_root, result_rows)
+    rollout_summary, rollout_errors = summarize_rollout_artifacts(options.run_root, result_rows, now=now)
     snapshot["rollouts"] = rollout_summary
     snapshot["errors"].extend(rollout_errors)
     return snapshot
@@ -201,20 +210,45 @@ def open_readonly_database(path: Path) -> sqlite3.Connection:
 
 
 def summarize_database(connection: sqlite3.Connection, now: float) -> dict[str, Any]:
-    run = one_row(connection, "SELECT r.run_id, p.policy_version AS active_policy_version FROM runs r "
-                              "JOIN policies p ON p.policy_id = r.active_policy_id WHERE r.singleton = 1")
-    policy = one_row(connection, "SELECT COUNT(*) AS count, COALESCE(MAX(policy_version), 0) AS max_version "
-                                 "FROM policies")
-    batches = one_row(connection, "SELECT COUNT(*) AS count, COALESCE(MAX(step), 0) AS max_step, "
-                                  "COALESCE(SUM(sample_count), 0) AS samples, MAX(created_at) AS latest_at "
-                                  "FROM training_batches")
-    pending_rollouts = one_row(connection, "SELECT COUNT(*) AS count, COALESCE(SUM(token_count), 0) AS tokens "
-                                           "FROM processed_rollouts WHERE batch_step IS NULL AND discarded = 0")
-    workers = [dict(row) for row in connection.execute("SELECT * FROM worker_sessions ORDER BY last_seen_at DESC")]
+    run = one_row(
+        connection,
+        "SELECT r.run_id, p.policy_version AS active_policy_version FROM runs r "
+        "JOIN policies p ON p.policy_id = r.active_policy_id WHERE r.singleton = 1",
+    )
+    policy = one_row(
+        connection, "SELECT COUNT(*) AS count, COALESCE(MAX(policy_version), 0) AS max_version FROM policies"
+    )
+    batches = one_row(
+        connection,
+        "SELECT COUNT(*) AS count, COALESCE(MAX(step), 0) AS max_step, "
+        "COALESCE(SUM(sample_count), 0) AS samples, MAX(created_at) AS latest_at "
+        "FROM training_batches",
+    )
+    pending_rollouts = one_row(
+        connection,
+        "SELECT COUNT(*) AS count, COALESCE(SUM(token_count), 0) AS tokens "
+        "FROM processed_rollouts WHERE batch_step IS NULL AND discarded = 0",
+    )
+    dropped_rollouts = one_row(
+        connection,
+        "SELECT COALESCE(SUM(discarded), 0) AS discarded, "
+        "(SELECT COUNT(*) FROM assignment_cancellations WHERE reason = 'policy_stale') AS stale_assignments "
+        "FROM processed_rollouts",
+    )
+    workers = [
+        dict(row)
+        for row in connection.execute(
+            "SELECT ws.*, COUNT(l.lease_id) AS active_leases FROM worker_sessions ws "
+            "LEFT JOIN lease_attempts l ON l.worker_session_id = ws.worker_session_id AND l.state = 'active' "
+            "GROUP BY ws.worker_session_id ORDER BY ws.last_seen_at DESC"
+        )
+    ]
     for worker in workers:
         worker["last_seen_age_seconds"] = now - worker["last_seen_at"]
         capabilities = decode_json_blob(worker.pop("capabilities_json", None))
         worker["max_concurrent_assignments"] = nested_get(capabilities, ("max_concurrent_assignments",))
+        capacity = worker["max_concurrent_assignments"]
+        worker["free_slots"] = max(0, capacity - worker["active_leases"]) if isinstance(capacity, int) else None
         worker["gpu_count"] = nested_get(capabilities, ("gpu_count",))
         worker["labels"] = nested_get(capabilities, ("labels",)) or {}
     return {
@@ -223,6 +257,7 @@ def summarize_database(connection: sqlite3.Connection, now: float) -> dict[str, 
         "workers": workers,
         "training_batches": dict(batches) if batches is not None else {},
         "pending_processed_rollouts": dict(pending_rollouts) if pending_rollouts is not None else {},
+        "dropped_rollouts": dict(dropped_rollouts) if dropped_rollouts is not None else {},
         "assignment_counts": grouped_counts(
             connection,
             "SELECT g.kind, COALESCE(g.source_id, '') AS source_id, a.state, COUNT(*) AS count "
@@ -306,15 +341,22 @@ def recent_failures(connection: sqlite3.Connection) -> list[dict[str, Any]]:
 
 def list_result_rows(connection: sqlite3.Connection, *, limit: int) -> tuple[ResultRow, ...]:
     rows = connection.execute(
-        "SELECT o.completed_at, g.kind, g.source_id, p.policy_version, ar.artifact_path "
+        "SELECT a.assignment_id, a.group_id, g.group_size, l.worker_id, l.worker_session_id, "
+        "o.completed_at, g.kind, g.source_id, p.policy_version, ar.artifact_path "
         "FROM assignment_outcomes o JOIN assignments a USING (assignment_id) "
         "JOIN rollout_groups g USING (group_id) JOIN policies p ON p.policy_id = a.policy_id "
-        "JOIN accepted_results ar USING (assignment_id) WHERE o.outcome = 'result' "
+        "JOIN accepted_results ar USING (assignment_id) JOIN lease_attempts l ON l.lease_id = ar.lease_id "
+        "WHERE o.outcome = 'result' "
         "ORDER BY o.completed_at DESC LIMIT ?",
         (limit,),
     ).fetchall()
     return tuple(
         ResultRow(
+            assignment_id=row["assignment_id"],
+            group_id=row["group_id"],
+            group_size=row["group_size"],
+            worker_id=row["worker_id"],
+            worker_session_id=row["worker_session_id"],
             completed_at=row["completed_at"],
             kind=row["kind"],
             source_id=row["source_id"],
@@ -325,7 +367,9 @@ def list_result_rows(connection: sqlite3.Connection, *, limit: int) -> tuple[Res
     )
 
 
-def summarize_rollout_artifacts(run_root: Path, rows: Sequence[ResultRow]) -> tuple[dict[str, Any], list[str]]:
+def summarize_rollout_artifacts(
+    run_root: Path, rows: Sequence[ResultRow], *, now: float | None = None
+) -> tuple[dict[str, Any], list[str]]:
     records: list[dict[str, Any]] = []
     errors: list[str] = []
     for row in rows:
@@ -341,14 +385,17 @@ def summarize_rollout_artifacts(run_root: Path, rows: Sequence[ResultRow]) -> tu
 
     by_kind = {kind: [record for record in records if record["kind"] == kind] for kind in ("train", "eval")}
     by_source_policy = summarize_by_source_policy(records)
+    samples = [record["sample"] for record in reversed(records) if record.get("sample")][:SAMPLE_LIMIT]
     return (
         {
             "decoded_result_artifacts": len(rows),
             "decoded_rollouts": len(records),
             "summary": {kind: summarize_records(kind_records) for kind, kind_records in by_kind.items()},
             "by_source_policy": by_source_policy,
+            "worker_activity": summarize_worker_activity(records, now=now),
             "charts": {name: rollout_series(records, name) for name in ROLLOUT_CHARTS},
-            "recent": records[-20:],
+            "samples": samples,
+            "recent": [{key: value for key, value in record.items() if key != "sample"} for record in records[-20:]],
         },
         errors[:20],
     )
@@ -362,7 +409,21 @@ def load_result_envelope(path: Path) -> ResultEnvelope:
 def rollout_record(row: ResultRow, rollout: object) -> dict[str, Any]:
     metrics = getattr(rollout, "metrics", {}) or {}
     rewards = getattr(rollout, "rewards", {}) or {}
+    info = getattr(rollout, "info", {}) or {}
+    patch = info.get("patch") if isinstance(info.get("patch"), str) else ""
+    tool_errors = sum(
+        1
+        for message in getattr(rollout, "tool_messages", [])
+        if str(getattr(message, "content", "")).strip().casefold().startswith(("error:", "search failed"))
+    )
+    error = getattr(rollout, "error", None)
     return {
+        "trace_id": str(getattr(rollout, "id", "")),
+        "assignment_id": row.assignment_id,
+        "group_id": row.group_id,
+        "group_size": row.group_size,
+        "worker_id": row.worker_id,
+        "worker_session_id": row.worker_session_id,
         "completed_at": row.completed_at,
         "kind": row.kind,
         "source_id": row.source_id or "",
@@ -379,8 +440,51 @@ def rollout_record(row: ResultRow, rollout: object) -> dict[str, Any]:
         "is_truncated": bool(getattr(rollout, "is_truncated", False)),
         "stop_condition": getattr(rollout, "stop_condition", None) or "",
         "error_type": rollout_error_type(rollout),
+        "error_message": str(getattr(error, "message", "")) if error is not None else "",
+        "tool_errors": tool_errors,
+        "patch_size_bytes": len(patch.encode()),
+        "patch_truncated": bool(info.get("patch_truncated")),
+        "timing_seconds": rollout_timing_seconds(rollout),
+        "sample": rollout_sample(row, rollout, patch),
+    }
+
+
+def rollout_sample(row: ResultRow, rollout: object, patch: str) -> dict[str, Any]:
+    task = getattr(getattr(rollout, "task", None), "data", None)
+    prompt = getattr(task, "prompt_text", "") if task is not None else ""
+    error = getattr(rollout, "error", None)
+    return {
+        "trace_id": str(getattr(rollout, "id", "")),
+        "assignment_id": row.assignment_id,
+        "worker_id": row.worker_id,
+        "kind": row.kind,
+        "source_id": row.source_id or "",
+        "policy_version": row.policy_version,
+        "task": str(getattr(task, "name", "") or getattr(task, "idx", "")),
+        "reward": finite_or_none(getattr(rollout, "reward", None)),
+        "ok": not bool(getattr(rollout, "has_error", False)),
+        "stop_condition": getattr(rollout, "stop_condition", None) or "",
+        "turns": getattr(rollout, "num_turns", 0),
+        "input_tokens": getattr(rollout, "num_input_tokens", 0),
+        "output_tokens": getattr(rollout, "num_output_tokens", 0),
+        "prompt": truncate_text(str(prompt), SAMPLE_PROMPT_CHARS),
+        "transcript": truncate_text(str(getattr(rollout, "transcript", "")), SAMPLE_TRANSCRIPT_CHARS),
+        "patch": truncate_text(patch, SAMPLE_PATCH_CHARS),
+        "patch_size_bytes": len(patch.encode()),
+        "patch_truncated": bool((getattr(rollout, "info", {}) or {}).get("patch_truncated")),
+        "rewards": getattr(rollout, "rewards", {}) or {},
+        "metrics": getattr(rollout, "metrics", {}) or {},
+        "error": None
+        if error is None
+        else {"type": getattr(error, "type", ""), "message": getattr(error, "message", "")},
         "timing_seconds": rollout_timing_seconds(rollout),
     }
+
+
+def truncate_text(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return value[:limit] + f"\n...[truncated {len(value) - limit} characters]"
 
 
 def rollout_error_type(rollout: object) -> str:
@@ -422,16 +526,42 @@ def finite_or_none(value: object) -> float | None:
 def summarize_records(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     stop_conditions = Counter(str(record.get("stop_condition") or "unknown") for record in records)
     errors = Counter(str(record.get("error_type") or "unknown") for record in records if not record.get("ok"))
+    successful = [record for record in records if record.get("ok")]
+    groups: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for record in records:
+        groups[str(record.get("group_id") or "")].append(record)
+    complete_groups = [
+        items
+        for items in groups.values()
+        if items and len(items) == int(items[0].get("group_size") or 0) and all(item.get("ok") for item in items)
+    ]
+    informative_groups = sum(
+        1 for items in complete_groups if len({finite_or_none(item.get("reward")) for item in items}) > 1
+    )
+    sandbox_failures = sum(record.get("error_type") == "SandboxError" for record in records)
+    test_timeouts = sum(
+        record.get("error_type") == "TaskError" and "scoring timed out" in str(record.get("error_message", ""))
+        for record in records
+    )
     return {
         "rollouts": len(records),
         "ok_rate": mean([1.0 if record.get("ok") else 0.0 for record in records]),
         "reward": stats([record.get("reward") for record in records]),
+        "solved_rate": mean([1.0 if record.get("reward") == 1.0 else 0.0 for record in successful]),
+        "complete_groups": len(complete_groups),
+        "informative_groups": informative_groups,
+        "informative_group_fraction": informative_groups / len(complete_groups) if complete_groups else None,
         "exact_match": stats([nested_get(record, ("metrics", "exact_match")) for record in records]),
         "exact_format": stats([nested_get(record, ("metrics", "exact_format")) for record in records]),
         "length_accuracy": stats([nested_get(record, ("metrics", "length_accuracy")) for record in records]),
         "num_output_tokens": stats([record.get("num_output_tokens") for record in records]),
         "num_total_tokens": stats([record.get("num_total_tokens") for record in records]),
         "num_turns": stats([record.get("num_turns") for record in records]),
+        "tool_errors": stats([record.get("tool_errors") for record in records]),
+        "patch_size_bytes": stats([record.get("patch_size_bytes") for record in records]),
+        "patch_truncated_rate": mean([1.0 if record.get("patch_truncated") else 0.0 for record in records]),
+        "sandbox_failure_rate": sandbox_failures / len(records) if records else None,
+        "test_timeout_rate": test_timeouts / len(records) if records else None,
         "is_completed_rate": mean([1.0 if record.get("is_completed") else 0.0 for record in records]),
         "is_truncated_rate": mean([1.0 if record.get("is_truncated") else 0.0 for record in records]),
         "stop_conditions": dict(stop_conditions.most_common()),
@@ -441,6 +571,39 @@ def summarize_records(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             for key in ("setup", "generation", "generation_model", "generation_harness", "finalize", "scoring")
         },
     }
+
+
+def summarize_worker_activity(
+    records: Sequence[Mapping[str, Any]], *, now: float | None = None
+) -> list[dict[str, Any]]:
+    current = time.time() if now is None else now
+    workers: dict[tuple[str, str], list[Mapping[str, Any]]] = defaultdict(list)
+    for record in records:
+        workers[(str(record.get("worker_id") or ""), str(record.get("worker_session_id") or ""))].append(record)
+    rows = []
+    for (worker_id, worker_session_id), items in sorted(workers.items()):
+        for seconds in WINDOWS_SECONDS:
+            window = [item for item in items if float(item.get("completed_at") or 0) >= current - seconds]
+            output_tokens = sum(float(item.get("num_output_tokens") or 0) for item in window)
+            generation_seconds = sum(float(nested_get(item, ("timing_seconds", "generation")) or 0) for item in window)
+            rows.append(
+                {
+                    "worker_id": worker_id,
+                    "worker_session_id": worker_session_id,
+                    "window_seconds": seconds,
+                    "rollouts": len(window),
+                    "rollouts_per_hour": len(window) * 3600 / seconds,
+                    "output_tokens": int(output_tokens),
+                    "wall_output_tps": output_tokens / seconds,
+                    "generation_tps": output_tokens / generation_seconds if generation_seconds else None,
+                    "ok_rate": mean([1.0 if item.get("ok") else 0.0 for item in window]),
+                    "solved_rate": mean(
+                        [1.0 if item.get("reward") == 1.0 else 0.0 for item in window if item.get("ok")]
+                    ),
+                    "tool_errors": sum(int(item.get("tool_errors") or 0) for item in window),
+                }
+            )
+    return rows
 
 
 def summarize_by_source_policy(records: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -579,6 +742,8 @@ def render_html(snapshot: Mapping[str, Any], options: MonitorOptions) -> str:
                 "Fleet And Queues",
                 "<h3>Rollout Speed</h3>",
                 render_table(coordinator.get("result_windows", [])),
+                "<h3>Per-Worker Throughput</h3>",
+                render_table(rollouts.get("worker_activity", [])),
                 "<h3>Workers</h3>",
                 render_table(coordinator.get("workers", [])),
                 render_details("Assignment Counts", render_table(coordinator.get("assignment_counts", []))),
@@ -606,6 +771,7 @@ def render_html(snapshot: Mapping[str, Any], options: MonitorOptions) -> str:
             render_section("trainer", "Trainer Latest", render_key_values(trainer.get("latest", {}))),
             render_section("trainer-charts", "Trainer Graphs", render_charts(trainer.get("charts", {}))),
             render_section("rollout-charts", "Rollout Graphs", render_charts(rollouts.get("charts", {}))),
+            render_section("samples", "Rollout Samples", render_samples(rollouts.get("samples", []))),
             render_section(
                 "recent",
                 "Recent Activity",
@@ -634,6 +800,7 @@ def render_style() -> list[str]:
         "a { color: #8ab4f8; }",
         "nav a { display: inline-block; margin: 0 1rem 0.25rem 0; }",
         "code, td, th, .metric-value, time { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }",
+        "pre { background: #0c0c0c; border: 1px solid #444; max-height: 40rem; overflow: auto; padding: 0.75rem; white-space: pre-wrap; word-break: break-word; }",
         ".cards { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); margin-bottom: 1rem; }",
         ".card { background: #181818; border: 1px solid #555; padding: 0.75rem; }",
         ".metric-label { color: #aaa; font-size: 0.85rem; overflow-wrap: anywhere; }",
@@ -668,8 +835,14 @@ def topline(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         "training_batches": nested_get(coordinator, ("training_batches", "count")),
         "latest_batch_step": nested_get(coordinator, ("training_batches", "max_step")),
         "pending_processed_rollouts": nested_get(coordinator, ("pending_processed_rollouts", "count")),
+        "stale_assignments": nested_get(coordinator, ("dropped_rollouts", "stale_assignments")),
+        "discarded_processed_rollouts": nested_get(coordinator, ("dropped_rollouts", "discarded")),
         "train_rollouts_decoded": train_summary.get("rollouts"),
         "train_reward_mean": nested_get(train_summary, ("reward", "mean")),
+        "train_solved_rate": train_summary.get("solved_rate"),
+        "informative_group_fraction": train_summary.get("informative_group_fraction"),
+        "train_tool_errors": nested_get(train_summary, ("tool_errors", "mean")),
+        "train_patch_bytes_p90": nested_get(train_summary, ("patch_size_bytes", "p90")),
         "train_exact_format_mean": nested_get(train_summary, ("exact_format", "mean")),
         "eval_rollouts_decoded": eval_summary.get("rollouts"),
         "eval_reward_mean": nested_get(eval_summary, ("reward", "mean")),
@@ -687,6 +860,7 @@ def render_nav() -> str:
         ("trainer", "Trainer"),
         ("trainer-charts", "Trainer Graphs"),
         ("rollout-charts", "Rollout Graphs"),
+        ("samples", "Samples"),
         ("recent", "Recent"),
     )
     return "<nav>" + "".join(f'<a href="#{anchor}">{escape(label)}</a>' for anchor, label in links) + "</nav>"
@@ -717,7 +891,13 @@ def render_card_grid(values: Mapping[str, Any]) -> str:
 def render_errors(errors: Sequence[object]) -> list[str]:
     if not errors:
         return []
-    return [render_section("errors", "Monitor Errors", '<div class="errors">' + render_table([{"error": error} for error in errors]) + "</div>")]
+    return [
+        render_section(
+            "errors",
+            "Monitor Errors",
+            '<div class="errors">' + render_table([{"error": error} for error in errors]) + "</div>",
+        )
+    ]
 
 
 def render_nested_summary(summary: Mapping[str, Any]) -> str:
@@ -735,6 +915,36 @@ def render_key_values(values: Mapping[str, Any]) -> str:
     return render_table([{"key": key, "value": value} for key, value in values.items()])
 
 
+def render_samples(samples: Sequence[Mapping[str, Any]]) -> str:
+    if not samples:
+        return "<p>No samples.</p>"
+    rendered = []
+    for sample in samples:
+        title = (
+            f"{sample.get('kind', '')} policy {sample.get('policy_version', '')} | "
+            f"reward {format_value(sample.get('reward'))} | {sample.get('task', '')} | "
+            f"worker {sample.get('worker_id', '')}"
+        )
+        metadata = {key: value for key, value in sample.items() if key not in {"prompt", "transcript", "patch"}}
+        rendered.append(
+            render_details(
+                title,
+                render_key_values(metadata)
+                + render_sample_text("Prompt", sample.get("prompt"))
+                + render_sample_text("Transcript", sample.get("transcript"))
+                + render_sample_text("Patch", sample.get("patch")),
+            )
+        )
+    return "\n".join(rendered)
+
+
+def render_sample_text(title: str, value: object) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    return f"<h3>{escape(title)}</h3><pre>{escape(text)}</pre>"
+
+
 def render_table(rows: Sequence[Mapping[str, Any]]) -> str:
     if not rows:
         return "<p>No data.</p>"
@@ -742,7 +952,9 @@ def render_table(rows: Sequence[Mapping[str, Any]]) -> str:
     header = "".join(f"<th>{escape(key)}</th>" for key in keys)
     body = []
     for row in rows:
-        body.append("<tr>" + "".join(f"<td>{escape(format_table_value(key, row.get(key)))}</td>" for key in keys) + "</tr>")
+        body.append(
+            "<tr>" + "".join(f"<td>{escape(format_table_value(key, row.get(key)))}</td>" for key in keys) + "</tr>"
+        )
     return (
         '<div class="table-wrap"><table><thead><tr>'
         + header

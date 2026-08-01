@@ -50,7 +50,7 @@ For a local plain HTML dashboard of durable coordinator/trainer state, run this 
 uv run monitor-report --run-root <run_root> --host 127.0.0.1 --port 8090 --refresh-seconds 10
 ```
 
-Open `http://127.0.0.1:8090`. The monitor is read-only; it reads `<run_root>/coordinator.sqlite`, `<run_root>/trainer/metrics.jsonl`, and rollout result artifacts. It shows workers, queue counts, rollout speed windows, train/eval rewards and verifier metrics, token/truncation summaries, trainer graphs, recent rollouts, and recent failures. Use `/snapshot.json` for the same data as JSON.
+Open `http://127.0.0.1:8090`. The monitor is read-only; it reads `<run_root>/coordinator.sqlite`, `<run_root>/trainer/metrics.jsonl`, and rollout result artifacts. It shows queue/policy state, per-worker 5/15/60-minute wall and generation TPS, rollout and solve rates, train/eval rewards, informative groups, tool/sandbox/timeout failures, token and patch distributions, trainer graphs, recent activity, and bounded sample transcripts with tool interactions and patches. Use `/snapshot.json` for the same data as JSON. Samples may contain sensitive task and model output, so keep the listener on loopback or secure it externally.
 
 ## Workers
 

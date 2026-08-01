@@ -26,6 +26,14 @@ The report's all-attempt `mean_reward` includes errored rollouts as zero reward.
 
 Add `--watch-seconds 20` and the `--wandb-project`, `--wandb-name`, and optional `--wandb-group` arguments to publish a minimal live evaluation run. Its reward and standard task metrics use `eval/policy_version` as the x-axis.
 
+For a read-only detailed view of a distributed run:
+
+```bash
+uv run monitor-report --run-root <run_root> --host 127.0.0.1 --port 8090 --refresh-seconds 10
+```
+
+The web monitor combines coordinator SQLite, trainer JSONL, and bounded decoding of durable result artifacts. It reports per-worker 5/15/60-minute wall and generation TPS, rollout rates, solve/error rates, queue and policy state, train/eval summaries, informative groups, stale/discard counts, tool errors, patch sizes, and timing distributions. Its sample browser shows escaped, size-capped prompts, transcripts including tool interactions, final patches, rewards, metrics, and errors. Bind it to loopback or secure it externally because samples can contain sensitive task and model output. Use `/snapshot.json` for the same structured data.
+
 ## Files and logs
 
 Default coordinator state:
