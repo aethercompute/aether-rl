@@ -20,7 +20,7 @@ from aether_rl.protocol import ResultEnvelope, episode_digest, policy_manifest_d
 from aether_rl.transport.filesystem import BATCH_FILE_NAME
 from aether_rl.utils.pathing import get_rollout_dir, get_step_path
 from tests.unit.coordinator.test_database import FakeClock, capabilities, failure_envelope, registration
-from tests.unit.coordinator.test_scheduler import make_repository
+from tests.unit.coordinator.test_scheduler import make_repository, publish_policy
 
 
 def completed_episode(assignment, reward: float) -> vf.WireEpisode:
@@ -240,6 +240,109 @@ async def test_training_batch_export_rejects_conflicting_trainer_file(tmp_path: 
         )
         with pytest.raises(ArtifactCorruptionError, match="conflicts"):
             exporter.export_available()
+
+
+@pytest.mark.asyncio
+async def test_emit_batches_partition_processed_rollouts_by_policy_identity(tmp_path: Path):
+    clock = FakeClock()
+    with make_repository(tmp_path, clock) as repository:
+        repository.configure_scheduler(max_policy_lag=100, loaded_policy_preference_seconds=0)
+        repository.register_worker(registration(caps=capabilities(capacity=4)))
+        spec = EnvironmentSourceSpec(
+            source_id="train-source",
+            kind="train",
+            environment=registration().capabilities.environments[0],
+            tasks=({"idx": 0, "prompt": "prompt"},),
+            sampling=SamplingConfig(temperature=1, max_tokens=8),
+            group_size=1,
+            max_attempts=1,
+        )
+        repository.register_scheduler_source(spec)
+
+        for index, version in enumerate((10, 11, 12, 12)):
+            if repository.active_policy().policy_version != version:
+                policy = publish_policy(repository, version, created_at=20.0 + version)
+                repository.activate_policy(policy.policy_id)
+            group = repository.create_next_group("train")
+            lease = repository.create_lease(
+                group.assignments[0].assignment_id,
+                worker_id="worker-1",
+                worker_session_id="session-1",
+                lease_id=f"policy-{version}-lease-{index}",
+                duration_seconds=10,
+            )
+            repository.accept_result(result_envelope(lease, 1.0))
+
+        processor = RemoteResultProcessor(
+            repository,
+            (
+                ResultProcessingSource(
+                    source_id=spec.source_id,
+                    environment=spec.environment,
+                    processing_id="grpo-v1",
+                    algorithm=GRPOAlgorithm(GRPOAlgoConfig(), None),  # type: ignore[arg-type]
+                ),
+            ),
+            batch_size=2,
+        )
+
+        assert await processor.process_available() == (4, 1)
+        batch = decode_training_batch(repository.training_batches()[0])
+        assert {sample.behavior_policy_version for sample in batch.examples} == {12}
+        assert len({sample.behavior_policy_digest for sample in batch.examples}) == 1
+        assert processor.metrics.mixed_policy_batch_attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_emit_batches_drop_stale_processed_rollouts(tmp_path: Path):
+    clock = FakeClock()
+    with make_repository(tmp_path, clock) as repository:
+        repository.configure_scheduler(max_policy_lag=0, loaded_policy_preference_seconds=0)
+        repository.register_worker(registration(caps=capabilities(capacity=1)))
+        spec = EnvironmentSourceSpec(
+            source_id="train-source",
+            kind="train",
+            environment=registration().capabilities.environments[0],
+            tasks=({"idx": 0, "prompt": "prompt"},),
+            sampling=SamplingConfig(temperature=1, max_tokens=8),
+            group_size=1,
+            max_attempts=1,
+        )
+        repository.register_scheduler_source(spec)
+
+        policy_v10 = publish_policy(repository, 10, created_at=30.0)
+        repository.activate_policy(policy_v10.policy_id)
+        group = repository.create_next_group("train")
+        lease = repository.create_lease(
+            group.assignments[0].assignment_id,
+            worker_id="worker-1",
+            worker_session_id="session-1",
+            lease_id="policy-10-lease",
+            duration_seconds=10,
+        )
+        repository.accept_result(result_envelope(lease, 1.0))
+
+        processor = RemoteResultProcessor(
+            repository,
+            (
+                ResultProcessingSource(
+                    source_id=spec.source_id,
+                    environment=spec.environment,
+                    processing_id="grpo-v1",
+                    algorithm=GRPOAlgorithm(GRPOAlgoConfig(), None),  # type: ignore[arg-type]
+                ),
+            ),
+            batch_size=2,
+        )
+        assert await processor.process_available() == (1, 0)
+
+        policy_v11 = publish_policy(repository, 11, created_at=31.0)
+        repository.activate_policy(policy_v11.policy_id)
+
+        assert await processor.process_available() == (0, 0)
+        assert processor.metrics.stale_processed_rollouts_dropped == 1
+        assert repository.training_batches() == ()
+        assert repository.pending_processed_rollouts() == ()
 
 
 @pytest.mark.asyncio

@@ -377,6 +377,9 @@ class CoordinatorRepository:
             )
             self._reconcile_stale_work(self.clock())
 
+    def max_policy_lag(self) -> int | None:
+        return self._scheduler_settings()["max_policy_lag"]
+
     def active_policy(self) -> PolicyManifest:
         row = self.connection.execute(
             "SELECT p.* FROM runs r JOIN policies p ON p.policy_id = r.active_policy_id WHERE r.singleton = 1"

@@ -81,6 +81,14 @@ class ProcessedGroupPayload(msgspec.Struct):
     input_digest: str
     rollouts: list[ProcessedRolloutPayload]
     evaluation_records: list[dict[str, Any]]
+    policy_digest: str = ""
+    adapter_digest: str | None = None
+
+
+@dataclass
+class ResultProcessorMetrics:
+    stale_processed_rollouts_dropped: int = 0
+    mixed_policy_batch_attempts: int = 0
 
 
 class DurableTrainingQueue:
@@ -218,6 +226,7 @@ class RemoteResultProcessor:
         self.queue.recover(repository)
         self._encoder = msgspec.msgpack.Encoder()
         self._group_decoder = msgspec.msgpack.Decoder(type=ProcessedGroupPayload)
+        self.metrics = ResultProcessorMetrics()
 
     async def process_available(self, *, max_groups: int | None = None) -> tuple[int, int]:
         if max_groups is not None and max_groups < 1:
@@ -310,6 +319,12 @@ class RemoteResultProcessor:
             kind=group.kind,
             policy_id=group.outcomes[0].assignment.policy.policy_id,
             policy_version=group.outcomes[0].assignment.policy.policy_version,
+            policy_digest=policy_manifest_digest(group.outcomes[0].assignment.policy),
+            adapter_digest=(
+                group.outcomes[0].assignment.policy.adapter.digest
+                if group.outcomes[0].assignment.policy.adapter is not None
+                else None
+            ),
             input_digest=input_digest,
             rollouts=processed_rollouts,
             evaluation_records=evaluation_records,
@@ -332,40 +347,36 @@ class RemoteResultProcessor:
         emitted = 0
         while True:
             pending = await self._call(self.repository.pending_processed_rollouts)
-            selected = []
-            tokens = 0
-            for rollout in pending:
-                selected.append(rollout)
-                tokens += rollout.token_count
-                if self.batch_size is not None and len(selected) >= self.batch_size:
-                    break
-                if self.token_batch_size is not None and tokens >= self.token_batch_size:
-                    break
-            ready = (
-                len(selected) >= self.batch_size
-                if self.batch_size is not None
-                else tokens >= (self.token_batch_size or 0)
-            )
-            if not ready:
+            if not pending:
                 return emitted
-            payloads: dict[Path, ProcessedGroupPayload] = {}
+
+            active_version, max_policy_lag = await self._policy_lag_window()
+            payloads = self._load_pending_payloads(pending)
+            stale_members = [
+                (rollout.group_id, rollout.ordinal)
+                for rollout in pending
+                if self._is_stale(payloads[rollout.artifact_path], active_version, max_policy_lag)
+            ]
+            if stale_members:
+                await self._call(self.repository.discard_processed_rollouts, stale_members)
+                self.metrics.stale_processed_rollouts_dropped += len(stale_members)
+                continue
+
+            selected = self._select_policy_homogeneous_batch(pending, payloads)
+            if not selected:
+                return emitted
+
             samples: list[TrainingSample] = []
             members: list[tuple[str, int]] = []
             for rollout in selected:
-                payload = payloads.get(rollout.artifact_path)
-                if payload is None:
-                    artifact = self.queue.verify(
-                        rollout.artifact_path,
-                        rollout.artifact_digest,
-                        rollout.size_bytes,
-                    )
-                    payload = self._group_decoder.decode(artifact)
-                    payloads[rollout.artifact_path] = payload
+                payload = payloads[rollout.artifact_path]
                 samples.extend(payload.rollouts[rollout.ordinal].samples)
                 members.append((rollout.group_id, rollout.ordinal))
             if not samples:
                 await self._call(self.repository.discard_processed_rollouts, members)
                 continue
+            self._assert_single_payload_policy_identity(selected, payloads)
+            self._assert_single_policy_identity(samples)
             step = await self._call(self.repository.next_training_batch_step)
             batch_bytes = self._encoder.encode(TrainingBatch(examples=samples, step=step))
             batch_digest = sha256_digest(batch_bytes)
@@ -380,6 +391,93 @@ class RemoteResultProcessor:
                 members=members,
             )
             emitted += 1
+
+    async def _policy_lag_window(self) -> tuple[int, int | None]:
+        active = await self._call(self.repository.active_policy)
+        max_policy_lag = await self._call(self.repository.max_policy_lag)
+        return active.policy_version, max_policy_lag
+
+    def _load_pending_payloads(self, pending) -> dict[Path, ProcessedGroupPayload]:
+        payloads: dict[Path, ProcessedGroupPayload] = {}
+        for rollout in pending:
+            if rollout.artifact_path in payloads:
+                continue
+            artifact = self.queue.verify(
+                rollout.artifact_path,
+                rollout.artifact_digest,
+                rollout.size_bytes,
+            )
+            payloads[rollout.artifact_path] = self._group_decoder.decode(artifact)
+        return payloads
+
+    @staticmethod
+    def _is_stale(payload: ProcessedGroupPayload, active_version: int, max_policy_lag: int | None) -> bool:
+        return max_policy_lag is not None and active_version - payload.policy_version > max_policy_lag
+
+    def _select_policy_homogeneous_batch(self, pending, payloads: dict[Path, ProcessedGroupPayload]):
+        prefix_identities: set[tuple[int, str | None]] = set()
+        prefix_tokens = 0
+        for prefix_count, rollout in enumerate(pending, start=1):
+            payload = payloads[rollout.artifact_path]
+            prefix_identities.add(self._payload_policy_identity(payload))
+            prefix_tokens += rollout.token_count
+            if self.batch_size is not None and prefix_count >= self.batch_size:
+                if len(prefix_identities) > 1:
+                    self.metrics.mixed_policy_batch_attempts += 1
+                break
+            if self.token_batch_size is not None and prefix_tokens >= self.token_batch_size:
+                if len(prefix_identities) > 1:
+                    self.metrics.mixed_policy_batch_attempts += 1
+                break
+
+        partitions: dict[tuple[int, str | None], list] = {}
+        tokens: dict[tuple[int, str | None], int] = {}
+        first_index: dict[tuple[int, str | None], int] = {}
+        for index, rollout in enumerate(pending):
+            identity = self._payload_policy_identity(payloads[rollout.artifact_path])
+            first_index.setdefault(identity, index)
+            partitions.setdefault(identity, []).append(rollout)
+            tokens[identity] = tokens.get(identity, 0) + rollout.token_count
+
+        ready = [
+            identity
+            for identity, rollouts in partitions.items()
+            if (len(rollouts) >= self.batch_size if self.batch_size is not None else tokens[identity] >= (self.token_batch_size or 0))
+        ]
+        if not ready:
+            return []
+        identity = min(ready, key=lambda item: first_index[item])
+        selected = []
+        selected_tokens = 0
+        for rollout in partitions[identity]:
+            selected.append(rollout)
+            selected_tokens += rollout.token_count
+            if self.batch_size is not None and len(selected) >= self.batch_size:
+                break
+            if self.token_batch_size is not None and selected_tokens >= self.token_batch_size:
+                break
+        return selected
+
+    @staticmethod
+    def _payload_policy_identity(payload: ProcessedGroupPayload) -> tuple[int, str | None]:
+        return payload.policy_version, payload.adapter_digest or payload.policy_digest or payload.policy_id
+
+    @classmethod
+    def _assert_single_payload_policy_identity(cls, selected, payloads: dict[Path, ProcessedGroupPayload]) -> None:
+        versions = {payloads[rollout.artifact_path].policy_version for rollout in selected}
+        adapter_hashes = {cls._payload_policy_identity(payloads[rollout.artifact_path])[1] for rollout in selected}
+        assert len(versions) == 1, f"mixed policy versions in processed rollouts: {sorted(versions)}"
+        assert len(adapter_hashes) == 1, "mixed adapter hashes in processed rollouts"
+        assert None not in adapter_hashes, "missing adapter hash in processed rollouts"
+
+    @staticmethod
+    def _assert_single_policy_identity(samples: list[TrainingSample]) -> None:
+        versions = {sample.behavior_policy_version for sample in samples}
+        adapter_hashes = {sample.behavior_policy_digest for sample in samples}
+        assert len(versions) == 1, f"mixed policy versions in training batch: {sorted(versions)}"
+        assert len(adapter_hashes) == 1, "mixed adapter hashes in training batch"
+        assert None not in versions, "missing policy version in training batch"
+        assert None not in adapter_hashes, "missing adapter hash in training batch"
 
     def _load_episode(self, outcome: GroupOutcome) -> vf.WireEpisode:
         if outcome.outcome != "result":
