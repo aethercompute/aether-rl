@@ -9,6 +9,7 @@ from verifiers.v1.types import AssistantMessage, SamplingConfig, UserMessage
 from aether_rl.configs.algorithm import GRPOAlgoConfig
 from aether_rl.coordinator import (
     ArtifactCorruptionError,
+    ConflictError,
     CoordinatorTrainingBatchExporter,
     RemoteResultProcessor,
     ResultProcessingSource,
@@ -397,3 +398,125 @@ async def test_group_scored_source_drops_partial_terminal_group(tmp_path: Path):
             ).fetchone()[0]
             == 0
         )
+
+
+@pytest.mark.asyncio
+async def test_out_of_order_policy_soak_retries_duplicates_and_stale_drops(tmp_path: Path):
+    clock = FakeClock()
+    with make_repository(tmp_path, clock) as repository:
+        repository.configure_scheduler(max_policy_lag=100, loaded_policy_preference_seconds=0)
+        repository.register_worker(registration(caps=capabilities(capacity=64)))
+        spec = EnvironmentSourceSpec(
+            source_id="train-source",
+            kind="train",
+            environment=registration().capabilities.environments[0],
+            tasks=({"idx": 0, "prompt": "prompt"},),
+            sampling=SamplingConfig(temperature=1, max_tokens=8),
+            group_size=1,
+            max_attempts=2,
+        )
+        repository.register_scheduler_source(spec)
+
+        policies = {version: publish_policy(repository, version, created_at=100.0 + version) for version in range(10, 14)}
+        created = []
+        valid_envelopes = []
+        old_envelopes = []
+        sequence = [10] * 8 + [11] * 8 + [12] * 8
+        for index, version in enumerate(sequence):
+            if repository.active_policy().policy_version != version:
+                repository.activate_policy(policies[version].policy_id)
+            group = repository.create_next_group("train")
+            assignment = group.assignments[0]
+            lease = repository.create_lease(
+                assignment.assignment_id,
+                worker_id="worker-1",
+                worker_session_id="session-1",
+                lease_id=f"lease-{index}-a",
+                duration_seconds=1 if index % 5 == 0 else 1000,
+            )
+            if index % 5 == 0:
+                old_envelopes.append(result_envelope(lease, float(index % 2)))
+                clock.now += 2
+                repository.expire_leases()
+                assert repository.assignment_state(assignment.assignment_id) == "retry_wait"
+                clock.now += 2
+                retry = repository.create_lease(
+                    assignment.assignment_id,
+                    worker_id="worker-1",
+                    worker_session_id="session-1",
+                    lease_id=f"lease-{index}-b",
+                    duration_seconds=1000,
+                )
+                valid_envelopes.append(result_envelope(retry, float(index % 2)))
+            else:
+                valid_envelopes.append(result_envelope(lease, float(index % 2)))
+            created.append((assignment.assignment_id, version))
+
+        for index, envelope in reversed(list(enumerate(valid_envelopes))):
+            accepted = repository.accept_result(envelope)
+            assert accepted.terminal and not accepted.duplicate
+            if index % 3 == 0:
+                duplicate = repository.accept_result(envelope)
+                assert duplicate.terminal and duplicate.duplicate
+        for envelope in old_envelopes:
+            with pytest.raises(ConflictError):
+                repository.accept_result(envelope)
+
+        processor = RemoteResultProcessor(
+            repository,
+            (
+                ResultProcessingSource(
+                    source_id=spec.source_id,
+                    environment=spec.environment,
+                    processing_id="grpo-v1",
+                    algorithm=GRPOAlgorithm(GRPOAlgoConfig(), None),  # type: ignore[arg-type]
+                ),
+            ),
+            batch_size=8,
+        )
+        assert await processor.process_available() == (24, 3)
+        batches = [decode_training_batch(record) for record in repository.training_batches()]
+        assert len(batches) == 3
+        assert sorted({sample.behavior_policy_version for sample in batch.examples}.pop() for batch in batches) == [10, 11, 12]
+        for batch in batches:
+            assert len(batch.examples) == 8
+            assert len({sample.behavior_policy_version for sample in batch.examples}) == 1
+            assert len({sample.behavior_policy_digest for sample in batch.examples}) == 1
+        assert len(created) == 24
+
+        repository.configure_scheduler(max_policy_lag=100, loaded_policy_preference_seconds=0)
+        repository.activate_policy(policies[13].policy_id)
+        stale_assignments = []
+        for index in range(3):
+            group = repository.create_next_group("train")
+            assignment = group.assignments[0]
+            stale_assignments.append(assignment.assignment_id)
+            lease = repository.create_lease(
+                assignment.assignment_id,
+                worker_id="worker-1",
+                worker_session_id="session-1",
+                lease_id=f"stale-lease-{index}",
+                duration_seconds=20,
+            )
+            repository.accept_result(result_envelope(lease, 1.0))
+
+        stale_processor = RemoteResultProcessor(
+            repository,
+            (
+                ResultProcessingSource(
+                    source_id=spec.source_id,
+                    environment=spec.environment,
+                    processing_id="grpo-v1",
+                    algorithm=GRPOAlgorithm(GRPOAlgoConfig(), None),  # type: ignore[arg-type]
+                ),
+            ),
+            batch_size=8,
+        )
+        assert await stale_processor.process_available() == (3, 0)
+        newer = publish_policy(repository, 14, created_at=114.0)
+        repository.record_policy(newer, repository.run_root / "policies" / newer.policy_id)
+        repository.activate_policy(newer.policy_id)
+        repository.configure_scheduler(max_policy_lag=0, loaded_policy_preference_seconds=0)
+        assert await stale_processor.process_available() == (0, 0)
+        assert stale_processor.metrics.stale_processed_rollouts_dropped == 3
+        assert all(repository.assignment_state(assignment_id) == "succeeded" for assignment_id in stale_assignments)
