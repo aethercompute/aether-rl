@@ -35,6 +35,7 @@ The coordinator owns trainer output and resume. Distributed trainer configs requ
 
 Workers generate and overwrite `<state_dir>/inference.toml`; configure worker-local inference through worker fields rather than maintaining that file.
 Use worker `max_model_len` to cap KV-cache context for models whose native context is too large for the rollout GPU.
+Rollout inference optimizations live on the worker config: `enable_prefix_caching`, `enable_dbo`, `enable_chunked_prefill`, `gpu_memory_utilization`, `quantization`, and `vllm_extra`. Keep defaults unless benchmarking shows a gain; `quantization` is the vLLM serving argument and is separate from the shared `[base_model].quantization` identity field.
 
 Server `[policy_distribution]` optionally publishes immutable policies to S3/R2 with `type`, `bucket`, `prefix`, `endpoint_url`, `region`, and `presign_ttl_seconds`. Use the boto3 credential chain, never TOML secrets. Worker policy order is SHARDCAST, approved presigned HTTPS origin, then coordinator fallback. Configure `policy_download_allowed_origins`, `shardcast_servers`, shard concurrency, attempts, fallback, and prefetch interval. Prefetch warms disk only. Worker results default to zstd with two concurrent uploaders; server/source limits are decompressed limits.
 

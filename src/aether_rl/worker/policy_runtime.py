@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import signal
@@ -11,6 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
+import tomli_w
 
 from aether_rl.configs.worker import WorkerConfig
 from aether_rl.protocol import PolicyManifest
@@ -105,35 +105,40 @@ class WorkerVLLMSupervisor:
             return False
 
     def _write_config(self) -> None:
-        def quoted(value: str) -> str:
-            return json.dumps(value)
-
-        lines = [
-            "enable_lora = true",
-            f"max_loras = {self.config.max_loaded_policies}",
-            f"max_cpu_loras = {self.config.max_loaded_policies}",
-            f"max_lora_rank = {self.config.max_lora_rank}",
-            f"gpu_memory_utilization = {self.config.gpu_memory_utilization}",
-            "",
-            "[server]",
-            'host = "127.0.0.1"',
-            f"port = {self.config.inference_port}",
-            "",
-            "[model]",
-            f"name = {quoted(self.config.base_model.model_name)}",
-            f"revision = {quoted(self.config.base_model.model_revision)}",
-            f"trust_remote_code = {str(self.config.trust_remote_code).lower()}",
-            *([f"max_model_len = {self.config.max_model_len}"] if self.config.max_model_len is not None else []),
-            "",
-            "[tokenizer]",
-            f"name = {quoted(self.config.base_model.tokenizer_name)}",
-            f"revision = {quoted(self.config.base_model.tokenizer_revision)}",
-            "",
-            "[parallel]",
-            f"tp = {self.config.tensor_parallel_size}",
-            "",
-        ]
-        data = "\n".join(lines).encode()
+        vllm_extra = dict(self.config.vllm_extra)
+        if self.config.enable_chunked_prefill is not None:
+            vllm_extra["enable_chunked_prefill"] = self.config.enable_chunked_prefill
+        payload = {
+            "enable_lora": True,
+            "max_loras": self.config.max_loaded_policies,
+            "max_cpu_loras": self.config.max_loaded_policies,
+            "max_lora_rank": self.config.max_lora_rank,
+            "gpu_memory_utilization": self.config.gpu_memory_utilization,
+            "enable_dbo": self.config.enable_dbo,
+            "server": {
+                "host": "127.0.0.1",
+                "port": self.config.inference_port,
+            },
+            "model": {
+                "name": self.config.base_model.model_name,
+                "revision": self.config.base_model.model_revision,
+                "trust_remote_code": self.config.trust_remote_code,
+            },
+            "tokenizer": {
+                "name": self.config.base_model.tokenizer_name,
+                "revision": self.config.base_model.tokenizer_revision,
+            },
+            "parallel": {"tp": self.config.tensor_parallel_size},
+        }
+        if self.config.enable_prefix_caching is not None:
+            payload["enable_prefix_caching"] = self.config.enable_prefix_caching
+        if self.config.quantization is not None:
+            payload["quantization"] = self.config.quantization
+        if self.config.max_model_len is not None:
+            payload["model"]["max_model_len"] = self.config.max_model_len
+        if vllm_extra:
+            payload["vllm_extra"] = vllm_extra
+        data = tomli_w.dumps(payload).encode()
         temporary = self.config_path.with_suffix(".tmp")
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, "wb") as file:

@@ -303,7 +303,17 @@ async def test_native_vllm_admin_never_uses_inplace_and_rejects_name_conflict(tm
 
 @pytest.mark.asyncio
 async def test_supervisor_config_is_loopback_and_pins_revisions(tmp_path: Path):
-    config: WorkerConfig = worker_config(tmp_path).model_copy(update={"max_model_len": 32768})
+    config: WorkerConfig = worker_config(tmp_path).model_copy(
+        update={
+            "max_model_len": 32768,
+            "enable_prefix_caching": True,
+            "enable_dbo": True,
+            "enable_chunked_prefill": True,
+            "gpu_memory_utilization": 0.82,
+            "quantization": "fp8",
+            "vllm_extra": {"max_num_batched_tokens": 65536},
+        }
+    )
     with WorkerState(config.state_dir) as state:
         supervisor = WorkerVLLMSupervisor(config, state)
         supervisor._write_config()
@@ -315,4 +325,12 @@ async def test_supervisor_config_is_loopback_and_pins_revisions(tmp_path: Path):
         assert "max_model_len = 32768" in contents
         inference = InferenceConfig.model_validate(tomllib.loads(contents))
         assert inference.model.max_model_len == 32768
+        assert inference.enable_prefix_caching is True
+        assert inference.enable_dbo is True
+        assert inference.gpu_memory_utilization == 0.82
+        assert inference.quantization == "fp8"
+        assert inference.vllm_extra == {
+            "enable_chunked_prefill": True,
+            "max_num_batched_tokens": 65536,
+        }
         await supervisor.client.aclose()

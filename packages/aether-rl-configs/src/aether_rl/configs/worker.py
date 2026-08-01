@@ -46,7 +46,12 @@ class WorkerConfig(BaseConfig):
     inference_port: int = Field(default=8000, ge=1, le=65535)
     inference_startup_timeout_seconds: float = Field(default=600, gt=0, allow_inf_nan=False)
     inference_shutdown_timeout_seconds: float = Field(default=60, gt=0, allow_inf_nan=False)
+    enable_prefix_caching: bool | None = None
+    enable_dbo: bool = False
+    enable_chunked_prefill: bool | None = None
     gpu_memory_utilization: float = Field(default=0.9, gt=0, le=1, allow_inf_nan=False)
+    quantization: str | None = Field(default=None, min_length=1)
+    vllm_extra: dict[str, JsonValue] = {}
     max_model_len: int | None = Field(default=None, ge=1)
     max_lora_rank: int = Field(default=64, ge=1)
     max_loaded_policies: int = Field(default=8, ge=1)

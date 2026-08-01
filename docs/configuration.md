@@ -125,7 +125,12 @@ The worker configuration contains coordinator connectivity, local inference sett
 | `heartbeat_interval_seconds` | `10` | Session heartbeat and lease renewal cadence. |
 | `lease_wait_seconds` | `30` | Coordinator long-poll duration. |
 | `inference_port` | `8000` | Loopback vLLM port. |
+| `enable_prefix_caching` | unset | Optional vLLM prefix-cache toggle. Leave unset for vLLM defaults; set `true` to reuse shared prompt prefixes across grouped rollouts. |
+| `enable_dbo` | `false` | Enable vLLM dual batch overlap. Keep disabled unless the model/runtime combination has been benchmarked. |
+| `enable_chunked_prefill` | unset | Optional vLLM chunked-prefill toggle, written through `vllm_extra.enable_chunked_prefill`. Leave unset for vLLM defaults. |
 | `gpu_memory_utilization` | `0.9` | vLLM GPU-memory fraction. |
+| `quantization` | unset | Optional vLLM serving quantization argument, separate from `[base_model].quantization` identity. Set only when all workers use a compatible quantized serving path. |
+| `vllm_extra` | `{}` | Raw extra vLLM serve arguments for options not modeled by Aether. Values are passed through to the generated inference config. |
 | `max_model_len` | unset | Optional vLLM context cap; set this for long-context models when the native maximum would exhaust worker memory. |
 | `max_lora_rank` | `64` | Largest accepted adapter rank. |
 | `max_loaded_policies` | `8` | Local loaded-adapter limit. |
