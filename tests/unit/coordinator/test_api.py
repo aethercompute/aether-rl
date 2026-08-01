@@ -472,6 +472,46 @@ async def test_group_lease_endpoint_reserves_group_and_retries_after_disconnect(
 
 
 @pytest.mark.asyncio
+async def test_group_lease_endpoint_preserves_single_lease_fallback(tmp_path: Path):
+    clock = FakeClock()
+    with make_repository(tmp_path, clock) as repository:
+        repository.register_worker(registration())
+        assignment = assignments(base_policy())[0]
+        repository.create_group([assignment], max_attempts=1)
+        app = create_coordinator_app(repository, token=TOKEN, trainer_ready=lambda: True, lease_duration_seconds=5)
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                group_request = LeaseRequest(
+                    request_id="single-group-request",
+                    worker_id="worker-1",
+                    worker_session_id="session-1",
+                    sent_at=clock.now,
+                    environments=registration().capabilities.environments,
+                    available_slots=1,
+                )
+                group_response = await client.post(
+                    "/api/v1/assignments/lease-group",
+                    headers=JSON_HEADERS,
+                    content=canonical_json_bytes(group_request),
+                )
+                assert group_response.status_code == 204
+
+                clock.now += 1
+                single_request = group_request.model_copy(
+                    update={"request_id": "single-request", "sent_at": clock.now}
+                )
+                single_response = await client.post(
+                    "/api/v1/assignments/lease",
+                    headers=JSON_HEADERS,
+                    content=canonical_json_bytes(single_request),
+                )
+                assert single_response.status_code == 200
+                assert single_response.json()["assignment"]["assignment_id"] == assignment.assignment_id
+        finally:
+            app.state.coordinator_service.close()
+
+
+@pytest.mark.asyncio
 async def test_policy_etags_allowlist_corruption_and_trainer_readiness(tmp_path: Path):
     clock = FakeClock()
     with make_repository(tmp_path, clock) as repository:
