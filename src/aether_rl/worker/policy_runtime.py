@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import signal
 import sys
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -185,12 +187,73 @@ class VLLMAdminClient:
         except Exception as error:
             raise PolicyRuntimeFatalError("vLLM adapter unload state is ambiguous") from error
 
+    async def inference_metrics(self) -> dict[str, float]:
+        response = await self.client.get("/metrics")
+        response.raise_for_status()
+        return parse_vllm_metrics(response.text)
+
+
+_PROMETHEUS_SAMPLE_RE = re.compile(r"^([A-Za-z_:][A-Za-z0-9_:]*)(?:\{[^}]*\})?\s+([-+0-9.eE]+)$")
+
+
+def parse_vllm_metrics(text: str) -> dict[str, float]:
+    samples: dict[str, list[float]] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _PROMETHEUS_SAMPLE_RE.match(line)
+        if match is None:
+            continue
+        name, raw_value = match.groups()
+        try:
+            value = float(raw_value)
+        except ValueError:
+            continue
+        samples.setdefault(name, []).append(value)
+
+    def first(*names: str, aggregate=sum) -> float | None:
+        for name in names:
+            values = samples.get(name)
+            if values:
+                return float(aggregate(values))
+        return None
+
+    metrics: dict[str, float] = {}
+    mappings = {
+        "inference/agg/running_requests": ("vllm:num_requests_running", "vllm_num_requests_running"),
+        "inference/agg/waiting_requests": ("vllm:num_requests_waiting", "vllm_num_requests_waiting"),
+        "inference/agg/kv_cache_usage_mean": ("vllm:gpu_cache_usage_perc", "vllm_gpu_cache_usage_perc"),
+        "inference/agg/prefix_cache_hit_rate": ("vllm:prefix_cache_hit_rate", "vllm_prefix_cache_hit_rate"),
+    }
+    for metric_name, sample_names in mappings.items():
+        value = first(*sample_names, aggregate=lambda values: sum(values) / len(values))
+        if value is not None:
+            metrics[metric_name] = value
+    return metrics
+
 
 class PolicyRuntimeFatalError(RuntimeError):
     worker_fatal = True
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PolicyRuntimeMetrics:
+    adapter_download_seconds: float = 0.0
+    adapter_load_seconds: float = 0.0
+    adapter_switch_seconds: float = 0.0
+    adapter_acquires: int = 0
+
+    def snapshot(self) -> dict[str, float]:
+        acquires = max(self.adapter_acquires, 1)
+        return {
+            "inference/agg/adapter_download_time": self.adapter_download_seconds / acquires,
+            "inference/agg/adapter_load_time": self.adapter_load_seconds / acquires,
+            "inference/agg/adapter_switch_time": self.adapter_switch_seconds / acquires,
+        }
 
 
 class WorkerPolicyRuntime:
@@ -218,6 +281,7 @@ class WorkerPolicyRuntime:
         self._lock = asyncio.Lock()
         self._condition = asyncio.Condition(self._lock)
         self._stop_event: asyncio.Event | None = None
+        self.metrics = PolicyRuntimeMetrics()
 
     async def start(self, stop_event: asyncio.Event) -> None:
         self._stop_event = stop_event
@@ -244,6 +308,14 @@ class WorkerPolicyRuntime:
     def loaded_policy_ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._loaded))
 
+    async def metrics_snapshot(self) -> dict[str, float]:
+        metrics = self.metrics.snapshot()
+        try:
+            metrics |= await self.admin.inference_metrics()
+        except Exception as error:
+            logger.debug("vLLM metrics scrape failed: %s", error)
+        return metrics
+
     async def _prefetch_loop(self) -> None:
         if self._stop_event is None or self.config.policy_prefetch_interval_seconds is None:
             raise RuntimeError("policy prefetch started before the worker runtime")
@@ -263,16 +335,22 @@ class WorkerPolicyRuntime:
 
     @asynccontextmanager
     async def acquire(self, manifest: PolicyManifest):
+        started_at = time.monotonic()
         async with self.cache.pin(manifest) as cached:
+            self.metrics.adapter_download_seconds += time.monotonic() - started_at
             async with self._condition:
                 if cached is not None and manifest.policy_id not in self._loaded:
                     await self._wait_for_load_capacity()
+                    load_started_at = time.monotonic()
                     await self.admin.load(manifest.served_model_name, cached.path)
+                    self.metrics.adapter_load_seconds += time.monotonic() - load_started_at
                     self.cache.mark_loaded(manifest.policy_id)
                 self._loaded[manifest.policy_id] = cached
                 self._references[manifest.policy_id] = self._references.get(manifest.policy_id, 0) + 1
                 self._last_used[manifest.policy_id] = time.monotonic()
                 await self._enforce_loaded_retention()
+                self.metrics.adapter_switch_seconds += time.monotonic() - started_at
+                self.metrics.adapter_acquires += 1
             try:
                 yield manifest.served_model_name
             finally:

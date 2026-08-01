@@ -322,10 +322,20 @@ PERFORMANCE_METRICS = [
     "time/wait_for_batch",
     "time/wait_for_policy",
     "inference/agg/throughput",
+    "inference/agg/rollouts_per_hour",
+    "inference/agg/queue_wait",
+    "inference/agg/generation_time",
     "inference/agg/running_requests",
     "inference/agg/waiting_requests",
+    "inference/agg/batch_size",
     "inference/agg/kv_cache_usage_mean",
     "inference/agg/prefix_cache_hit_rate",
+    "inference/agg/adapter_download_time",
+    "inference/agg/adapter_load_time",
+    "inference/agg/adapter_switch_time",
+    "inference/agg/policy_lag",
+    "inference/agg/stale_drops",
+    "inference/agg/informative_group_fraction",
 ]
 
 # Dense grid: more, smaller panels per row and enough rows that sections don't paginate.

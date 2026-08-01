@@ -406,5 +406,9 @@ async def test_daemon_executes_grouped_leases_and_uploads_individual_results(tmp
         assert client.lease_requests == []
         assert executor.groups == [leases]
         assert len(client.submissions) == 2
+        metrics = daemon.inference_metrics.snapshot()
+        assert metrics["inference/agg/rollouts_completed"] == 2
+        assert metrics["inference/agg/batch_size"] == 2
+        assert metrics["inference/agg/rollouts_per_hour"] > 0
         assert spool.entries() == ()
         assert daemon.active == {}

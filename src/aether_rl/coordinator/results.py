@@ -89,6 +89,20 @@ class ProcessedGroupPayload(msgspec.Struct):
 class ResultProcessorMetrics:
     stale_processed_rollouts_dropped: int = 0
     mixed_policy_batch_attempts: int = 0
+    processed_train_groups: int = 0
+    informative_train_groups: int = 0
+    policy_lag_total: int = 0
+    policy_lag_max: int = 0
+
+    def snapshot(self) -> dict[str, float]:
+        groups = max(self.processed_train_groups, 1)
+        return {
+            "inference/agg/stale_drops": float(self.stale_processed_rollouts_dropped),
+            "inference/agg/mixed_policy_batch_attempts": float(self.mixed_policy_batch_attempts),
+            "inference/agg/policy_lag": self.policy_lag_total / groups,
+            "inference/agg/policy_lag_max": float(self.policy_lag_max),
+            "inference/agg/informative_group_fraction": self.informative_train_groups / groups,
+        }
 
 
 class DurableTrainingQueue:
@@ -273,6 +287,12 @@ class RemoteResultProcessor:
         else:
             if source.algorithm is None:
                 raise ConflictError("train processing source has no algorithm")
+            active_policy = await self._call(self.repository.active_policy)
+            group_policy_version = group.outcomes[0].assignment.policy.policy_version
+            policy_lag = max(0, active_policy.policy_version - group_policy_version)
+            self.metrics.processed_train_groups += 1
+            self.metrics.policy_lag_total += policy_lag
+            self.metrics.policy_lag_max = max(self.metrics.policy_lag_max, policy_lag)
             for rollout in rollouts:
                 if rollout.has_error or not rollout.trainable:
                     continue
@@ -292,6 +312,8 @@ class RemoteResultProcessor:
                 survivors = []
             if survivors:
                 await source.algorithm.finalize_group(survivors)
+                if _is_informative_group(survivors):
+                    self.metrics.informative_train_groups += 1
                 temperature = group.outcomes[0].assignment.sampling.temperature
                 if temperature is None:
                     raise ConflictError("train assignment sampling temperature is missing")
@@ -551,3 +573,8 @@ def decode_training_batch(record: TrainingBatchRecord) -> TrainingBatch:
     if len(data) != record.size_bytes or sha256_digest(data) != record.artifact_digest:
         raise ArtifactCorruptionError("training batch artifact does not match durable state")
     return msgspec.msgpack.decode(data, type=TrainingBatch)
+
+
+def _is_informative_group(rollouts: list[Rollout]) -> bool:
+    rewards = [rollout.reward for rollout in rollouts]
+    return bool(rewards) and any(reward != rewards[0] for reward in rewards)

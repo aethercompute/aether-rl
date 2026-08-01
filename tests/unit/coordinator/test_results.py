@@ -127,6 +127,9 @@ async def test_remote_results_finalize_grpo_emit_batch_and_replay_idempotently(t
         assert all(sample.behavior_policy_version == 0 for sample in batch.examples)
         assert all(sample.behavior_policy_digest is not None for sample in batch.examples)
         assert all(sample.routed_experts is not None for sample in batch.examples)
+        metrics = processor.metrics.snapshot()
+        assert metrics["inference/agg/informative_group_fraction"] == 1
+        assert metrics["inference/agg/policy_lag"] == 0
         assert await processor.process_available() == (0, 0)
         assert repository.training_batches() == records
 
@@ -341,6 +344,7 @@ async def test_emit_batches_drop_stale_processed_rollouts(tmp_path: Path):
 
         assert await processor.process_available() == (0, 0)
         assert processor.metrics.stale_processed_rollouts_dropped == 1
+        assert processor.metrics.snapshot()["inference/agg/stale_drops"] == 1
         assert repository.training_batches() == ()
         assert repository.pending_processed_rollouts() == ()
 

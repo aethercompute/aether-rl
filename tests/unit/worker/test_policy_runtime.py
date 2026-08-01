@@ -20,7 +20,7 @@ from aether_rl.protocol import (
 from aether_rl.trainer.policy import publish_lora_policy
 from aether_rl.worker.client import CoordinatorClient
 from aether_rl.worker.policy_cache import AdapterCache
-from aether_rl.worker.policy_runtime import VLLMAdminClient, WorkerVLLMSupervisor
+from aether_rl.worker.policy_runtime import VLLMAdminClient, WorkerVLLMSupervisor, parse_vllm_metrics
 from aether_rl.worker.policy_transport import PolicyFileTransport
 from aether_rl.worker.spool import WorkerState
 from tests.unit.coordinator.test_database import base_model
@@ -299,6 +299,25 @@ async def test_native_vllm_admin_never_uses_inplace_and_rejects_name_conflict(tm
     with pytest.raises(Exception, match="different adapter"):
         await admin.load("policy-1", adapter_path)
     await client.aclose()
+
+
+def test_parse_vllm_metrics_maps_scheduler_cache_and_prefix_stats():
+    metrics = parse_vllm_metrics(
+        """
+# HELP vllm:num_requests_running Running requests.
+vllm:num_requests_running 3
+vllm:num_requests_waiting 2
+vllm:gpu_cache_usage_perc{gpu=\"0\"} 0.5
+vllm:gpu_cache_usage_perc{gpu=\"1\"} 0.7
+vllm:prefix_cache_hit_rate 0.25
+"""
+    )
+    assert metrics == {
+        "inference/agg/running_requests": 3.0,
+        "inference/agg/waiting_requests": 2.0,
+        "inference/agg/kv_cache_usage_mean": 0.6,
+        "inference/agg/prefix_cache_hit_rate": 0.25,
+    }
 
 
 @pytest.mark.asyncio

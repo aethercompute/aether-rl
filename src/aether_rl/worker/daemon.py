@@ -52,6 +52,46 @@ class ActiveAssignment:
     expires_at: float
 
 
+@dataclass
+class InferenceMetrics:
+    rollouts_completed: int = 0
+    output_tokens: int = 0
+    queue_wait_seconds: float = 0.0
+    generation_seconds: float = 0.0
+    execution_seconds: float = 0.0
+    grouped_batches: int = 0
+    grouped_batch_members: int = 0
+    started_at: float = time.monotonic()
+
+    def record(self, lease: AssignmentLease, envelope: TerminalEnvelope, execution_seconds: float) -> None:
+        self.rollouts_completed += 1
+        self.output_tokens += _episode_output_tokens(envelope)
+        self.queue_wait_seconds += max(0.0, lease.issued_at - lease.assignment.created_at)
+        self.generation_seconds += _episode_generation_seconds(envelope)
+        self.execution_seconds += max(0.0, execution_seconds)
+
+    def record_batch(self, size: int) -> None:
+        if size > 1:
+            self.grouped_batches += 1
+            self.grouped_batch_members += size
+
+    def snapshot(self, *, running_requests: int = 0, waiting_requests: int = 0) -> dict[str, float]:
+        elapsed_hours = max((time.monotonic() - self.started_at) / 3600, 1e-12)
+        elapsed_seconds = max(time.monotonic() - self.started_at, 1e-12)
+        completed = max(self.rollouts_completed, 1)
+        return {
+            "inference/agg/rollouts_completed": float(self.rollouts_completed),
+            "inference/agg/throughput": self.output_tokens / elapsed_seconds,
+            "inference/agg/rollouts_per_hour": self.rollouts_completed / elapsed_hours,
+            "inference/agg/queue_wait": self.queue_wait_seconds / completed,
+            "inference/agg/generation_time": self.generation_seconds / completed,
+            "inference/agg/execution_time": self.execution_seconds / completed,
+            "inference/agg/batch_size": self.grouped_batch_members / max(self.grouped_batches, 1),
+            "inference/agg/running_requests": float(running_requests),
+            "inference/agg/waiting_requests": float(waiting_requests),
+        }
+
+
 class TimestampSequence:
     def __init__(self, clock: Callable[[], float] = time.time):
         self.clock = clock
@@ -92,6 +132,7 @@ class WorkerDaemon:
         self._upload_claims: set[str] = set()
         self._upload_claim_lock = asyncio.Lock()
         self._server_time_offset = 0.0
+        self.inference_metrics = InferenceMetrics()
 
     async def run(self) -> None:
         try:
@@ -195,11 +236,13 @@ class WorkerDaemon:
                 continue
             try:
                 try:
+                    execution_started_at = time.monotonic()
                     if self.policy_runtime is None:
                         envelopes = await self._execute_group(actives)
                     else:
                         async with self.policy_runtime.acquire(actives[0].lease.assignment.policy):
                             envelopes = await self._execute_group(actives)
+                    execution_seconds = time.monotonic() - execution_started_at
                 except asyncio.CancelledError:
                     if all(active.cancel_event.is_set() for active in actives) and not self.stop_event.is_set():
                         continue
@@ -208,10 +251,13 @@ class WorkerDaemon:
                     if getattr(error, "worker_fatal", False):
                         raise
                     envelopes = [self._failure_envelope(active, error) for active in actives]
+                    execution_seconds = 0.0
+                self.inference_metrics.record_batch(len(actives))
                 events = []
                 for active, envelope in zip(actives, envelopes, strict=True):
                     if envelope is None:
                         continue
+                    self.inference_metrics.record(active.lease, envelope, execution_seconds)
                     self._validate_terminal_envelope(active.lease, envelope)
                     entry = self.spool.publish(envelope)
                     events.append(self._entry_events.setdefault(entry.digest, asyncio.Event()))
@@ -487,6 +533,23 @@ class WorkerDaemon:
             await asyncio.wait_for(event.wait(), timeout=timeout)
         except TimeoutError:
             pass
+
+
+def _episode_output_tokens(envelope: TerminalEnvelope) -> int:
+    episode = getattr(envelope, "episode", None)
+    traces = getattr(episode, "traces", ()) if episode is not None else ()
+    return sum(int(getattr(trace, "num_output_tokens", 0) or 0) for trace in traces)
+
+
+def _episode_generation_seconds(envelope: TerminalEnvelope) -> float:
+    episode = getattr(envelope, "episode", None)
+    traces = getattr(episode, "traces", ()) if episode is not None else ()
+    total = 0.0
+    for trace in traces:
+        timing = getattr(trace, "timing", None)
+        generation = getattr(timing, "generation", None)
+        total += float(getattr(generation, "duration", 0.0) or 0.0)
+    return total
 
 
 def build_registration(

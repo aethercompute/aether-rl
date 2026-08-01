@@ -15,7 +15,7 @@ curl -fsS https://coordinator.example.com/api/v1/status \
   -H "Aether-Protocol-Version: 1"
 ```
 
-`/health` is process liveness. `/ready` includes database, policy integrity, trainer, and result processing. Status reports active policy, trainer readiness, worker/session and stale-session counts, active leases, and assignment/group/result counts by state. It does not report free slots or detailed policy-lag/cache metrics.
+`/health` is process liveness. `/ready` includes database, policy integrity, trainer, and result processing. Status reports active policy, trainer readiness, worker/session and stale-session counts, active leases, and assignment/group/result counts by state. It does not report free slots.
 
 Inspect:
 
@@ -54,7 +54,7 @@ Open `http://127.0.0.1:8090`. The monitor is read-only; it reads `<run_root>/coo
 
 ## Workers
 
-Capture worker stdout/stderr with the service manager and inspect `<state_dir>/inference.log` for vLLM. The worker has no inbound health endpoint and currently emits limited lifecycle logging; coordinator status is the fleet view.
+Capture worker stdout/stderr with the service manager and inspect `<state_dir>/inference.log` for vLLM. The worker has no inbound health endpoint; coordinator status is the fleet view. In-process worker/runtime counters use `inference/agg/*` keys for throughput, rollouts/hour, queue wait, generation time, request counts, KV-cache usage, prefix-cache hit rate, adapter timing, policy lag, stale drops, and informative-group fraction when a monitor consumes them.
 
 Inspect `<state_dir>/spool/pending/` when results do not drain, `<state_dir>/spool/rejected/` for nonretryable submissions, and disk use under `<state_dir>/cache/policies/`.
 
