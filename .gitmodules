@@ -6,7 +6,7 @@
 	url = https://github.com/alkinun/renderers.git
 [submodule "research-environments"]
 	path = deps/research-environments
-	url = https://github.com/PrimeIntellect-ai/research-environments.git
+	url = https://github.com/alkinun/research-environments.git
 [submodule "pydantic-config"]
 	path = deps/pydantic-config
 	url = https://github.com/PrimeIntellect-ai/pydantic-config
