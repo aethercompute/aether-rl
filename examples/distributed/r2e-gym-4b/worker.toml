@@ -1,5 +1,5 @@
 coordinator_url = "http://127.0.0.1:8080" # pass the remote HTTPS URL to run-worker.sh
-state_dir = "outputs/qwen3-4b-r2e-gym-smoke-v1/worker"
+state_dir = "outputs/qwen3-4b-r2e-gym-smoke-v3/worker"
 inference_slots = 8
 tensor_parallel_size = 1
 inference_port = 8000

@@ -37,6 +37,7 @@ Server `environment_slots` bounds concurrent coordinator-side episodes. Server `
 Worker `inference_slots` advertises local inference concurrency, and worker `inference_body_limit_bytes` bounds replies read from loopback vLLM. Keep the server, worker, and proxy inference limits compatible. Workers have no environment catalog or result-delivery settings.
 Use worker `max_model_len` to cap KV-cache context for models whose native context is too large for the rollout GPU.
 Rollout inference optimizations live on the worker config: `enable_prefix_caching`, `enable_dbo`, `enable_chunked_prefill`, `gpu_memory_utilization`, `quantization`, and `vllm_extra`. Keep defaults unless benchmarking shows a gain; `quantization` is the vLLM serving argument and is separate from the shared `[base_model].quantization` identity field.
+For coding agents using the Verifiers `bash` harness, set `max_tool_output_chars` when broad shell output could exhaust the next model prompt. Truncation preserves both the beginning and end and marks the omitted middle.
 
 Server `[policy_distribution]` optionally publishes immutable policies to S3/R2 with `type`, `bucket`, `prefix`, `endpoint_url`, `region`, and `presign_ttl_seconds`. Use the boto3 credential chain, never TOML secrets. Worker policy order is SHARDCAST, approved presigned HTTPS origin, then coordinator fallback. Configure `policy_download_allowed_origins`, `shardcast_servers`, shard concurrency, attempts, fallback, and prefetch interval. Prefetch warms disk only.
 

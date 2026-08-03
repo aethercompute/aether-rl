@@ -21,11 +21,12 @@ GRPO has no length penalty, auxiliary reward, or post-filter; an enforced
 Tool use, patch size, response length, and partial test outcomes do not affect
 reward.
 
-The `bash` harness enables `bash` and `edit`, disables search, and runs each
-rollout in a fresh Docker container. `allow = []` blocks execution-time egress
-except Verifiers-managed model/tool routes. Setup may still pull the task image
-and prepare the harness before the network cut. Do not replace this with the host
-`subprocess` runtime.
+The `bash` harness enables `bash` and `edit`, disables search, and caps each
+string tool result at 20,000 characters while preserving its beginning and end.
+Each rollout runs in a fresh Docker container. `allow = []` blocks execution-time
+egress except Verifiers-managed model/tool routes. Setup may still pull the task
+image and prepare the harness before the network cut. Do not replace this with
+the host `subprocess` runtime.
 
 The coordinator drops errored rollouts from training. Because GRPO requires group
 scoring, any setup, sandbox, harness, finalization, or scoring error masks the
@@ -128,7 +129,7 @@ Start the read-only monitor on the coordinator host:
 
 ```bash
 uv run monitor-report \
-  --run-root outputs/qwen3-4b-r2e-gym-smoke-v1/server \
+  --run-root outputs/qwen3-4b-r2e-gym-smoke-v3/server \
   --host 127.0.0.1 --port 8090 --refresh-seconds 10
 ```
 
@@ -160,7 +161,7 @@ After policy version 16 is published, stop the distributed worker and serve the
 final adapter:
 
 ```bash
-FINAL_POLICY=$(ls -d outputs/qwen3-4b-r2e-gym-smoke-v1/server/policies/policy-v00000016-*)
+FINAL_POLICY=$(ls -d outputs/qwen3-4b-r2e-gym-smoke-v3/server/policies/policy-v00000016-*)
 uv run vllm serve Qwen/Qwen3-4B-Instruct-2507 \
   --revision cdbee75f17c01a7cc42f958dc650907174af0554 \
   --tokenizer-revision cdbee75f17c01a7cc42f958dc650907174af0554 \

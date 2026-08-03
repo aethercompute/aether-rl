@@ -5980,7 +5980,7 @@ wheels = [
 
 [[package]]
 name = "r2e-gym-v1"
-version = "0.1.2"
+version = "0.1.4"
 source = { editable = "deps/research-environments/environments/swe/r2e_gym_v1" }
 dependencies = [
     { name = "datasets" },

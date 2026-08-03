@@ -41,7 +41,7 @@ filename = "metrics.jsonl"
 
 [wandb]
 project = "aether-rl-swe"
-name = "qwen3-4b-r2e-gym-smoke-v1"
+name = "qwen3-4b-r2e-gym-smoke-v3"
 group = "r2e-gym-4b"
 tags = ["grpo", "swe", "r2e-gym", "qwen3", "lora", "smoke"]
 create_overview = false
