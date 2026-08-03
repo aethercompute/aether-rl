@@ -246,8 +246,8 @@ def summarize_database(connection: sqlite3.Connection, now: float) -> dict[str, 
     for worker in workers:
         worker["last_seen_age_seconds"] = now - worker["last_seen_at"]
         capabilities = decode_json_blob(worker.pop("capabilities_json", None))
-        worker["max_concurrent_assignments"] = nested_get(capabilities, ("max_concurrent_assignments",))
-        capacity = worker["max_concurrent_assignments"]
+        worker["inference_slots"] = nested_get(capabilities, ("inference_slots",))
+        capacity = worker["inference_slots"]
         worker["free_slots"] = max(0, capacity - worker["active_leases"]) if isinstance(capacity, int) else None
         worker["gpu_count"] = nested_get(capabilities, ("gpu_count",))
         worker["labels"] = nested_get(capabilities, ("labels",)) or {}

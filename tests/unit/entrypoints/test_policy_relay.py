@@ -12,7 +12,7 @@ from aether_rl.entrypoints.policy_relay import ShardcastPolicyRelay
 from aether_rl.protocol import PolicyFileLocation, PolicyLocations, policy_manifest_digest
 from aether_rl.trainer.policy import publish_lora_policy
 from aether_rl.worker.client import CoordinatorClient
-from aether_rl.worker.spool import WorkerState
+from aether_rl.worker.state import WorkerState
 from tests.unit.coordinator.test_database import base_model
 from tests.unit.worker.test_policy_runtime import published_policy
 
@@ -40,7 +40,7 @@ async def test_policy_relay_broadcasts_verified_external_adapter_once(tmp_path: 
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if request.url.path == "/api/v1/policies/current":
+        if request.url.path == "/api/v2/policies/current":
             return httpx.Response(200, json=manifest.model_dump(mode="json"))
         if request.url.path.endswith("/locations"):
             locations = PolicyLocations(

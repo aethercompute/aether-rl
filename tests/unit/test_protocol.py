@@ -11,6 +11,9 @@ from aether_rl.protocol import (
     BaseModelIdentity,
     EnvironmentIdentity,
     FailureEnvelope,
+    InferenceExchangeRequest,
+    InferenceLease,
+    InferenceReply,
     PolicyManifest,
     ResultEnvelope,
     RolloutAssignment,
@@ -67,6 +70,7 @@ def policy_manifest(version: int = 1, created_at: float = 10.0) -> PolicyManifes
 def rollout_assignment() -> RolloutAssignment:
     return RolloutAssignment(
         assignment_id="assignment-1",
+        source_id="source-1",
         group_id="group-1",
         group_index=0,
         group_size=2,
@@ -169,7 +173,7 @@ def test_assignment_and_lease_validate_ranges_and_time_ordering():
         RolloutAssignment(**{**assignment.model_dump(), "task_data": {"score": float("nan")}})
 
 
-def test_worker_capabilities_require_sorted_unique_environments():
+def test_worker_capabilities_and_inference_lease_exclude_environment_inputs():
     common = {
         "base_model": base_model_identity(),
         "runtime": {
@@ -179,25 +183,43 @@ def test_worker_capabilities_require_sorted_unique_environments():
             "transformers_version": "5.6.2",
             "vllm_version": "0.24.0",
         },
-        "max_concurrent_assignments": 1,
+        "inference_slots": 1,
         "gpu_count": 1,
         "tensor_parallel_size": 1,
     }
-    WorkerCapabilities(
-        **common,
-        environments=(
-            EnvironmentIdentity(id="a", revision="1"),
-            EnvironmentIdentity(id="b", revision="1"),
+    capabilities = WorkerCapabilities(**common)
+    assert "environments" not in capabilities.model_dump()
+    assignment = rollout_assignment()
+    lease = InferenceLease(
+        assignment_id=assignment.assignment_id,
+        lease_id="lease-1",
+        attempt=1,
+        worker_id="worker-1",
+        worker_session_id="session-1",
+        issued_at=20,
+        expires_at=30,
+        policy=assignment.policy,
+    )
+    wire = lease.model_dump(mode="json")
+    assert "task_data" not in wire
+    assert "sampling" not in wire
+    assert "environment" not in wire
+
+
+def test_inference_exchange_roundtrips_binary_response_body():
+    exchange = InferenceExchangeRequest(
+        worker_id="worker-1",
+        worker_session_id="session-1",
+        lease_id="lease-1",
+        reply=InferenceReply(
+            request_id="request-1",
+            status_code=200,
+            body=b'\xff{"choices":[]}\x00',
         ),
     )
-    with pytest.raises(ValidationError, match="sorted"):
-        WorkerCapabilities(
-            **common,
-            environments=(
-                EnvironmentIdentity(id="b", revision="1"),
-                EnvironmentIdentity(id="a", revision="1"),
-            ),
-        )
+
+    decoded = InferenceExchangeRequest.model_validate_json(exchange.model_dump_json())
+    assert decoded.reply == exchange.reply
 
 
 def test_terminal_envelope_discriminator_roundtrips_result_and_failure():

@@ -85,7 +85,8 @@ class ServerConfig(BaseConfig):
     dry_run: bool = False
     created_at: float = Field(default_factory=time.time, ge=0, allow_inf_nan=False)
     control_body_limit_bytes: int = Field(default=1024 * 1024, ge=1)
-    result_body_limit_bytes: int = Field(default=64 * 1024 * 1024, ge=1)
+    inference_body_limit_bytes: int = Field(default=64 * 1024 * 1024, ge=1)
+    environment_slots: int = Field(default=1, ge=1)
     lease_duration_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
     loaded_policy_preference_seconds: float = Field(default=5, ge=0, allow_inf_nan=False)
     max_policy_lag: int = Field(default=0, ge=0)

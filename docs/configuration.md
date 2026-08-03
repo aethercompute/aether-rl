@@ -26,7 +26,8 @@ The server configuration contains run identity, trainer supervision, model ident
 | `host`, `port` | `127.0.0.1`, `8080` | HTTP listener behind external TLS. |
 | `lease_duration_seconds` | `30` | Initial worker lease lifetime. |
 | `max_policy_lag` | `0` | Allowed active-policy versions before train work is stale. |
-| `result_body_limit_bytes` | 64 MiB | Maximum decompressed HTTP result body. |
+| `inference_body_limit_bytes` | 64 MiB | Maximum relayed inference body; configure workers and the external proxy consistently. |
+| `environment_slots` | `1` | Maximum verifier episodes executed concurrently on the coordinator. |
 
 The remaining timing and body-limit fields are defined by `ServerConfig` in `packages/aether-rl-configs/src/aether_rl/configs/server.py`.
 
@@ -113,17 +114,17 @@ Generate the table with `uv run model-identity`. Worker preflight downloads the 
 
 ## Worker
 
-The worker configuration contains coordinator connectivity, local inference settings, the shared model identity, and its environment catalog.
+The worker configuration contains coordinator connectivity, local inference settings, and the shared model identity. Workers are inference-only and have no verifier environment configuration.
 
 | Field | Default | Purpose |
 | --- | --- | --- |
 | `coordinator_url` | required | HTTPS origin only, with no path or query. Loopback HTTP is allowed. |
-| `state_dir` | `worker-state` | Stable identity, result spool, adapter cache, generated inference config, and inference log. |
-| `execution_slots` | `1` | Maximum concurrent assignments. |
+| `state_dir` | `worker-state` | Stable identity, adapter cache, generated inference config, and inference log. |
+| `inference_slots` | `1` | Maximum concurrent inference leases offered by this worker. |
 | `tensor_parallel_size` | `1` | GPUs used by local vLLM; cannot exceed visible GPUs. |
-| `spool_max_entries` | `1000` | Pending result capacity; must cover all execution slots. |
 | `heartbeat_interval_seconds` | `10` | Session heartbeat and lease renewal cadence. |
 | `lease_wait_seconds` | `30` | Coordinator long-poll duration. |
+| `inference_body_limit_bytes` | 64 MiB | Maximum local vLLM response relayed to the coordinator. |
 | `inference_port` | `8000` | Loopback vLLM port. |
 | `enable_prefix_caching` | unset | Optional vLLM prefix-cache toggle. Leave unset for vLLM defaults; set `true` to reuse shared prompt prefixes across grouped rollouts. |
 | `enable_dbo` | `false` | Enable vLLM dual batch overlap. Keep disabled unless the model/runtime combination has been benchmarked. |
@@ -135,8 +136,6 @@ The worker configuration contains coordinator connectivity, local inference sett
 | `max_lora_rank` | `64` | Largest accepted adapter rank. |
 | `max_loaded_policies` | `8` | Local loaded-adapter limit. |
 | `adapter_cache_max_bytes` | 20 GiB | Verified adapter-cache budget. |
-| `result_compression` | `zstd` | Compress MessagePack result uploads; `identity` disables compression. |
-| `result_upload_concurrency` | `2` | Concurrent durable-spool upload tasks, from 1 through 16. |
 | `policy_download_allowed_origins` | `[]` | Exact approved HTTPS origins for presigned adapter URLs. |
 | `shardcast_servers` | `[]` | Optional HTTPS SHARDCAST relay base URLs, tried first for safetensors. |
 | `shardcast_download_concurrency` | `4` | Concurrent SHARDCAST shard requests. |
@@ -144,11 +143,11 @@ The worker configuration contains coordinator connectivity, local inference sett
 | `policy_coordinator_fallback` | `true` | Fall back to authenticated coordinator file delivery. |
 | `policy_prefetch_interval_seconds` | `5` | Active-policy disk-cache polling interval; unset disables prefetch. |
 
-Each sorted, unique `[[environments]]` entry contains `id`, `package`, `revision`, and verifier `config`. The package must be installed, its version must equal `revision`, and its resolved environment ID must match `id`. Workers enforce package versions; operators must keep the coordinator's installed taskset package aligned with the advertised source revision.
-
 The worker generates `<state_dir>/inference.toml`; do not maintain that file manually. Configure the distributed inference subset through worker fields.
 
-External origins are exact scheme/authority matches and must use HTTPS. Coordinator authorization is never sent to these origins. Download order is SHARDCAST for `adapter_model.safetensors`, an approved presigned location, then the coordinator when fallback is enabled. SHARDCAST does not carry `adapter_config.json`, so disabling coordinator fallback also requires an approved presigned origin. Prefetch verifies the adapter into the disk cache; vLLM loads it only when an assignment uses it. Result limits in server and source configuration apply after zstd decompression.
+External origins are exact scheme/authority matches and must use HTTPS. Coordinator authorization is never sent to these origins. Download order is SHARDCAST for `adapter_model.safetensors`, an approved presigned location, then the coordinator when fallback is enabled. SHARDCAST does not carry `adapter_config.json`, so disabling coordinator fallback also requires an approved presigned origin. Prefetch verifies the adapter into the disk cache; vLLM loads it only when an assignment uses it.
+
+The coordinator runs verifier episodes and relays their OpenAI-compatible requests to leased workers. A worker forwards each request to its loopback vLLM and returns the response through `/api/v2/inference/exchange`; it does not run environments, tools, Docker, finalization, or scoring. Server and worker `inference_body_limit_bytes` should both cover the largest expected inference response. Server `environment_slots` bounds central episode concurrency, while each worker's `inference_slots` bounds its advertised inference concurrency.
 
 ## Policy relay
 

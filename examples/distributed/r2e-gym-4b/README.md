@@ -1,7 +1,8 @@
 # Qwen3 4B R2E-Gym smoke run
 
 This is a bounded first agentic SWE run for `Qwen/Qwen3-4B-Instruct-2507` on
-`PrimeIntellect/R2E-Gym-Subset-Verified`. Sixteen 64-rollout optimizer batches
+`PrimeIntellect/R2E-Gym-Subset-Verified` at commit
+`151f9950e62cac613e07be1bb92e5dd19687315e`. Sixteen 64-rollout optimizer batches
 target 1,024 accepted training rollouts. Failed or stale work and non-informative
 groups can require additional generation, so 1,024 is not a hard infrastructure
 request cap.
@@ -15,7 +16,8 @@ cohorts.
 
 `r2e_gym_v1` exposes only the binary `solved` reward. It hides `/r2e_tests` during
 the rollout, restores it for scoring, and captures the final patch before scoring.
-GRPO has no length penalty, auxiliary reward, or post-filter; trainer KL is zero.
+GRPO has no length penalty, auxiliary reward, or post-filter; an enforced
+`zero_advantage` pre-filter removes non-informative groups, and trainer KL is zero.
 Tool use, patch size, response length, and partial test outcomes do not affect
 reward.
 
@@ -40,18 +42,21 @@ and adapter digest; `max_policy_lag = 1` drops older pending samples.
 ## Requirements
 
 - Coordinator/trainer: eight CUDA GPUs with enough memory for 32,768-token LoRA
-  training, persistent storage, and outbound Hugging Face/W&B access.
-- Worker: one or more inference GPUs, Docker Engine with permission to start and
-  remove containers, at least 32 GB host RAM for eight default execution slots,
-  and enough image/cache disk for the selected R2E repositories.
+  training, Docker Engine with permission to start and remove containers, at
+  least 32 GB host RAM for eight concurrent rollouts, persistent storage, enough
+  image/cache disk for the selected R2E repositories, and outbound Hugging
+  Face/W&B access.
+- Worker: one or more inference GPUs and enough vLLM KV cache for eight default
+  inference slots. Workers do not install environments or run Docker sandboxes.
 - Credentials: `AETHER_COORDINATOR_TOKEN` on both roles and `WANDB_API_KEY` on
   the trainer. `HF_TOKEN` is optional for these public artifacts but recommended
   for rate limits. No search credential is used.
 - Remote deployments need HTTPS in front of the coordinator. Never put secrets
   in TOML.
 
-Reduce `execution_slots` if host RAM, file descriptors, Docker startup, or vLLM
-KV cache become limiting. Keep the group size at 8.
+Reduce central rollout concurrency if coordinator host RAM, file descriptors, or
+Docker startup become limiting. Reduce worker `inference_slots` if vLLM KV cache
+becomes limiting. Keep the group size at 8.
 
 ## Validate
 
@@ -59,17 +64,17 @@ Run these before allocating the fleet:
 
 ```bash
 export AETHER_COORDINATOR_TOKEN='validation-only'
-uv run server @ examples/distributed/r2e-gym-4b/server.toml --dry-run
+scripts/preflight-server.sh @ examples/distributed/r2e-gym-4b/server.toml
 uv run eval @ examples/distributed/r2e-gym-4b/eval.toml \
   --dry-run --output-dir /tmp/r2e-gym-eval-validation
 ```
 
-Worker preflight downloads and fingerprints the pinned model metadata and checks
-the environment catalog and GPU capacity. Check Docker separately:
+Server preflight resolves the environment and checks the coordinator Docker
+daemon. Worker preflight downloads and fingerprints the pinned model metadata
+and checks GPU capacity:
 
 ```bash
 scripts/preflight-worker.sh @ examples/distributed/r2e-gym-4b/worker.toml
-docker info
 ```
 
 ## Baseline Evaluation
@@ -94,7 +99,7 @@ uv run eval @ examples/distributed/r2e-gym-4b/eval.toml \
 
 ## Train
 
-On the coordinator/trainer host:
+On the coordinator/trainer host, where environment execution and Docker run:
 
 ```bash
 scripts/setup-server.sh r2e-gym-v1
@@ -103,10 +108,10 @@ export WANDB_API_KEY='<your-key>'
 scripts/run-server.sh examples/distributed/r2e-gym-4b/server.toml
 ```
 
-On every worker:
+On every inference-only worker:
 
 ```bash
-scripts/setup-worker.sh r2e-gym-v1
+scripts/setup-worker.sh
 export AETHER_COORDINATOR_TOKEN='<same-random-ascii-secret>'
 scripts/run-worker.sh \
   examples/distributed/r2e-gym-4b/worker.toml \

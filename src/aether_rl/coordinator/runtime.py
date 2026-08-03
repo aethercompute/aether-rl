@@ -26,9 +26,10 @@ from aether_rl.utils.process import DEFAULT_COMMON_ENV_VARS, DEFAULT_TRAINER_ENV
 
 from .api import CoordinatorService
 from .database import CoordinatorRepository
-from .environments import EnvironmentSourceSpec, verifier_v1_task_payloads
+from .environments import CentralEpisodeRunner, EnvironmentSourceSpec, verifier_v1_task_payloads
+from .inference import InferenceBroker
 from .policy_distribution import S3PolicyDistributor
-from .results import RemoteResultProcessor, ResultProcessingSource
+from .results import ResultProcessingSource, ResultProcessor
 from .trainer_bridge import CoordinatorTrainingBatchExporter
 
 logger = logging.getLogger(__name__)
@@ -99,11 +100,13 @@ class CoordinatorRuntime:
         self.repository = repository
         self.base_policy = base_policy
         self.service: CoordinatorService | None = None
-        self.processor: RemoteResultProcessor | None = None
+        self.processor: ResultProcessor | None = None
         self.exporter: CoordinatorTrainingBatchExporter | None = None
         self.trainer: asyncio.subprocess.Process | None = None
         self.trainer_log = None
         self.tasks: list[asyncio.Task] = []
+        self.inference_broker = InferenceBroker(body_limit_bytes=config.inference_body_limit_bytes)
+        self.episode_runner: CentralEpisodeRunner | None = None
         self.healthy = False
         self.resume_step: int | None = None
         self.trainer_config = self.validate_config(config)
@@ -121,10 +124,19 @@ class CoordinatorRuntime:
             raise RuntimeError("coordinator runtime is missing its database service")
         if self.policy_distributor is not None:
             await asyncio.to_thread(self.policy_distributor.validate)
-        sources, processing_sources = await self._load_sources()
+        sources, processing_sources, environments = await self._load_sources()
+        self.episode_runner = CentralEpisodeRunner(
+            environments,
+            self.inference_broker,
+            self.repository,
+            self.service.call,
+            renderer_model_name=self.config.base_model.model_name,
+            renderer_model_revision=self.config.base_model.tokenizer_revision,
+            slots=self.config.environment_slots,
+        )
         for source in sources:
             await self.service.call(self.repository.register_scheduler_source, source)
-        self.processor = RemoteResultProcessor(
+        self.processor = ResultProcessor(
             self.repository,
             tuple(processing_sources),
             batch_size=self.config.training_batch_size,
@@ -161,6 +173,9 @@ class CoordinatorRuntime:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
         self.tasks.clear()
+        if self.episode_runner is not None:
+            await self.episode_runner.stop()
+            self.episode_runner = None
         if self.processor is not None:
             for source in self.processor.sources.values():
                 if source.algorithm is not None:
@@ -177,12 +192,17 @@ class CoordinatorRuntime:
             self.trainer_log.close()
             self.trainer_log = None
 
-    async def _load_sources(self) -> tuple[list[EnvironmentSourceSpec], list[ResultProcessingSource]]:
+    async def _load_sources(
+        self,
+    ) -> tuple[list[EnvironmentSourceSpec], list[ResultProcessingSource], dict[str, vf.EnvConfig]]:
         scheduler_sources = []
         processing_sources = []
+        environments = {}
         for source in self.config.sources:
+            env_config = resolve_env_config(source.environment_config)
             tasks = await asyncio.to_thread(self._load_tasks, source)
             environment = EnvironmentIdentity(id=source.environment_id, revision=source.environment_revision)
+            environments[source.source_id] = env_config
             scheduler_sources.append(
                 EnvironmentSourceSpec(
                     source_id=source.source_id,
@@ -216,7 +236,20 @@ class CoordinatorRuntime:
                     requires_group_scoring=source.algorithm.type in {"grpo", "max_rl", "echo"},
                 )
             )
-        return scheduler_sources, processing_sources
+        return scheduler_sources, processing_sources, environments
+
+    def start_episode(self, lease) -> None:
+        if self.episode_runner is None:
+            raise RuntimeError("coordinator episode runner is not ready")
+        self.episode_runner.start(lease)
+
+    def renew_episode(self, lease_id: str, expires_at: float) -> None:
+        if self.episode_runner is not None:
+            self.episode_runner.renew(lease_id, expires_at)
+
+    def stop_episode(self, lease_id: str) -> None:
+        if self.episode_runner is not None:
+            self.episode_runner.cancel(lease_id)
 
     @staticmethod
     def _load_tasks(source: ServerSourceConfig) -> list[object]:

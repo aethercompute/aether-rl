@@ -37,8 +37,9 @@ rollout above every incorrect rollout.
 
 Completions may use up to 16,384 tokens. Worker and trainer context are both 20,480
 tokens so the final answer is retained rather than silently truncated. DeepSeek
-reasoning can make wall time substantial; start with four worker execution slots
-and adjust only after measuring KV-cache utilization and generation throughput.
+reasoning can make wall time substantial; the example gives the coordinator four
+environment slots and each worker four inference slots. Adjust both only after
+measuring coordinator workload and worker KV-cache utilization and throughput.
 
 ## Baseline evaluation
 
@@ -78,7 +79,7 @@ scripts/run-server.sh examples/distributed/dapo-math-1.5b/server.toml
 On every worker:
 
 ```bash
-scripts/setup-worker.sh dapo-math-v1
+scripts/setup-worker.sh
 export AETHER_COORDINATOR_TOKEN='<same-random-ascii-secret>'
 scripts/run-worker.sh \
   examples/distributed/dapo-math-1.5b/worker.toml \

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import subprocess
 
 import uvicorn
+from verifiers.v1.loaders import resolve_env_config
 
 from aether_rl.configs.server import ServerConfig
 from aether_rl.coordinator import CoordinatorRepository, create_coordinator_app
@@ -11,6 +13,36 @@ from aether_rl.coordinator.runtime import CoordinatorRuntime
 from aether_rl.protocol import BaseModelIdentity, PolicyManifest
 from aether_rl.utils.config import cli
 from aether_rl.utils.process import set_proc_title
+
+
+def validate_environments(config: ServerConfig) -> None:
+    requires_docker = False
+    for source in config.sources:
+        environment = resolve_env_config(source.environment_config)
+        resolved_id = environment.id or environment.taskset.id
+        if resolved_id != source.environment_id:
+            raise ValueError(
+                f"source {source.source_id} advertises {source.environment_id!r} but resolves {resolved_id!r}"
+            )
+        requires_docker = requires_docker or _contains_docker_runtime(environment.model_dump(mode="python"))
+    if requires_docker:
+        subprocess.run(
+            ["docker", "info", "--format", "{{json .ServerVersion}}"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+
+def _contains_docker_runtime(value: object) -> bool:
+    if isinstance(value, dict):
+        if value.get("type") == "docker":
+            return True
+        return any(_contains_docker_runtime(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_docker_runtime(item) for item in value)
+    return False
 
 
 def base_policy(config: ServerConfig) -> PolicyManifest:
@@ -35,6 +67,7 @@ def main() -> None:
     base = base_policy(config)
     if config.dry_run:
         CoordinatorRuntime.validate_config(config)
+        validate_environments(config)
         if config.policy_distribution is not None:
             S3PolicyDistributor(config.policy_distribution).validate()
         return
@@ -47,7 +80,11 @@ def main() -> None:
             repository,
             token=token,
             control_body_limit_bytes=config.control_body_limit_bytes,
-            result_body_limit_bytes=config.result_body_limit_bytes,
+            inference_body_limit_bytes=config.inference_body_limit_bytes,
+            inference_broker=runtime.inference_broker,
+            start_episode=runtime.start_episode,
+            renew_episode=runtime.renew_episode,
+            stop_episode=runtime.stop_episode,
             lease_duration_seconds=config.lease_duration_seconds,
             loaded_policy_preference_seconds=config.loaded_policy_preference_seconds,
             max_policy_lag=config.max_policy_lag,

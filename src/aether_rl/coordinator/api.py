@@ -8,13 +8,11 @@ import json
 import logging
 import os
 import sqlite3
-import uuid
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Protocol
 
-import zstandard
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -25,22 +23,20 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from aether_rl.protocol import (
     PROTOCOL_VERSION,
     AssignmentLease,
-    AssignmentLeaseBatch,
-    FailureEnvelope,
+    InferenceExchangeRequest,
+    InferenceExchangeResponse,
+    InferenceLease,
     LeaseRenewal,
     LeaseRenewRequest,
     LeaseRenewResponse,
     LeaseRequest,
     PolicyLocations,
     PolicyManifest,
-    ResultEnvelope,
-    SubmissionResponse,
     WorkerHeartbeat,
     WorkerHeartbeatResponse,
     WorkerRegistration,
     WorkerRegistrationResponse,
     canonical_json_bytes,
-    decode_result_envelope,
     sha256_digest,
 )
 
@@ -54,6 +50,7 @@ from .database import (
     LeaseRequestDisposition,
     NotFoundError,
 )
+from .inference import InferenceBroker
 from .scheduler import CoordinatorScheduler
 from .spool import ImmutableArtifactConflictError
 
@@ -65,17 +62,12 @@ class LeaseProvider(Protocol):
 
     async def try_lease(self, request: LeaseRequest) -> AssignmentLease | None: ...
 
-    async def try_lease_group(self, request: LeaseRequest) -> tuple[AssignmentLease, ...]: ...
-
 
 class NoLeaseProvider:
     durable_mutations = False
 
     async def try_lease(self, request: LeaseRequest) -> AssignmentLease | None:
         return None
-
-    async def try_lease_group(self, request: LeaseRequest) -> tuple[AssignmentLease, ...]:
-        return ()
 
 
 class CoordinatorService:
@@ -112,14 +104,17 @@ def _error(status_code: int, code: str, message: str, headers: dict[str, str] | 
 def _lease_response(lease: AssignmentLease | None) -> JSONResponse:
     if lease is None:
         raise InvalidStateError("leased request is missing its durable lease")
-    return JSONResponse(content=lease.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
-
-
-def _lease_batch_response(leases: tuple[AssignmentLease, ...]) -> JSONResponse:
-    return JSONResponse(
-        content=AssignmentLeaseBatch(leases=leases).model_dump(mode="json"),
-        headers={"Cache-Control": "no-store"},
+    redacted = InferenceLease(
+        assignment_id=lease.assignment.assignment_id,
+        lease_id=lease.lease_id,
+        attempt=lease.attempt,
+        worker_id=lease.worker_id,
+        worker_session_id=lease.worker_session_id,
+        issued_at=lease.issued_at,
+        expires_at=lease.expires_at,
+        policy=lease.assignment.policy,
     )
+    return JSONResponse(content=redacted.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
 
 
 def _no_work_response() -> Response:
@@ -143,7 +138,6 @@ def create_coordinator_app(
     trainer_ready: Callable[[], bool | Awaitable[bool]] = lambda: False,
     policy_locations: Callable[[PolicyManifest], PolicyLocations | Awaitable[PolicyLocations]] | None = None,
     control_body_limit_bytes: int = 1024 * 1024,
-    result_body_limit_bytes: int = 64 * 1024 * 1024,
     lease_duration_seconds: float = 30.0,
     loaded_policy_preference_seconds: float = 5.0,
     max_policy_lag: int = 0,
@@ -153,6 +147,11 @@ def create_coordinator_app(
     stale_after_seconds: float = 60.0,
     lease_reaper_interval_seconds: float = 1.0,
     policy_verification_interval_seconds: float = 30.0,
+    inference_body_limit_bytes: int = 64 * 1024 * 1024,
+    inference_broker: InferenceBroker | None = None,
+    start_episode: Callable[[AssignmentLease], None] | None = None,
+    renew_episode: Callable[[str, float], None] | None = None,
+    stop_episode: Callable[[str], None] | None = None,
     startup: Callable[[], Awaitable[None]] | None = None,
     shutdown: Callable[[], Awaitable[None]] | None = None,
     gate_leases_on_trainer: bool = False,
@@ -164,7 +163,7 @@ def create_coordinator_app(
         auth_token_bytes = auth_token.encode("ascii")
     except UnicodeEncodeError as error:
         raise ValueError("coordinator token must contain only ASCII characters") from error
-    if control_body_limit_bytes < 1 or result_body_limit_bytes < 1:
+    if control_body_limit_bytes < 1 or inference_body_limit_bytes < 1:
         raise ValueError("body limits must be positive")
     if (
         lease_duration_seconds <= 0
@@ -254,7 +253,7 @@ def create_coordinator_app(
 
     @app.middleware("http")
     async def authenticate(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-        if request.url.path.startswith("/api/v1/"):
+        if request.url.path.startswith("/api/v2/"):
             supplied = request.headers.get("authorization", "")
             scheme, separator, credential = supplied.partition(" ")
             valid_scheme = bool(separator) and scheme.lower() == "bearer"
@@ -271,7 +270,9 @@ def create_coordinator_app(
                     {"WWW-Authenticate": "Bearer"},
                 )
             if request.headers.get("aether-protocol-version") != str(PROTOCOL_VERSION):
-                return _error(400, "unsupported_protocol_version", "Aether-Protocol-Version must be 1")
+                return _error(
+                    400, "unsupported_protocol_version", f"Aether-Protocol-Version must be {PROTOCOL_VERSION}"
+                )
         return await call_next(request)
 
     @app.exception_handler(APIError)
@@ -322,12 +323,17 @@ def create_coordinator_app(
         | type[WorkerHeartbeat]
         | type[LeaseRequest]
         | type[LeaseRenewRequest]
-        | type[FailureEnvelope],
+        | type[InferenceExchangeRequest],
     ):
-        _validate_json_body(request, control_body_limit_bytes)
+        body_limit = (
+            inference_body_limit_bytes * 2 + 1024 * 1024
+            if model is InferenceExchangeRequest
+            else control_body_limit_bytes
+        )
+        _validate_json_body(request, body_limit)
         data = bytearray()
         async for chunk in request.stream():
-            if len(data) + len(chunk) > control_body_limit_bytes:
+            if len(data) + len(chunk) > body_limit:
                 raise APIError(413, "payload_too_large", "request body is too large")
             data.extend(chunk)
         try:
@@ -336,7 +342,7 @@ def create_coordinator_app(
             raise
         except ValidationError as error:
             if any(item["loc"] and item["loc"][-1] == "protocol_version" for item in error.errors()):
-                raise APIError(400, "protocol_version", "body protocol_version must be 1") from error
+                raise APIError(400, "protocol_version", f"body protocol_version must be {PROTOCOL_VERSION}") from error
             raise APIError(422, "malformed_request", "request body is malformed") from error
 
     @app.get("/health")
@@ -355,7 +361,7 @@ def create_coordinator_app(
         status_code = 200 if is_ready else 503
         return JSONResponse(status_code=status_code, content={"status": "ready" if is_ready else "not_ready"})
 
-    @app.post("/api/v1/workers/register")
+    @app.post("/api/v2/workers/register")
     async def register(request: Request) -> JSONResponse:
         registration = await parse_control_body(request, WorkerRegistration)
         record = await service.call(repository.register_worker, registration)
@@ -367,15 +373,21 @@ def create_coordinator_app(
         )
         return JSONResponse(status_code=200, content=response.model_dump(mode="json"))
 
-    @app.post("/api/v1/workers/heartbeat")
+    @app.post("/api/v2/workers/heartbeat")
     async def heartbeat(request: Request) -> WorkerHeartbeatResponse:
         heartbeat_request = await parse_control_body(request, WorkerHeartbeat)
         renewals, stop_ids = await service.call(
             repository.record_heartbeat, heartbeat_request, duration_seconds=lease_duration_seconds
         )
+        if renew_episode is not None:
+            for renewal in renewals:
+                renew_episode(renewal.lease_id, renewal.expires_at)
+        if stop_episode is not None:
+            for lease_id in stop_ids:
+                stop_episode(lease_id)
         return WorkerHeartbeatResponse(server_time=repository.clock(), renewals=renewals, stop_lease_ids=stop_ids)
 
-    @app.post("/api/v1/assignments/lease")
+    @app.post("/api/v2/assignments/lease")
     async def lease(request: Request) -> Response:
         if not await lease_gate_open():
             raise APIError(503, "trainer_unavailable", "trainer or coordinator processing is unavailable")
@@ -384,6 +396,8 @@ def create_coordinator_app(
         if not isinstance(disposition, LeaseRequestDisposition):
             raise TypeError("repository returned an invalid lease request disposition")
         if disposition.state == "leased":
+            if start_episode is not None and disposition.lease is not None:
+                start_episode(disposition.lease)
             return _lease_response(disposition.lease)
         if disposition.state == "no_work":
             return _no_work_response()
@@ -429,6 +443,8 @@ def create_coordinator_app(
                 disposition = await service.call(repository.associate_offered_lease, lease_request, offered)
                 if not isinstance(disposition, LeaseRequestDisposition):
                     raise TypeError("repository returned an invalid lease request disposition")
+                if start_episode is not None and disposition.lease is not None:
+                    start_episode(disposition.lease)
                 return _lease_response(disposition.lease)
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
@@ -436,31 +452,32 @@ def create_coordinator_app(
             await asyncio.sleep(min(lease_poll_interval_seconds, remaining))
             initial_attempt = False
 
-    @app.post("/api/v1/assignments/lease-group")
-    async def lease_group(request: Request) -> Response:
-        if not await lease_gate_open():
-            raise APIError(503, "trainer_unavailable", "trainer or coordinator processing is unavailable")
-        lease_request = await parse_control_body(request, LeaseRequest)
-        disposition = await service.call(repository.validate_lease_request, lease_request)
-        if not isinstance(disposition, LeaseRequestDisposition):
-            raise TypeError("repository returned an invalid lease request disposition")
-        if disposition.state == "leased":
-            if disposition.lease is None:
-                raise InvalidStateError("leased request is missing its durable lease")
-            return _lease_batch_response((disposition.lease,))
-        if disposition.state == "no_work" or lease_request.available_slots < 2:
-            return await _complete_no_work(service, repository, lease_request.request_id)
-        offered = await provider.try_lease_group(lease_request)
-        if not offered:
-            return await _complete_no_work(service, repository, lease_request.request_id)
-        if not await lease_gate_open():
-            for lease in offered:
-                await service.call(repository.release_unoffered_lease, lease.lease_id)
-            raise APIError(503, "trainer_unavailable", "trainer or coordinator processing is unavailable")
-        await service.call(repository.associate_offered_leases, lease_request, offered)
-        return _lease_batch_response(offered)
+    @app.post("/api/v2/inference/exchange")
+    async def inference_exchange(request: Request) -> JSONResponse:
+        if inference_broker is None:
+            raise APIError(503, "inference_unavailable", "inference broker is unavailable")
+        exchange_request = await parse_control_body(request, InferenceExchangeRequest)
+        try:
+            pending = await inference_broker.exchange(
+                exchange_request.lease_id,
+                exchange_request.worker_id,
+                exchange_request.worker_session_id,
+                exchange_request.reply,
+                exchange_request.wait_seconds,
+            )
+        except PermissionError as error:
+            raise APIError(409, "identity_mismatch", str(error)) from error
+        except ValueError as error:
+            raise APIError(422, "malformed_inference_reply", str(error)) from error
+        if pending is False:
+            response = InferenceExchangeResponse(action="stop")
+        elif pending is None:
+            response = InferenceExchangeResponse(action="wait")
+        else:
+            response = InferenceExchangeResponse(action="request", request=pending)
+        return JSONResponse(content=response.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
 
-    @app.post("/api/v1/assignments/{assignment_id}/renew")
+    @app.post("/api/v2/assignments/{assignment_id}/renew")
     async def renew(assignment_id: str, request: Request) -> LeaseRenewResponse:
         renewal_request = await parse_control_body(request, LeaseRenewRequest)
         if renewal_request.assignment_id != assignment_id:
@@ -476,80 +493,25 @@ def create_coordinator_app(
             acknowledge_cancellation=True,
         )
         if isinstance(renewed, str):
+            if stop_episode is not None:
+                stop_episode(renewal_request.lease_id)
             return LeaseRenewResponse(server_time=repository.clock(), action="stop", reason=renewed)
         if not isinstance(renewed, AssignmentLease):
             raise TypeError("repository returned an invalid lease renewal")
+        if renew_episode is not None:
+            renew_episode(renewed.lease_id, renewed.expires_at)
         return LeaseRenewResponse(
             server_time=repository.clock(),
             action="renewed",
             renewal=LeaseRenewal(assignment_id=assignment_id, lease_id=renewed.lease_id, expires_at=renewed.expires_at),
         )
 
-    @app.put("/api/v1/assignments/{assignment_id}/result")
-    async def result(assignment_id: str, request: Request) -> JSONResponse:
-        result_content_type, result_encoding = _validate_result_body(request, result_body_limit_bytes)
-        assignment_limit = await service.call(repository.assignment_result_size_limit, assignment_id)
-        effective_limit = min(result_body_limit_bytes, assignment_limit)
-        incoming = repository.spool.incoming_dir
-        temporary_path = incoming / f"upload-{uuid.uuid4().hex}.tmp"
-        descriptor = os.open(temporary_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        size = 0
-        wire_limit = (
-            effective_limit + max(1024 * 1024, effective_limit // 100) if result_encoding == "zstd" else effective_limit
-        )
-        try:
-            with os.fdopen(descriptor, "wb") as file:
-                async for chunk in request.stream():
-                    size += len(chunk)
-                    if size > wire_limit:
-                        raise APIError(413, "payload_too_large", "result body is too large")
-                    await asyncio.to_thread(file.write, chunk)
-                await asyncio.to_thread(_flush_file, file)
-            try:
-                envelope_bytes = await asyncio.to_thread(temporary_path.read_bytes)
-                if result_encoding == "zstd":
-                    envelope_bytes = await asyncio.to_thread(_decompress_result, envelope_bytes, effective_limit)
-                if len(envelope_bytes) > effective_limit:
-                    raise APIError(413, "payload_too_large", "result body is too large")
-                envelope = (
-                    await asyncio.to_thread(decode_result_envelope, envelope_bytes)
-                    if result_content_type == "application/msgpack"
-                    else await asyncio.to_thread(_parse_model_json, ResultEnvelope, envelope_bytes)
-                )
-            except APIError:
-                raise
-            except ValidationError as error:
-                if any(item["loc"] and item["loc"][-1] == "protocol_version" for item in error.errors()):
-                    raise APIError(400, "protocol_version", "body protocol_version must be 1") from error
-                raise APIError(422, "malformed_request", "result body is malformed") from error
-            except (ValueError, json.JSONDecodeError, zstandard.ZstdError) as error:
-                raise APIError(422, "malformed_request", "result body is malformed") from error
-            if envelope.assignment_id != assignment_id:
-                raise APIError(409, "identity_mismatch", "body assignment does not match the path")
-            accepted = await service.call(repository.accept_result, envelope)
-            response = SubmissionResponse(**accepted.__dict__)
-            return JSONResponse(status_code=200, content=response.model_dump(mode="json"))
-        finally:
-            try:
-                await asyncio.to_thread(_remove_temporary_upload, temporary_path, incoming)
-            except OSError:
-                logger.exception("Failed to remove coordinator result upload temporary file")
-
-    @app.post("/api/v1/assignments/{assignment_id}/failure")
-    async def failure(assignment_id: str, request: Request) -> JSONResponse:
-        envelope = await parse_control_body(request, FailureEnvelope)
-        if envelope.assignment_id != assignment_id:
-            raise APIError(409, "identity_mismatch", "body assignment does not match the path")
-        accepted = await service.call(repository.accept_failure, envelope)
-        response = SubmissionResponse(**accepted.__dict__)
-        return JSONResponse(status_code=200, content=response.model_dump(mode="json"))
-
-    @app.get("/api/v1/policies/current")
+    @app.get("/api/v2/policies/current")
     async def current_policy() -> JSONResponse:
         manifest = await service.call(repository.active_policy)
         return JSONResponse(content=manifest.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
 
-    @app.get("/api/v1/policies/{policy_id}/manifest")
+    @app.get("/api/v2/policies/{policy_id}/manifest")
     async def policy_manifest(policy_id: str, request: Request) -> Response:
         manifest = await service.call(repository.get_policy, policy_id)
         etag = _quoted_etag(sha256_digest(canonical_json_bytes(manifest)))
@@ -558,7 +520,7 @@ def create_coordinator_app(
             return Response(status_code=304, headers=headers)
         return Response(content=canonical_json_bytes(manifest), media_type="application/json", headers=headers)
 
-    @app.get("/api/v1/policies/{policy_id}/locations")
+    @app.get("/api/v2/policies/{policy_id}/locations")
     async def policy_artifact_locations(policy_id: str) -> JSONResponse:
         if policy_locations is None:
             raise APIError(404, "policy_locations_unavailable", "external policy distribution is not configured")
@@ -567,7 +529,7 @@ def create_coordinator_app(
         locations = await result if inspect.isawaitable(result) else result
         return JSONResponse(content=locations.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
 
-    @app.get("/api/v1/policies/{policy_id}/files/{name}")
+    @app.get("/api/v2/policies/{policy_id}/files/{name}")
     async def policy_file(policy_id: str, name: str, request: Request) -> Response:
         file, size, digest = await service.call(repository.open_policy_file, policy_id, name)
         try:
@@ -606,7 +568,7 @@ def create_coordinator_app(
             background=BackgroundTask(file.close),
         )
 
-    @app.get("/api/v1/status")
+    @app.get("/api/v2/status")
     async def status() -> dict[str, object]:
         await service.call(repository.expire_leases)
         snapshot = await service.call(repository.status_snapshot, stale_after_seconds=stale_after_seconds)
@@ -634,32 +596,6 @@ def _validate_json_body(request: Request, limit: int) -> None:
             raise APIError(413, "payload_too_large", "request body is too large")
 
 
-def _validate_result_body(request: Request, limit: int) -> tuple[str, str]:
-    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-    if content_type not in {"application/json", "application/msgpack"}:
-        raise APIError(415, "unsupported_media_type", "Content-Type must be application/json or application/msgpack")
-    content_encoding = request.headers.get("content-encoding", "identity").lower()
-    if content_encoding not in {"identity", "zstd"}:
-        raise APIError(415, "unsupported_encoding", "Content-Encoding must be identity or zstd")
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            declared_size = int(content_length)
-        except ValueError as error:
-            raise APIError(400, "invalid_content_length", "Content-Length must be an integer") from error
-        if declared_size < 0:
-            raise APIError(400, "invalid_content_length", "Content-Length must be non-negative")
-        wire_limit = limit + max(1024 * 1024, limit // 100) if content_encoding == "zstd" else limit
-        if declared_size > wire_limit:
-            raise APIError(413, "payload_too_large", "request body is too large")
-    return content_type, content_encoding
-
-
-def _decompress_result(data: bytes, limit: int) -> bytes:
-    with zstandard.ZstdDecompressor().stream_reader(data) as reader:
-        return reader.read(limit + 1)
-
-
 def _quoted_etag(digest: str) -> str:
     return f'"{digest}"'
 
@@ -675,22 +611,10 @@ def _parse_model_json(model, data: bytes | bytearray):
         return model.model_validate(raw)
     except ValidationError as error:
         if any(item["loc"] and item["loc"][-1] == "protocol_version" for item in error.errors()):
-            raise APIError(400, "unsupported_protocol_version", "body protocol_version must be 1") from error
+            raise APIError(
+                400, "unsupported_protocol_version", f"body protocol_version must be {PROTOCOL_VERSION}"
+            ) from error
         raise
-
-
-def _flush_file(file) -> None:
-    file.flush()
-    os.fsync(file.fileno())
-
-
-def _remove_temporary_upload(path, directory) -> None:
-    path.unlink(missing_ok=True)
-    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _etag_matches(header: str | None, current: str) -> bool:

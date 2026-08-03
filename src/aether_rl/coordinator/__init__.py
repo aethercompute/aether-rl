@@ -18,7 +18,7 @@ from .database import (
     SchemaVersionError,
 )
 from .environments import EnvironmentCatalog, EnvironmentSourceSpec, verifier_v1_task_payloads
-from .results import DurableTrainingQueue, RemoteResultProcessor, ResultProcessingSource, decode_training_batch
+from .results import DurableTrainingQueue, ResultProcessingSource, ResultProcessor, decode_training_batch
 from .runtime import CoordinatorRuntime
 from .scheduler import CoordinatorScheduler
 from .spool import AtomicSpool, ImmutableArtifactConflictError
@@ -50,7 +50,7 @@ __all__ = [
     "NotFoundError",
     "PendingResult",
     "RegistrationRecord",
-    "RemoteResultProcessor",
+    "ResultProcessor",
     "ResultProcessingSource",
     "SchemaVersionError",
     "create_coordinator_app",

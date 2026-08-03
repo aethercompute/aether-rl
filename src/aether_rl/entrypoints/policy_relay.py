@@ -15,7 +15,7 @@ from aether_rl.protocol import PolicyManifest, canonical_json_bytes, policy_mani
 from aether_rl.utils.config import cli
 from aether_rl.utils.process import set_proc_title
 from aether_rl.worker.client import CoordinatorAPIError, CoordinatorClient, CoordinatorProtocolError
-from aether_rl.worker.spool import WorkerState
+from aether_rl.worker.state import WorkerState
 
 
 class ShardcastPolicyRelay:

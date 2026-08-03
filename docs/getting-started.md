@@ -22,13 +22,13 @@ export ENVIRONMENT_PACKAGE='your-environment-package'
 scripts/setup-server.sh "$ENVIRONMENT_PACKAGE"
 ```
 
-Install the worker role and every advertised environment package on each worker:
+Install only the inference worker role on each worker:
 
 ```bash
-scripts/setup-worker.sh "$ENVIRONMENT_PACKAGE"
+scripts/setup-worker.sh
 ```
 
-Workspace environments are opt-in. Prefer repeated `--package <environment>` arguments instead of `--all-packages`; research environments can have incompatible dependency pins.
+Verifier environments are coordinator-only. The coordinator host also owns any Docker daemon, images, tool dependencies, credentials, and network policy required by their configured harnesses. Workspace environments are opt-in; prefer repeated server package arguments instead of `--all-packages` because research environments can have incompatible dependency pins.
 
 ## 3. Pin model identity
 
@@ -48,11 +48,11 @@ Copy the generated `[base_model]` table into both server and worker configuratio
 
 Only unquantized base models with `quantization = "none"` are currently accepted by worker identity verification.
 
-## 4. Configure the environment
+## 4. Configure coordinator execution
 
-The coordinator source and worker environment must agree on environment ID, revision, and resolved verifier configuration. The configured package revision must equal the installed package version.
+Each server `[[sources]]` entry identifies and configures its verifier environment. Install that package on the coordinator, set `environment_revision` to the intended package version, and ensure `environment_config` resolves to `environment_id`.
 
-Keep each configured environment package and version installed on both roles. Workers enforce the installed package version; the coordinator resolves and loads its configured taskset but cannot verify that the advertised revision matches a package version. Update both `[[sources]]` in `server.toml` and `[[environments]]` in `worker.toml` together.
+Set server `environment_slots` to the number of episodes the coordinator may execute concurrently. This capacity covers verifier setup, Docker and tool execution, finalization, and scoring; provision coordinator CPU, memory, disk, Docker, and external service limits accordingly. Workers have no environment configuration.
 
 ## 5. Secure the coordinator
 
@@ -70,7 +70,7 @@ coordinator.example.com {
 }
 ```
 
-Caddy must be installed and operated separately. Ensure the proxy preserves `Authorization` and `Aether-Protocol-Version`, permits result bodies up to `result_body_limit_bytes`, and uses timeouts longer than worker long polls. Restrict unauthenticated `/health`, `/ready`, `/docs`, `/redoc`, and `/openapi.json` at the external layer if they must not be public.
+Caddy must be installed and operated separately. Ensure the proxy preserves `Authorization`, `Aether-Protocol-Version`, range, content length, and content range headers; permits inference exchange bodies up to the configured limits; and uses timeouts longer than worker long polls. Restrict unauthenticated `/health`, `/ready`, `/docs`, `/redoc`, and `/openapi.json` at the external layer if they must not be public.
 
 A VPN alone does not change the worker's URL rule: a non-loopback `coordinator_url` must still use HTTPS.
 
@@ -80,7 +80,7 @@ A VPN alone does not change the worker's URL rule: a non-loopback `coordinator_u
 scripts/run-server.sh server.toml
 ```
 
-Server preflight validates configuration, identity shape, source resolution, trainer compatibility, and distributed checkpoint requirements. It does not bind the port, open the production database, load model weights, start the trainer, or test disk capacity.
+Server preflight validates configuration, model identity shape, environment configuration plugins and resolved IDs, trainer compatibility, distributed checkpoint requirements, configured policy-store access, and Docker daemon availability when a source uses the Docker runtime. It does not load task data, instantiate environments, execute a sandbox or tool, bind the port, open the production database, load model weights, start the trainer, or test disk capacity.
 
 Wait for liveness and readiness:
 
@@ -91,7 +91,7 @@ curl -fsS http://127.0.0.1:8080/ready
 
 `/health` confirms only that the API process responds. `/ready` also checks the database, active policy integrity, result processing, and trainer health.
 
-Optional S3-compatible policy delivery is configured with server `[policy_distribution]`; use standard boto3 environment credentials and add the generated presigned URL's exact HTTPS origin to worker `policy_download_allowed_origins`. For SHARDCAST, run `scripts/setup-relay.sh` and `scripts/run-relay.sh <relay.toml>`, terminate TLS in front of it, verify `aether-policies.json`, and add its URL to worker `shardcast_servers`. Relay setup is inexact so it preserves taskset packages already selected for another role in the same checkout. Start the relay after coordinator readiness and before workers. These paths are accelerators; coordinator delivery remains the default fallback.
+Optional S3-compatible policy delivery is configured with server `[policy_distribution]`; use standard boto3 environment credentials and add the generated presigned URL's exact HTTPS origin to worker `policy_download_allowed_origins`. For SHARDCAST, run `scripts/setup-relay.sh` and `scripts/run-relay.sh <relay.toml>`, terminate TLS in front of it, verify `aether-policies.json`, and add its URL to worker `shardcast_servers`. Relay setup is inexact so it preserves taskset packages already selected for the server role in the same checkout. Start the relay after coordinator readiness and before workers. These paths are accelerators; coordinator delivery remains the default fallback.
 
 ## 7. Preflight and launch workers
 
@@ -101,18 +101,18 @@ Set `coordinator_url` to the externally reachable HTTPS origin and choose a uniq
 scripts/run-worker.sh worker.toml https://coordinator.example.com
 ```
 
-Worker preflight checks GPU visibility, model/tokenizer fingerprints, installed environment versions, and environment resolution. It does not contact the coordinator, load model weights onto the GPU, start vLLM, execute an episode, or check available disk capacity.
+Worker preflight checks GPU visibility and model/tokenizer fingerprints. It does not contact the coordinator, load model weights onto the GPU, start vLLM, make an inference request, or check available disk capacity.
 
-Proxies must preserve authorization, protocol, content encoding, range, content length, and content range headers. Configure body limits for decompressed results when zstd uploads are enabled.
+Set worker `inference_slots` to the local vLLM concurrency offered to the coordinator. Set `inference_body_limit_bytes` on both server and workers high enough for the largest inference response; the worker rejects a larger local reply and the coordinator limits inference exchange bodies. Configure the external proxy for the corresponding JSON exchange size.
 
-The worker starts vLLM itself and writes its output to `<state_dir>/inference.log`. Do not launch a separate inference process for a normal worker.
+The worker starts vLLM itself and writes its output to `<state_dir>/inference.log`. It long-polls for inference leases, receives coordinator-generated OpenAI-compatible requests, forwards them to loopback vLLM, and returns replies over outbound HTTPS. Do not launch a separate inference process for a normal worker.
 
 ## 8. Check the run
 
 ```bash
-curl -fsS https://coordinator.example.com/api/v1/status \
+curl -fsS https://coordinator.example.com/api/v2/status \
   -H "Authorization: Bearer $AETHER_COORDINATOR_TOKEN" \
-  -H "Aether-Protocol-Version: 1"
+  -H "Aether-Protocol-Version: 2"
 ```
 
 Monitor `<run_root>/logs/trainer.log`, coordinator stdout/stderr, worker stdout/stderr, and each worker's `<state_dir>/inference.log`. See [Operations](operations.md) for state layout and restart procedures.

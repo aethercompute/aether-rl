@@ -213,7 +213,7 @@ class DurableTrainingQueue:
             os.close(descriptor)
 
 
-class RemoteResultProcessor:
+class ResultProcessor:
     def __init__(
         self,
         repository: CoordinatorRepository,
@@ -464,7 +464,11 @@ class RemoteResultProcessor:
         ready = [
             identity
             for identity, rollouts in partitions.items()
-            if (len(rollouts) >= self.batch_size if self.batch_size is not None else tokens[identity] >= (self.token_batch_size or 0))
+            if (
+                len(rollouts) >= self.batch_size
+                if self.batch_size is not None
+                else tokens[identity] >= (self.token_batch_size or 0)
+            )
         ]
         if not ready:
             return []

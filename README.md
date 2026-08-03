@@ -1,6 +1,6 @@
 # Aether RL
 
-Aether RL trains one LoRA policy on a central machine while trusted, geographically distributed workers generate complete verifier v1 rollouts against local vLLM instances. Workers make outbound HTTPS connections only, independently load the same pinned base model, and exchange only immutable content-addressed LoRA adapters after startup.
+Aether RL trains one LoRA policy on a central machine while trusted, geographically distributed workers provide inference from local vLLM instances. The coordinator runs complete verifier v1 environments, including Docker sandboxes, tools, finalization, and scoring. Workers make outbound HTTPS connections only, independently load the same pinned base model, and exchange only immutable content-addressed LoRA adapters after startup.
 
 The coordinator owns durable scheduling, result ingestion, group scoring, training batches, trainer supervision, checkpoints, and policy publication. One coordinator manages one run.
 
@@ -10,7 +10,7 @@ The coordinator owns durable scheduling, result ingestion, group scoring, traini
 - NVIDIA GPUs and a compatible CUDA stack on the trainer and workers.
 - Persistent local storage for each coordinator `run_root` and worker `state_dir`.
 - Access to the exact pinned Hugging Face model and tokenizer revisions.
-- The selected verifier environment package installed on the coordinator and every compatible worker.
+- The selected verifier environment package and runtime dependencies installed on the coordinator.
 
 ## Quickstart
 
@@ -42,10 +42,10 @@ export AETHER_COORDINATOR_TOKEN='<random-secret>'
 scripts/run-server.sh server.toml
 ```
 
-On each worker, install the worker role and environment, update `coordinator_url`, use a unique persistent `state_dir`, then preflight and launch:
+On each worker, install the inference-only worker role, update `coordinator_url`, use a unique persistent `state_dir`, then preflight and launch:
 
 ```bash
-scripts/setup-worker.sh "$ENVIRONMENT_PACKAGE"
+scripts/setup-worker.sh
 export AETHER_COORDINATOR_TOKEN='<same-random-secret>'
 scripts/run-worker.sh worker.toml https://coordinator.example.com
 ```

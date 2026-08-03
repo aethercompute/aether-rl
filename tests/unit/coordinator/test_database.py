@@ -77,8 +77,7 @@ def capabilities(*, capacity: int = 1, model: BaseModelIdentity | None = None) -
             transformers_version="5.6.2",
             vllm_version="0.24",
         ),
-        environments=(EnvironmentIdentity(id="env", revision="1"),),
-        max_concurrent_assignments=capacity,
+        inference_slots=capacity,
         gpu_count=1,
         tensor_parallel_size=1,
     )
@@ -105,6 +104,7 @@ def assignments(
     return [
         RolloutAssignment(
             assignment_id=f"{group_id}-assignment-{index}",
+            source_id="source-1",
             group_id=group_id,
             group_index=index,
             group_size=size,

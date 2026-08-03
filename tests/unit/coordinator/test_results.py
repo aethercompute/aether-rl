@@ -11,13 +11,13 @@ from aether_rl.coordinator import (
     ArtifactCorruptionError,
     ConflictError,
     CoordinatorTrainingBatchExporter,
-    RemoteResultProcessor,
     ResultProcessingSource,
+    ResultProcessor,
     decode_training_batch,
 )
 from aether_rl.coordinator.environments import EnvironmentSourceSpec
 from aether_rl.orchestrator.algo import GRPOAlgorithm
-from aether_rl.protocol import ResultEnvelope, episode_digest, policy_manifest_digest
+from aether_rl.protocol import EnvironmentIdentity, ResultEnvelope, episode_digest, policy_manifest_digest
 from aether_rl.transport.filesystem import BATCH_FILE_NAME
 from aether_rl.utils.pathing import get_rollout_dir, get_step_path
 from tests.unit.coordinator.test_database import FakeClock, capabilities, failure_envelope, registration
@@ -79,7 +79,7 @@ async def test_remote_results_finalize_grpo_emit_batch_and_replay_idempotently(t
         spec = EnvironmentSourceSpec(
             source_id="train-source",
             kind="train",
-            environment=registration().capabilities.environments[0],
+            environment=EnvironmentIdentity(id="env", revision="1"),
             tasks=({"idx": 0, "prompt": "prompt"},),
             sampling=SamplingConfig(temperature=1, max_tokens=8),
             group_size=2,
@@ -101,7 +101,7 @@ async def test_remote_results_finalize_grpo_emit_batch_and_replay_idempotently(t
         repository.accept_result(result_envelope(leases[0], 1))
 
         algorithm = GRPOAlgorithm(GRPOAlgoConfig(), None)  # type: ignore[arg-type]
-        processor = RemoteResultProcessor(
+        processor = ResultProcessor(
             repository,
             (
                 ResultProcessingSource(
@@ -166,7 +166,7 @@ async def test_remote_results_finalize_grpo_emit_batch_and_replay_idempotently(t
             duration_seconds=10,
         )
         repository.accept_result(result_envelope(eval_lease, 1))
-        processor = RemoteResultProcessor(
+        processor = ResultProcessor(
             repository,
             (
                 ResultProcessingSource(
@@ -189,7 +189,7 @@ async def test_remote_results_finalize_grpo_emit_batch_and_replay_idempotently(t
 
         records[0].artifact_path.write_bytes(b"corrupt")
         with pytest.raises(ArtifactCorruptionError, match="digest|size"):
-            RemoteResultProcessor(repository, (), batch_size=1)
+            ResultProcessor(repository, (), batch_size=1)
 
 
 @pytest.mark.asyncio
@@ -200,7 +200,7 @@ async def test_training_batch_export_rejects_conflicting_trainer_file(tmp_path: 
         spec = EnvironmentSourceSpec(
             source_id="train-source",
             kind="train",
-            environment=registration().capabilities.environments[0],
+            environment=EnvironmentIdentity(id="env", revision="1"),
             tasks=({"idx": 0, "prompt": "prompt"},),
             sampling=SamplingConfig(temperature=1, max_tokens=8),
             group_size=2,
@@ -220,7 +220,7 @@ async def test_training_batch_export_rejects_conflicting_trainer_file(tmp_path: 
         ]
         repository.accept_result(result_envelope(leases[0], 0))
         repository.accept_result(result_envelope(leases[1], 1))
-        processor = RemoteResultProcessor(
+        processor = ResultProcessor(
             repository,
             (
                 ResultProcessingSource(
@@ -255,7 +255,7 @@ async def test_emit_batches_partition_processed_rollouts_by_policy_identity(tmp_
         spec = EnvironmentSourceSpec(
             source_id="train-source",
             kind="train",
-            environment=registration().capabilities.environments[0],
+            environment=EnvironmentIdentity(id="env", revision="1"),
             tasks=({"idx": 0, "prompt": "prompt"},),
             sampling=SamplingConfig(temperature=1, max_tokens=8),
             group_size=1,
@@ -277,7 +277,7 @@ async def test_emit_batches_partition_processed_rollouts_by_policy_identity(tmp_
             )
             repository.accept_result(result_envelope(lease, 1.0))
 
-        processor = RemoteResultProcessor(
+        processor = ResultProcessor(
             repository,
             (
                 ResultProcessingSource(
@@ -306,7 +306,7 @@ async def test_emit_batches_drop_stale_processed_rollouts(tmp_path: Path):
         spec = EnvironmentSourceSpec(
             source_id="train-source",
             kind="train",
-            environment=registration().capabilities.environments[0],
+            environment=EnvironmentIdentity(id="env", revision="1"),
             tasks=({"idx": 0, "prompt": "prompt"},),
             sampling=SamplingConfig(temperature=1, max_tokens=8),
             group_size=1,
@@ -326,7 +326,7 @@ async def test_emit_batches_drop_stale_processed_rollouts(tmp_path: Path):
         )
         repository.accept_result(result_envelope(lease, 1.0))
 
-        processor = RemoteResultProcessor(
+        processor = ResultProcessor(
             repository,
             (
                 ResultProcessingSource(
@@ -358,7 +358,7 @@ async def test_group_scored_source_drops_partial_terminal_group(tmp_path: Path):
         spec = EnvironmentSourceSpec(
             source_id="group-scored",
             kind="train",
-            environment=registration().capabilities.environments[0],
+            environment=EnvironmentIdentity(id="env", revision="1"),
             tasks=({"idx": 0, "prompt": "prompt"},),
             sampling=SamplingConfig(temperature=1, max_tokens=8),
             group_size=2,
@@ -378,7 +378,7 @@ async def test_group_scored_source_drops_partial_terminal_group(tmp_path: Path):
         ]
         repository.accept_result(result_envelope(leases[0], 1))
         repository.accept_failure(failure_envelope(leases[1], retryable=False))
-        processor = RemoteResultProcessor(
+        processor = ResultProcessor(
             repository,
             (
                 ResultProcessingSource(
@@ -409,7 +409,7 @@ async def test_out_of_order_policy_soak_retries_duplicates_and_stale_drops(tmp_p
         spec = EnvironmentSourceSpec(
             source_id="train-source",
             kind="train",
-            environment=registration().capabilities.environments[0],
+            environment=EnvironmentIdentity(id="env", revision="1"),
             tasks=({"idx": 0, "prompt": "prompt"},),
             sampling=SamplingConfig(temperature=1, max_tokens=8),
             group_size=1,
@@ -417,7 +417,9 @@ async def test_out_of_order_policy_soak_retries_duplicates_and_stale_drops(tmp_p
         )
         repository.register_scheduler_source(spec)
 
-        policies = {version: publish_policy(repository, version, created_at=100.0 + version) for version in range(10, 14)}
+        policies = {
+            version: publish_policy(repository, version, created_at=100.0 + version) for version in range(10, 14)
+        }
         created = []
         valid_envelopes = []
         old_envelopes = []
@@ -462,7 +464,7 @@ async def test_out_of_order_policy_soak_retries_duplicates_and_stale_drops(tmp_p
             with pytest.raises(ConflictError):
                 repository.accept_result(envelope)
 
-        processor = RemoteResultProcessor(
+        processor = ResultProcessor(
             repository,
             (
                 ResultProcessingSource(
@@ -477,7 +479,11 @@ async def test_out_of_order_policy_soak_retries_duplicates_and_stale_drops(tmp_p
         assert await processor.process_available() == (24, 3)
         batches = [decode_training_batch(record) for record in repository.training_batches()]
         assert len(batches) == 3
-        assert sorted({sample.behavior_policy_version for sample in batch.examples}.pop() for batch in batches) == [10, 11, 12]
+        assert sorted({sample.behavior_policy_version for sample in batch.examples}.pop() for batch in batches) == [
+            10,
+            11,
+            12,
+        ]
         for batch in batches:
             assert len(batch.examples) == 8
             assert len({sample.behavior_policy_version for sample in batch.examples}) == 1
@@ -500,7 +506,7 @@ async def test_out_of_order_policy_soak_retries_duplicates_and_stale_drops(tmp_p
             )
             repository.accept_result(result_envelope(lease, 1.0))
 
-        stale_processor = RemoteResultProcessor(
+        stale_processor = ResultProcessor(
             repository,
             (
                 ResultProcessingSource(

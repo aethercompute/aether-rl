@@ -20,6 +20,7 @@ max_tokens = 32768
 [env.taskset]
 id = "r2e_gym_v1"
 dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified"
+dataset_revision = "151f9950e62cac613e07be1bb92e5dd19687315e"
 split = "train"
 filter_fn = "lambda row: row['repo_name'] in {'coveragepy', 'datalad'}"
 

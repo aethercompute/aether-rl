@@ -6,9 +6,10 @@ trainer_config_path = "examples/distributed/r2e-gym-4b/trainer.toml"
 trainer_processes = 8
 training_batch_size = 64
 published_checkpoint_keep_last = 2
+environment_slots = 8
 lease_duration_seconds = 120
 max_policy_lag = 1
-result_body_limit_bytes = 134217728
+inference_body_limit_bytes = 134217728
 
 [base_model]
 model_name = "Qwen/Qwen3-4B-Instruct-2507"
@@ -26,14 +27,18 @@ source_id = "r2e-gym-train-smoke-v1"
 kind = "train"
 environment_id = "r2e_gym_v1"
 environment_revision = "0.1.2"
-environment_config = { taskset = { id = "r2e_gym_v1", dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified", split = "train", filter_fn = "lambda row: row['repo_name'] not in {'coveragepy', 'datalad'}" }, agent = { max_turns = 30, max_total_tokens = 32768, timeout = { setup = 1800, rollout = 7200, finalize = 600, scoring = 3600 }, harness = { id = "bash", edit = true, search = false, runtime = { type = "docker", allow = [] } } } }
+environment_config = { taskset = { id = "r2e_gym_v1", dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified", dataset_revision = "151f9950e62cac613e07be1bb92e5dd19687315e", split = "train", filter_fn = "lambda row: row['repo_name'] not in {'coveragepy', 'datalad'}" }, agent = { max_turns = 30, max_total_tokens = 32768, timeout = { setup = 1800, rollout = 7200, finalize = 600, scoring = 3600 }, harness = { id = "bash", edit = true, search = false, runtime = { type = "docker", allow = [] } } } }
 group_size = 8
 max_attempts = 3
 task_limit = 128
 shuffle_seed = 20260801
 result_size_limit_bytes = 134217728
-assignment_timeout_seconds = 10800
+assignment_timeout_seconds = 18000
 sampling = { temperature = 0.7, top_p = 0.8, max_tokens = 32768 }
+
+[[sources.pre_filters]]
+type = "zero_advantage"
+enforce = true
 
 [sources.algorithm]
 type = "grpo"

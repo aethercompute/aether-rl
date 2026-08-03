@@ -22,7 +22,7 @@ from aether_rl.worker.client import CoordinatorClient
 from aether_rl.worker.policy_cache import AdapterCache
 from aether_rl.worker.policy_runtime import VLLMAdminClient, WorkerVLLMSupervisor, parse_vllm_metrics
 from aether_rl.worker.policy_transport import PolicyFileTransport
-from aether_rl.worker.spool import WorkerState
+from aether_rl.worker.state import WorkerState
 from tests.unit.coordinator.test_database import base_model
 from tests.unit.worker.test_worker import worker_config
 
@@ -86,7 +86,7 @@ async def test_adapter_cache_downloads_verifies_and_reuses_concurrently(tmp_path
             "adapter_model.safetensors",
             "manifest.json",
         ]
-        assert requests.count(f"/api/v1/policies/{manifest.policy_id}/manifest") == 1
+        assert requests.count(f"/api/v2/policies/{manifest.policy_id}/manifest") == 1
         assert len(requests) == 3
         assert await cache.ensure(manifest) == first
         assert len(requests) == 3
@@ -265,7 +265,7 @@ async def test_adapter_cache_uses_shardcast_before_coordinator_file_download(tmp
         cached = await cache.ensure(manifest)
         assert cached is not None
         assert (cached.path / weight.name).read_bytes() == weight_bytes
-    assert f"/api/v1/policies/{manifest.policy_id}/files/{weight.name}" not in requests
+    assert f"/api/v2/policies/{manifest.policy_id}/files/{weight.name}" not in requests
     await async_client.aclose()
 
 

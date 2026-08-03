@@ -1,31 +1,19 @@
 import asyncio
-import importlib.metadata
+import json
 from pathlib import Path
 
 import httpx
 import pytest
-from verifiers.v1.types import SamplingConfig
+from pydantic import ValidationError
 
-from aether_rl.configs.worker import WorkerConfig, WorkerEnvironmentConfig
+from aether_rl.configs.worker import WorkerConfig
 from aether_rl.protocol import (
-    AssignmentLease,
-    SubmissionResponse,
-    WorkerHeartbeatResponse,
-    WorkerRegistrationResponse,
-    sha256_digest,
+    InferenceExchangeResponse,
+    InferenceLease,
+    InferenceRequest,
 )
-from aether_rl.worker.client import CoordinatorAPIError
-from aether_rl.worker.daemon import ActiveAssignment, TimestampSequence, WorkerDaemon, build_registration
-from aether_rl.worker.spool import SpoolCorruptionError, WorkerSpool, WorkerState, WorkerStateError
-from tests.unit.coordinator.test_database import (
-    assignments,
-    base_model,
-    base_policy,
-    capabilities,
-    failure_envelope,
-    registration,
-    result_envelope,
-)
+from aether_rl.worker.daemon import ActiveInference, WorkerDaemon, build_registration
+from tests.unit.coordinator.test_database import base_model, base_policy, registration
 
 
 def worker_config(tmp_path: Path) -> WorkerConfig:
@@ -34,10 +22,7 @@ def worker_config(tmp_path: Path) -> WorkerConfig:
             "coordinator_url": "https://coordinator.example.com",
             "state_dir": tmp_path / "worker",
             "base_model": base_model().model_dump(mode="python"),
-            "environments": [
-                {"id": "env", "package": "verifiers", "revision": "1", "config": {"taskset": {"id": "env"}}}
-            ],
-            "execution_slots": 1,
+            "inference_slots": 1,
             "tensor_parallel_size": 1,
             "heartbeat_interval_seconds": 0.01,
             "lease_wait_seconds": 0,
@@ -49,366 +34,76 @@ def worker_config(tmp_path: Path) -> WorkerConfig:
     )
 
 
-def assignment_lease() -> AssignmentLease:
-    assignment = assignments(base_policy())[0].model_copy(
-        update={"sampling": SamplingConfig(temperature=1, max_tokens=8)}
-    )
-    return AssignmentLease(
+def inference_lease() -> InferenceLease:
+    return InferenceLease(
+        assignment_id="assignment-1",
         lease_id="lease-1",
         attempt=1,
         worker_id="worker-1",
         worker_session_id="session-1",
         issued_at=3,
         expires_at=100,
-        assignment=assignment,
+        policy=base_policy(),
     )
 
 
-def assignment_lease_for_group(index: int, *, size: int = 2) -> AssignmentLease:
-    assignment = assignments(base_policy(), size=size)[index].model_copy(
-        update={"sampling": SamplingConfig(temperature=1, max_tokens=8)}
-    )
-    return AssignmentLease(
-        lease_id=f"lease-{index}",
-        attempt=1,
-        worker_id="worker-1",
-        worker_session_id="session-1",
-        issued_at=3,
-        expires_at=100,
-        assignment=assignment,
-    )
-
-
-def test_worker_identity_lock_spool_recovery_acknowledgement_and_quarantine(tmp_path: Path):
-    state_path = tmp_path / "missing-parent" / "state"
-    state = WorkerState(state_path)
-    worker_id = state.load_or_create_worker_id()
-    assert state.load_or_create_worker_id() == worker_id
-    with pytest.raises(WorkerStateError, match="already owned"):
-        WorkerState(state_path)
-
-    spool = WorkerSpool(state)
-    entry = spool.publish(failure_envelope(assignment_lease()))
-    assert spool.publish(entry.envelope) == entry
-    assert spool.entries() == (entry,)
-    spool.acknowledge(
-        entry,
-        SubmissionResponse(
-            assignment_id=entry.envelope.assignment_id,
-            envelope_digest=entry.digest,
-            duplicate=False,
-            terminal=False,
-        ),
-    )
-    assert spool.entries() == ()
-    state.close()
-
-    with WorkerState(state_path) as reopened:
-        assert reopened.load_or_create_worker_id() == worker_id
-        spool = WorkerSpool(reopened)
-        corrupt = spool.pending / f"{'0' * 64}.failure.json"
-        corrupt.write_bytes(b"not-json")
-        with pytest.raises(SpoolCorruptionError, match="invalid pending"):
-            spool.entries()
-        assert not corrupt.exists()
-        assert (spool.rejected / corrupt.name).read_bytes() == b"not-json"
-        pending = spool.publish(result_envelope(assignment_lease()))
-
-    with WorkerState(state_path) as restarted:
-        recovered = WorkerSpool(restarted).entries()
-        assert len(recovered) == 1
-        assert recovered[0].body == pending.body
-
-
-def test_capability_discovery_verifies_environment_revision(tmp_path: Path):
-    config = worker_config(tmp_path).model_copy(
-        update={
-            "environments": [
-                WorkerEnvironmentConfig(
-                    id="env",
-                    package="verifiers",
-                    revision=importlib.metadata.version("verifiers"),
-                    config={"taskset": {"id": "env"}},
-                )
-            ]
-        }
-    )
+def test_worker_config_and_registration_are_inference_only(tmp_path: Path):
+    config = worker_config(tmp_path)
     discovered = build_registration(config, "worker-1", "session-1", gpu_count=1)
-    assert discovered.capabilities.environments[0].revision == importlib.metadata.version("verifiers")
-    mismatched = config.model_copy(
-        update={"environments": [config.environments[0].model_copy(update={"revision": "wrong"})]}
+    assert discovered.capabilities.inference_slots == 1
+    assert "environments" not in discovered.capabilities.model_dump()
+    with pytest.raises(ValidationError):
+        WorkerConfig.model_validate(
+            config.model_dump(mode="python") | {"environments": [{"id": "secret"}], "execution_slots": 1}
+        )
+
+
+class ExchangeClient:
+    def __init__(self):
+        self.requests = []
+
+    async def inference_exchange(self, request):
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return InferenceExchangeResponse(
+                action="request",
+                request=InferenceRequest(
+                    request_id="inference-1",
+                    method="POST",
+                    path="/inference/v1/generate",
+                    headers={"content-type": "application/json"},
+                    body=b'{"prompt_token_ids":[1,2]}',
+                ),
+            )
+        return InferenceExchangeResponse(action="stop")
+
+
+@pytest.mark.asyncio
+async def test_worker_proxies_only_inference_exchange_to_loopback(tmp_path: Path):
+    local_requests = []
+
+    async def local(request: httpx.Request) -> httpx.Response:
+        local_requests.append(request)
+        return httpx.Response(200, json={"token_ids": [3], "logprobs": [0.0]})
+
+    exchange = ExchangeClient()
+    local_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(local),
+        base_url="http://127.0.0.1:8000",
     )
-    with pytest.raises(RuntimeError, match="expected wrong"):
-        build_registration(mismatched, "worker-1", "session-1", gpu_count=1)
+    daemon = WorkerDaemon(
+        worker_config(tmp_path),
+        registration(),
+        exchange,  # type: ignore[arg-type]
+        inference_client=local_client,
+    )
+    active = ActiveInference(inference_lease(), asyncio.Event(), 100)
+    await daemon._serve_lease(active)
+    await local_client.aclose()
 
-
-def test_failure_envelope_preserves_terminal_execution_errors(tmp_path: Path):
-    class TerminalExecutionError(RuntimeError):
-        code = "result_too_large"
-        retryable = False
-
-    config = worker_config(tmp_path)
-    with WorkerState(config.state_dir) as state:
-        daemon = WorkerDaemon(
-            config, registration(), FakeCoordinatorClient(assignment_lease()), WorkerSpool(state), FakeExecutor()
-        )
-        envelope = daemon._failure_envelope(
-            ActiveAssignment(assignment_lease(), asyncio.Event(), 100),
-            TerminalExecutionError("too large"),
-        )
-    assert envelope.code == "result_too_large"
-    assert envelope.retryable is False
-
-
-class FakeExecutor:
-    async def execute(self, lease, cancel_event):
-        assert not cancel_event.is_set()
-        return result_envelope(lease)
-
-
-class FakeCoordinatorClient:
-    def __init__(self, lease: AssignmentLease):
-        self.offered = lease
-        self.daemon: WorkerDaemon | None = None
-        self.lease_requests = []
-        self.submissions = []
-        self.lease_calls = 0
-        self.submit_calls = 0
-
-    async def register(self, request):
-        return WorkerRegistrationResponse(
-            worker_id=request.worker_id,
-            worker_session_id=request.worker_session_id,
-            created=True,
-            server_time=1,
-        )
-
-    async def heartbeat(self, request):
-        return WorkerHeartbeatResponse(server_time=1)
-
-    async def lease(self, request):
-        self.lease_requests.append(request)
-        self.lease_calls += 1
-        if self.lease_calls == 1:
-            raise httpx.ReadTimeout("lost lease response")
-        if self.lease_calls == 2:
-            return self.offered
-        return None
-
-    async def submit(self, entry):
-        self.submissions.append(entry.body)
-        self.submit_calls += 1
-        if self.submit_calls == 1:
-            raise httpx.ReadTimeout("lost result response")
-        assert self.daemon is not None
-        self.daemon.stop()
-        return SubmissionResponse(
-            assignment_id=entry.envelope.assignment_id,
-            envelope_digest=sha256_digest(entry.body),
-            duplicate=True,
-            terminal=True,
-        )
-
-
-@pytest.mark.asyncio
-async def test_daemon_retries_exact_lease_and_result_bytes_then_stops_cleanly(tmp_path: Path):
-    config = worker_config(tmp_path)
-    worker_registration = registration()
-    lease = assignment_lease()
-    client = FakeCoordinatorClient(lease)
-    with WorkerState(config.state_dir) as state:
-        spool = WorkerSpool(state)
-        daemon = WorkerDaemon(
-            config,
-            worker_registration,
-            client,  # type: ignore[arg-type]
-            spool,
-            FakeExecutor(),
-            timestamp_sequence=TimestampSequence(lambda: 10),
-            request_id_factory=lambda: "request-1",
-        )
-        client.daemon = daemon
-        await daemon.run()
-        assert len(client.lease_requests) >= 2
-        assert client.lease_requests[0] == client.lease_requests[1]
-        assert client.lease_requests[0].sent_at >= 10
-        assert client.submissions[0] == client.submissions[1]
-        assert spool.entries() == ()
-        assert daemon.active == {}
-
-
-class CancellationExecutor:
-    def __init__(self):
-        self.cancelled = False
-
-    async def execute(self, lease, cancel_event):
-        await cancel_event.wait()
-        self.cancelled = True
-        raise RuntimeError("coordinator cancelled assignment")
-
-
-class CancelledErrorExecutor:
-    def __init__(self):
-        self.cancelled = False
-
-    async def execute(self, lease, cancel_event):
-        await cancel_event.wait()
-        self.cancelled = True
-        raise asyncio.CancelledError
-
-
-class CancellationClient(FakeCoordinatorClient):
-    async def lease(self, request):
-        self.lease_requests.append(request)
-        if len(self.lease_requests) == 1:
-            return self.offered
-        return None
-
-    async def heartbeat(self, request):
-        return WorkerHeartbeatResponse(server_time=1, stop_lease_ids=request.active_lease_ids)
-
-    async def submit(self, entry):
-        assert self.daemon is not None
-        self.daemon.stop()
-        return SubmissionResponse(
-            assignment_id=entry.envelope.assignment_id,
-            envelope_digest=entry.digest,
-            duplicate=False,
-            terminal=True,
-        )
-
-
-@pytest.mark.asyncio
-async def test_heartbeat_cancellation_stops_executor_and_spools_failure(tmp_path: Path):
-    config = worker_config(tmp_path)
-    client = CancellationClient(assignment_lease())
-    executor = CancellationExecutor()
-    with WorkerState(config.state_dir) as state:
-        spool = WorkerSpool(state)
-        daemon = WorkerDaemon(config, registration(), client, spool, executor)
-        client.daemon = daemon
-        await daemon.run()
-        assert executor.cancelled
-        assert spool.entries() == ()
-
-
-@pytest.mark.asyncio
-async def test_heartbeat_cancelled_error_does_not_stop_worker(tmp_path: Path):
-    config = worker_config(tmp_path)
-    client = CancellationClient(assignment_lease())
-    executor = CancelledErrorExecutor()
-    with WorkerState(config.state_dir) as state:
-        spool = WorkerSpool(state)
-        daemon = WorkerDaemon(config, registration(), client, spool, executor)
-        client.daemon = daemon
-        task = asyncio.create_task(daemon.run())
-        while not executor.cancelled:
-            await asyncio.sleep(0)
-        daemon.stop()
-        await task
-        assert len(client.lease_requests) > 1
-        assert spool.entries() == ()
-
-
-@pytest.mark.asyncio
-async def test_multi_slot_requests_reserve_one_slot_and_auth_failure_preserves_spool(tmp_path: Path):
-    config = worker_config(tmp_path).model_copy(update={"execution_slots": 2, "spool_max_entries": 2})
-
-    class Client(FakeCoordinatorClient):
-        async def lease(self, request):
-            self.lease_requests.append(request)
-            if len(self.lease_requests) == 1:
-                raise CoordinatorAPIError(
-                    409,
-                    "conflict",
-                    "requested slots exceed worker session capacity",
-                )
-            return None
-
-        async def submit(self, entry):
-            raise CoordinatorAPIError(401, "unauthorized", "authentication required")
-
-    client = Client(assignment_lease())
-    with WorkerState(config.state_dir) as state:
-        spool = WorkerSpool(state)
-        entry = spool.publish(failure_envelope(assignment_lease()))
-        request_ids = iter(("request-a", "request-b"))
-        daemon = WorkerDaemon(
-            config,
-            registration(),
-            client,  # type: ignore[arg-type]
-            spool,
-            FakeExecutor(),
-            request_id_factory=lambda: next(request_ids),
-        )
-        assert await daemon._acquire_lease() is None
-        assert await daemon._acquire_lease() is None
-        assert [request.available_slots for request in client.lease_requests] == [1, 1, 1]
-        with pytest.raises(CoordinatorAPIError, match="unauthorized"):
-            await daemon._upload_loop()
-        assert spool.entries() == (entry,)
-
-
-class GroupLeaseClient(FakeCoordinatorClient):
-    def __init__(self, leases):
-        super().__init__(leases[0])
-        self.leases = tuple(leases)
-        self.group_lease_requests = []
-
-    async def lease_group(self, request):
-        self.group_lease_requests.append(request)
-        if len(self.group_lease_requests) == 1:
-            return self.leases
-        return ()
-
-    async def lease(self, request):
-        self.lease_requests.append(request)
-        return None
-
-    async def submit(self, entry):
-        self.submissions.append(entry.body)
-        if len(self.submissions) == len(self.leases):
-            assert self.daemon is not None
-            self.daemon.stop()
-        return SubmissionResponse(
-            assignment_id=entry.envelope.assignment_id,
-            envelope_digest=entry.digest,
-            duplicate=False,
-            terminal=True,
-        )
-
-
-class GroupExecutor:
-    def __init__(self):
-        self.groups = []
-
-    async def execute(self, lease, cancel_event):
-        raise AssertionError("single execution should not be used for grouped leases")
-
-    async def execute_group(self, leases_and_cancellations):
-        self.groups.append(tuple(lease for lease, _ in leases_and_cancellations))
-        return [result_envelope(lease) for lease, _ in leases_and_cancellations]
-
-
-@pytest.mark.asyncio
-async def test_daemon_executes_grouped_leases_and_uploads_individual_results(tmp_path: Path):
-    config = worker_config(tmp_path).model_copy(update={"execution_slots": 2, "spool_max_entries": 4})
-    leases = (assignment_lease_for_group(0), assignment_lease_for_group(1))
-    client = GroupLeaseClient(leases)
-    executor = GroupExecutor()
-    with WorkerState(config.state_dir) as state:
-        spool = WorkerSpool(state)
-        daemon = WorkerDaemon(config, registration(caps=capabilities(capacity=2)), client, spool, executor)
-        client.daemon = daemon
-        await daemon.run()
-        assert len(client.group_lease_requests) == 1
-        assert client.group_lease_requests[0].available_slots == 2
-        assert client.lease_requests == []
-        assert executor.groups == [leases]
-        assert len(client.submissions) == 2
-        metrics = daemon.inference_metrics.snapshot()
-        assert metrics["inference/agg/rollouts_completed"] == 2
-        assert metrics["inference/agg/batch_size"] == 2
-        assert metrics["inference/agg/rollouts_per_hour"] > 0
-        assert spool.entries() == ()
-        assert daemon.active == {}
+    assert local_requests[0].url.path == "/inference/v1/generate"
+    assert json.loads(local_requests[0].content) == {"prompt_token_ids": [1, 2]}
+    reply = exchange.requests[1].reply
+    assert reply is not None
+    assert reply.request_id == "inference-1"
+    assert reply.status_code == 200

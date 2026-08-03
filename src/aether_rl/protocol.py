@@ -11,9 +11,9 @@ from verifiers.utils.serve_utils import msgpack_encoder
 from verifiers.v1.episode import WireEpisode
 from verifiers.v1.types import SamplingConfig
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
-ProtocolVersion: TypeAlias = Literal[1]
+ProtocolVersion: TypeAlias = Literal[2]
 OpaqueId: TypeAlias = Annotated[
     str,
     StringConstraints(
@@ -142,19 +142,13 @@ class PolicyLocations(ProtocolModel):
 class WorkerCapabilities(ProtocolModel):
     base_model: BaseModelIdentity
     runtime: RuntimeIdentity
-    environments: tuple[EnvironmentIdentity, ...] = Field(min_length=1)
-    max_concurrent_assignments: int = Field(ge=1)
+    inference_slots: int = Field(ge=1)
     gpu_count: int = Field(ge=1)
     tensor_parallel_size: int = Field(ge=1)
     labels: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_capabilities(self) -> WorkerCapabilities:
-        environment_keys = tuple((environment.id, environment.revision) for environment in self.environments)
-        if len(set(environment_keys)) != len(environment_keys):
-            raise ValueError("environments must not contain duplicates")
-        if tuple(sorted(environment_keys)) != environment_keys:
-            raise ValueError("environments must be sorted by id and revision")
         if self.tensor_parallel_size > self.gpu_count:
             raise ValueError("tensor_parallel_size must not exceed gpu_count")
         return self
@@ -179,6 +173,7 @@ class WorkerRegistrationResponse(ProtocolModel):
 class RolloutAssignment(ProtocolModel):
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
     assignment_id: OpaqueId
+    source_id: OpaqueId
     group_id: OpaqueId
     group_index: int = Field(ge=0)
     group_size: int = Field(ge=1)
@@ -229,21 +224,16 @@ class AssignmentLease(ProtocolModel):
         return self
 
 
-class AssignmentLeaseBatch(ProtocolModel):
+class InferenceLease(ProtocolModel):
     protocol_version: ProtocolVersion = PROTOCOL_VERSION
-    leases: tuple[AssignmentLease, ...] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def validate_batch(self) -> AssignmentLeaseBatch:
-        if len({lease.lease_id for lease in self.leases}) != len(self.leases):
-            raise ValueError("lease IDs must be unique")
-        if len({lease.assignment.assignment_id for lease in self.leases}) != len(self.leases):
-            raise ValueError("assignment IDs must be unique")
-        first = self.leases[0]
-        common = (first.worker_id, first.worker_session_id, first.assignment.group_id)
-        if any((lease.worker_id, lease.worker_session_id, lease.assignment.group_id) != common for lease in self.leases):
-            raise ValueError("lease batch must belong to one worker session and assignment group")
-        return self
+    assignment_id: OpaqueId
+    lease_id: OpaqueId
+    attempt: int = Field(ge=1)
+    worker_id: OpaqueId
+    worker_session_id: OpaqueId
+    issued_at: Timestamp
+    expires_at: Timestamp
+    policy: PolicyManifest
 
 
 class WorkerHeartbeat(ProtocolModel):
@@ -268,15 +258,52 @@ class LeaseRequest(ProtocolModel):
     worker_session_id: OpaqueId
     sent_at: Timestamp
     loaded_policy_ids: tuple[OpaqueId, ...] = ()
-    environments: tuple[EnvironmentIdentity, ...] = Field(min_length=1)
     available_slots: int = Field(ge=1)
     wait_seconds: float = Field(default=0, ge=0, le=60, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def validate_worker_state(self) -> LeaseRequest:
         _validate_sorted_unique(self.loaded_policy_ids, "loaded_policy_ids")
-        environment_keys = tuple((environment.id, environment.revision) for environment in self.environments)
-        _validate_sorted_unique(environment_keys, "environments")
+        return self
+
+
+class InferenceReply(ProtocolModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, ser_json_bytes="base64", val_json_bytes="base64")
+
+    request_id: OpaqueId
+    status_code: int = Field(ge=100, le=599)
+    headers: dict[str, str] = Field(default_factory=dict)
+    body: bytes
+
+
+class InferenceExchangeRequest(ProtocolModel):
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+    worker_id: OpaqueId
+    worker_session_id: OpaqueId
+    lease_id: OpaqueId
+    reply: InferenceReply | None = None
+    wait_seconds: float = Field(default=30, ge=0, le=60, allow_inf_nan=False)
+
+
+class InferenceRequest(ProtocolModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, ser_json_bytes="base64", val_json_bytes="base64")
+
+    request_id: OpaqueId
+    method: Literal["GET", "POST"]
+    path: Literal["/v1/models", "/inference/v1/generate"]
+    headers: dict[str, str] = Field(default_factory=dict)
+    body: bytes = b""
+
+
+class InferenceExchangeResponse(ProtocolModel):
+    protocol_version: ProtocolVersion = PROTOCOL_VERSION
+    action: Literal["request", "wait", "stop"]
+    request: InferenceRequest | None = None
+
+    @model_validator(mode="after")
+    def validate_action(self) -> InferenceExchangeResponse:
+        if (self.action == "request") != (self.request is not None):
+            raise ValueError("only request actions carry an inference request")
         return self
 
 
@@ -323,14 +350,6 @@ class LeaseRenewResponse(ProtocolModel):
         if self.action == "stop" and (self.renewal is not None or self.reason is None):
             raise ValueError("stop action requires a reason and no renewal details")
         return self
-
-
-class SubmissionResponse(ProtocolModel):
-    protocol_version: ProtocolVersion = PROTOCOL_VERSION
-    assignment_id: OpaqueId
-    envelope_digest: Digest
-    duplicate: bool
-    terminal: bool
 
 
 class ResultEnvelope(ProtocolModel):

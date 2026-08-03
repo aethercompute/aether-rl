@@ -7,6 +7,8 @@ trainer_processes = 1
 training_batch_size = 64
 published_checkpoint_keep_last = 2
 lease_duration_seconds = 120
+environment_slots = 4
+inference_body_limit_bytes = 67108864
 
 [base_model]
 model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"

@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, BinaryIO, Literal
 
 from aether_rl.protocol import (
     AssignmentLease,
-    EnvironmentIdentity,
     FailureEnvelope,
     LeaseRenewal,
     LeaseRequest,
@@ -531,8 +530,6 @@ class CoordinatorRepository:
             ):
                 raise ConflictError("lease request sent_at must increase within a worker session")
             capabilities = WorkerCapabilities.model_validate_json(session["capabilities_json"])
-            if not set(request.environments).issubset(capabilities.environments):
-                raise IncompatibleWorkerError("lease request contains an unsupported environment")
             self._validate_policy_ids(request.loaded_policy_ids)
             now = self.clock()
             active_count = self.connection.execute(
@@ -543,7 +540,7 @@ class CoordinatorRepository:
                 "AND (c.lease_id IS NULL OR c.delivered_at IS NULL)",
                 (request.worker_id, request.worker_session_id, now, now),
             ).fetchone()["count"]
-            if request.available_slots > capabilities.max_concurrent_assignments - active_count:
+            if request.available_slots > capabilities.inference_slots - active_count:
                 raise CapacityError("requested slots exceed worker session capacity")
             self.connection.execute(
                 "INSERT INTO lease_requests "
@@ -651,8 +648,6 @@ class CoordinatorRepository:
     def _validate_offered_lease(self, request: LeaseRequest, offered: AssignmentLease) -> None:
         if offered.worker_id != request.worker_id or offered.worker_session_id != request.worker_session_id:
             raise ConflictError("offered lease does not belong to the requesting worker session")
-        if offered.assignment.environment not in request.environments:
-            raise ConflictError("offered lease environment was not advertised by the worker")
         lease = self.connection.execute(
             "SELECT * FROM lease_attempts WHERE lease_id = ?", (offered.lease_id,)
         ).fetchone()
@@ -728,33 +723,17 @@ class CoordinatorRepository:
         self,
         kind: str | None,
         id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
-        *,
-        environments: Sequence[EnvironmentIdentity] | None = None,
     ) -> CreatedGroup | None:
         if kind not in {None, "train", "eval"}:
             raise ValueError("group kind must be train, eval, or None")
         now = self.clock()
         with self._transaction():
-            environment_filter = ""
-            environment_values: tuple[object, ...] = ()
-            if environments is not None:
-                identities = tuple(environments)
-                if not identities:
-                    return None
-                environment_filter = (
-                    " AND ("
-                    + " OR ".join("(environment_id = ? AND environment_revision = ?)" for _ in identities)
-                    + ")"
-                )
-                environment_values = tuple(
-                    value for environment in identities for value in (environment.id, environment.revision)
-                )
             kind_filter = "" if kind is None else " AND kind = ?"
             kind_values: tuple[object, ...] = () if kind is None else (kind,)
             source = self.connection.execute(
                 "SELECT * FROM scheduler_sources WHERE enabled = 1 "
-                f"{kind_filter}{environment_filter} ORDER BY virtual_finish, source_id LIMIT 1",
-                (*kind_values, *environment_values),
+                f"{kind_filter} ORDER BY virtual_finish, source_id LIMIT 1",
+                kind_values,
             ).fetchone()
             if source is None:
                 return None
@@ -800,6 +779,7 @@ class CoordinatorRepository:
             assignments = tuple(
                 RolloutAssignment(
                     assignment_id=id_factory(),
+                    source_id=source["source_id"],
                     group_id=group_id,
                     group_index=index,
                     group_size=source["group_size"],
@@ -854,6 +834,7 @@ class CoordinatorRepository:
         if len(assignments) != first.group_size or sorted(item.group_index for item in assignments) != expected_indices:
             raise ValueError("assignments must contain each group index exactly once")
         common = (
+            first.source_id,
             first.group_id,
             first.group_size,
             first.kind,
@@ -868,6 +849,7 @@ class CoordinatorRepository:
         )
         if any(
             (
+                item.source_id,
                 item.group_id,
                 item.group_size,
                 item.kind,
@@ -944,9 +926,6 @@ class CoordinatorRepository:
             if session is None or session["worker_id"] != request.worker_id:
                 raise IncompatibleWorkerError("worker session is not registered for this worker")
             capabilities = WorkerCapabilities.model_validate_json(session["capabilities_json"])
-            requested = set(request.environments)
-            if not requested.issubset(capabilities.environments):
-                raise IncompatibleWorkerError("lease request contains an unsupported environment")
             self._validate_policy_ids(request.loaded_policy_ids)
             settings = self._scheduler_settings()
             if settings["max_policy_lag"] is None or settings["loaded_policy_preference_seconds"] is None:
@@ -960,24 +939,17 @@ class CoordinatorRepository:
                 "AND (c.lease_id IS NULL OR c.delivered_at IS NULL)",
                 (request.worker_id, request.worker_session_id, now, now),
             ).fetchone()["count"]
-            remaining_capacity = capabilities.max_concurrent_assignments - active_count
+            remaining_capacity = capabilities.inference_slots - active_count
             if remaining_capacity < 1:
                 return None
-            environment_clauses = " OR ".join(
-                "(g.environment_id = ? AND g.environment_revision = ?)" for _ in request.environments
-            )
-            environment_values = tuple(
-                value for environment in request.environments for value in (environment.id, environment.revision)
-            )
             candidates = self.connection.execute(
                 "SELECT a.*, g.sequence, g.environment_id, g.environment_revision "
                 "FROM assignments a JOIN rollout_groups g USING (group_id) "
                 "LEFT JOIN assignment_cancellations c USING (assignment_id) "
                 "WHERE a.state IN ('pending', 'retry_wait') AND a.available_at <= ? "
                 "AND (a.deadline_at IS NULL OR a.deadline_at > ?) AND c.assignment_id IS NULL "
-                f"AND ({environment_clauses}) "
                 "ORDER BY g.sequence, a.group_index, a.assignment_id",
-                (now, now, *environment_values),
+                (now, now),
             ).fetchall()
             if not candidates:
                 return None
@@ -1032,136 +1004,10 @@ class CoordinatorRepository:
         lease = self.lease_next_compatible(request, lease_duration_seconds=lease_duration_seconds)
         if lease is not None or not self._lease_request_can_generate(request):
             return lease
-        created = self.create_next_group(None, environments=request.environments)
+        created = self.create_next_group(None)
         if created is None:
             return None
         return self.lease_next_compatible(request, lease_duration_seconds=lease_duration_seconds)
-
-    def lease_group_next_compatible(
-        self,
-        request: LeaseRequest,
-        *,
-        lease_duration_seconds: float,
-        lease_id_factory: Callable[[], str] = lambda: f"lease-{secrets.token_hex(32)}",
-    ) -> tuple[AssignmentLease, ...]:
-        if lease_duration_seconds <= 0:
-            raise ValueError("lease duration must be positive")
-        now = self.clock()
-        with self._transaction():
-            self._expire_leases(now)
-            session = self.connection.execute(
-                "SELECT * FROM worker_sessions WHERE worker_session_id = ?",
-                (request.worker_session_id,),
-            ).fetchone()
-            if session is None or session["worker_id"] != request.worker_id:
-                raise IncompatibleWorkerError("worker session is not registered for this worker")
-            capabilities = WorkerCapabilities.model_validate_json(session["capabilities_json"])
-            requested = set(request.environments)
-            if not requested.issubset(capabilities.environments):
-                raise IncompatibleWorkerError("lease request contains an unsupported environment")
-            self._validate_policy_ids(request.loaded_policy_ids)
-            settings = self._scheduler_settings()
-            if settings["max_policy_lag"] is None or settings["loaded_policy_preference_seconds"] is None:
-                raise InvalidStateError("scheduler settings have not been configured")
-            self._cancel_stale_train_groups(settings["max_policy_lag"], now)
-            active_count = self.connection.execute(
-                "SELECT COUNT(*) AS count FROM lease_attempts l JOIN assignments a USING (assignment_id) "
-                "LEFT JOIN lease_cancellations c USING (lease_id) "
-                "WHERE l.worker_id = ? AND l.worker_session_id = ? AND l.state = 'active' AND l.expires_at > ? "
-                "AND (a.deadline_at IS NULL OR a.deadline_at > ?) "
-                "AND (c.lease_id IS NULL OR c.delivered_at IS NULL)",
-                (request.worker_id, request.worker_session_id, now, now),
-            ).fetchone()["count"]
-            remaining_capacity = min(
-                request.available_slots,
-                capabilities.max_concurrent_assignments - active_count,
-            )
-            if remaining_capacity < 2:
-                return ()
-            environment_clauses = " OR ".join(
-                "(g.environment_id = ? AND g.environment_revision = ?)" for _ in request.environments
-            )
-            environment_values = tuple(
-                value for environment in request.environments for value in (environment.id, environment.revision)
-            )
-            groups = self.connection.execute(
-                "SELECT g.group_id, g.group_size, g.sequence, g.environment_id, g.environment_revision "
-                "FROM rollout_groups g "
-                "WHERE g.state = 'collecting' "
-                f"AND ({environment_clauses}) "
-                "ORDER BY g.sequence, g.group_id",
-                environment_values,
-            ).fetchall()
-            for group in groups:
-                if group["group_size"] > remaining_capacity:
-                    continue
-                rows = self.connection.execute(
-                    "SELECT a.* FROM assignments a "
-                    "LEFT JOIN assignment_cancellations c USING (assignment_id) "
-                    "WHERE a.group_id = ? AND a.state IN ('pending', 'retry_wait') "
-                    "AND a.available_at <= ? AND (a.deadline_at IS NULL OR a.deadline_at > ?) "
-                    "AND c.assignment_id IS NULL "
-                    "ORDER BY a.group_index, a.assignment_id",
-                    (group["group_id"], now, now),
-                ).fetchall()
-                if len(rows) != group["group_size"]:
-                    continue
-                deadline = min(
-                    (row["deadline_at"] for row in rows if row["deadline_at"] is not None),
-                    default=None,
-                )
-                expires_at = (
-                    min(now + lease_duration_seconds, deadline)
-                    if deadline is not None
-                    else now + lease_duration_seconds
-                )
-                leases = []
-                for row in rows:
-                    attempt = row["attempt_count"] + 1
-                    lease_id = lease_id_factory()
-                    self.connection.execute(
-                        "INSERT INTO lease_attempts "
-                        "(lease_id, assignment_id, attempt, worker_id, worker_session_id, issued_at, expires_at, state) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, 'active')",
-                        (
-                            lease_id,
-                            row["assignment_id"],
-                            attempt,
-                            request.worker_id,
-                            request.worker_session_id,
-                            now,
-                            expires_at,
-                        ),
-                    )
-                    self.connection.execute(
-                        "UPDATE assignments SET state = 'leased', attempt_count = ?, current_lease_id = ? "
-                        "WHERE assignment_id = ?",
-                        (attempt, lease_id, row["assignment_id"]),
-                    )
-                    leases.append(
-                        AssignmentLease(
-                            lease_id=lease_id,
-                            attempt=attempt,
-                            worker_id=request.worker_id,
-                            worker_session_id=request.worker_session_id,
-                            issued_at=now,
-                            expires_at=expires_at,
-                            assignment=RolloutAssignment.model_validate_json(row["assignment_json"]),
-                        )
-                    )
-                return tuple(leases)
-        return ()
-
-    def lease_group_or_create_next_compatible(
-        self, request: LeaseRequest, *, lease_duration_seconds: float
-    ) -> tuple[AssignmentLease, ...]:
-        leases = self.lease_group_next_compatible(request, lease_duration_seconds=lease_duration_seconds)
-        if leases or not self._lease_request_can_generate(request):
-            return leases
-        created = self.create_next_group(None, environments=request.environments)
-        if created is None:
-            return ()
-        return self.lease_group_next_compatible(request, lease_duration_seconds=lease_duration_seconds)
 
     def create_lease(
         self,
@@ -1201,7 +1047,7 @@ class CoordinatorRepository:
                     (worker_id, worker_session_id),
                 ).fetchone()["count"]
                 capabilities = WorkerCapabilities.model_validate_json(session["capabilities_json"])
-                if active_count >= capabilities.max_concurrent_assignments:
+                if active_count >= capabilities.inference_slots:
                     raise CapacityError("worker session has no free assignment capacity")
                 expires_at = min(now + duration_seconds, deadline) if deadline is not None else now + duration_seconds
                 attempt = assignment["attempt_count"] + 1
@@ -1889,21 +1735,14 @@ class CoordinatorRepository:
                 "AND (c.lease_id IS NULL OR c.delivered_at IS NULL)",
                 (request.worker_id, request.worker_session_id, now, now),
             ).fetchone()["count"]
-            if active_count >= capabilities.max_concurrent_assignments:
+            if active_count >= capabilities.inference_slots:
                 return False
-            environment_clauses = " OR ".join(
-                "(g.environment_id = ? AND g.environment_revision = ?)" for _ in request.environments
-            )
-            environment_values = tuple(
-                value for environment in request.environments for value in (environment.id, environment.revision)
-            )
             pending = self.connection.execute(
                 "SELECT 1 FROM assignments a JOIN rollout_groups g USING (group_id) "
                 "LEFT JOIN assignment_cancellations c USING (assignment_id) "
                 "WHERE a.state IN ('pending', 'retry_wait') AND a.available_at <= ? "
-                "AND (a.deadline_at IS NULL OR a.deadline_at > ?) AND c.assignment_id IS NULL "
-                f"AND ({environment_clauses}) LIMIT 1",
-                (now, now, *environment_values),
+                "AND (a.deadline_at IS NULL OR a.deadline_at > ?) AND c.assignment_id IS NULL LIMIT 1",
+                (now, now),
             ).fetchone()
             return pending is None
 
@@ -1919,10 +1758,6 @@ class CoordinatorRepository:
         ).fetchone()
         if session is None or session["worker_id"] != worker_id:
             raise IncompatibleWorkerError("worker session is not registered for this worker")
-        capabilities = WorkerCapabilities.model_validate_json(session["capabilities_json"])
-        model = RolloutAssignment.model_validate_json(assignment["assignment_json"])
-        if model.environment not in capabilities.environments:
-            raise IncompatibleWorkerError("worker does not support the assignment environment")
         return session
 
     def _validate_policy_ids(self, policy_ids: Sequence[str]) -> None:

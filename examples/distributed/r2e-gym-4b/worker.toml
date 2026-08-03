@@ -1,6 +1,6 @@
 coordinator_url = "http://127.0.0.1:8080" # pass the remote HTTPS URL to run-worker.sh
 state_dir = "outputs/qwen3-4b-r2e-gym-smoke-v1/worker"
-execution_slots = 8
+inference_slots = 8
 tensor_parallel_size = 1
 inference_port = 8000
 inference_startup_timeout_seconds = 900
@@ -10,7 +10,7 @@ max_model_len = 32768
 max_lora_rank = 32
 max_loaded_policies = 2
 adapter_cache_max_bytes = 10737418240
-spool_max_entries = 128
+inference_body_limit_bytes = 134217728
 
 [base_model]
 model_name = "Qwen/Qwen3-4B-Instruct-2507"
@@ -22,9 +22,3 @@ tokenizer_digest = "sha256:49cedb5843afb50585116d34be5c9513fe926faace0bd42d264d3
 chat_template_digest = "sha256:e814241780d296277a995d782b8ea5d4b6c7759439f08d58de538d4779cca96b"
 vocab_size = 151669
 quantization = "none"
-
-[[environments]]
-id = "r2e_gym_v1"
-package = "r2e_gym_v1"
-revision = "0.1.2"
-config = { taskset = { id = "r2e_gym_v1", dataset_name = "PrimeIntellect/R2E-Gym-Subset-Verified", split = "train", filter_fn = "lambda row: row['repo_name'] not in {'coveragepy', 'datalad'}" }, agent = { max_turns = 30, max_total_tokens = 32768, timeout = { setup = 1800, rollout = 7200, finalize = 600, scoring = 3600 }, harness = { id = "bash", edit = true, search = false, runtime = { type = "docker", allow = [] } } } }

@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Start with coordinator `/health`, `/ready`, authenticated `/api/v1/status`, `<run_root>/logs/trainer.log`, worker process output, and `<state_dir>/inference.log`.
+Start with coordinator `/health`, `/ready`, authenticated `/api/v2/status` using protocol version 2, `<run_root>/logs/trainer.log`, worker process output, and `<state_dir>/inference.log`.
 
 ## Server preflight fails
 
@@ -16,7 +16,7 @@ Use the same block on server and workers and the same model name/revision in tra
 
 ### Environment identity mismatch
 
-Install the environment package on the coordinator, manually align its version with `environment_revision`, and ensure `environment_config` resolves to `environment_id`. Coordinator preflight resolves the taskset but does not compare its installed package version. Infinite tasksets also require `task_limit`.
+Install the environment package on the coordinator, manually align its version with `environment_revision`, and ensure `environment_config` resolves to `environment_id`. Coordinator preflight imports the environment configuration plugin and checks Docker daemon availability for Docker-backed sources, but does not load task data or compare the installed package version. Infinite tasksets also require `task_limit`.
 
 ### Trainer rejected by distributed validation
 
@@ -28,10 +28,6 @@ The trainer must use LoRA, safetensors publication, and a complete unpruned chec
 
 Verify `CUDA_VISIBLE_DEVICES`, NVIDIA driver health, and that `tensor_parallel_size` does not exceed visible GPUs. Preflight does not prove model weights fit in memory.
 
-### Package revision mismatch
-
-Install every package named in `[[environments]]` and set `revision` to its exact installed package version. Keep worker environment entries sorted and unique by ID and revision.
-
 ### Fingerprint mismatch
 
 Regenerate identity on the installed Aether RL revision. Tokenizer library changes can alter canonical fingerprints, so use the same project revision across the fleet.
@@ -41,7 +37,7 @@ Regenerate identity on the installed Aether RL revision. Tokenizer library chang
 - Remote `coordinator_url` must be an HTTPS origin with no path or query.
 - Confirm DNS, certificate trust, firewall egress, and proxy body/time limits.
 - Confirm both roles use the same ASCII `AETHER_COORDINATOR_TOKEN`.
-- Ensure the proxy preserves `Authorization` and `Aether-Protocol-Version`.
+- Ensure the proxy preserves `Authorization` and `Aether-Protocol-Version: 2`.
 - `401` indicates a missing or incorrect token; `400` can indicate a protocol-version problem.
 - `503 trainer_unavailable` means readiness, result processing, trainer health, or active-policy integrity has failed.
 
@@ -73,13 +69,13 @@ environment's answer-extraction and format contracts. After correcting the cause
 start a fresh run identity instead of resuming checkpoints created from zero
 gradients.
 
-## Results are not progressing
+## Episodes are not progressing
 
-Inspect status counts for active leases, accepted/pending results, processing results, and groups. Confirm workers remain connected and their local pending spool is below `spool_max_entries`. Check server disk capacity and permissions for SQLite, spools, training queue, policies, and trainer output.
+Inspect status counts for active inference leases, accepted/pending results, processing results, and groups. Confirm workers remain connected, inspect worker inference logs, and check coordinator capacity and permissions for SQLite, result artifacts, training queue, policies, and trainer output.
 
-Do not delete pending worker spool files. They are the durable copy until coordinator acknowledgment.
+If environments wait on model calls, compare server `environment_slots` with total available worker `inference_slots`. Check external proxy timeouts and ensure server and worker `inference_body_limit_bytes` both accommodate the largest response. The worker exchanges inference requests and replies as identity-encoded JSON over `/api/v2/inference/exchange`.
 
-For zstd uploads, ensure the proxy preserves `Content-Encoding: zstd` rather than decompressing the body while forwarding the header. Result limits apply to decompressed bytes. If increasing `result_upload_concurrency`, also check coordinator/proxy connection limits and worker spool pressure.
+Verifier environments, Docker sandboxes, tools, episode finalization, and scoring all run on the coordinator. Diagnose those failures in coordinator output and provision Docker images, credentials, network access, CPU, memory, and disk there, not on workers. Completed episodes become durable only in coordinator state; preserve the complete `run_root`.
 
 ## External policy download fails
 
@@ -87,17 +83,13 @@ An empty or mismatched `policy_download_allowed_origins` disables presigned URLs
 
 For SHARDCAST, verify the relay token, relay process output, HTTPS proxy, and `aether-policies.json`. A stale index, evicted version, missing shard, or digest mismatch causes the worker to try the next configured transport. Prefetch only warms the verified disk cache and does not load the adapter into vLLM.
 
-## Rejected worker spool entries
-
-Files under `<state_dir>/spool/rejected/` represent nonretryable submissions and are not automatically resent. Preserve them for diagnosis. Typical causes include expired leases, identity conflicts, malformed traces, body limits, or incompatible policy reporting.
-
 ## Restart does not resume
 
 Confirm the complete run root and trainer output are present and that the active policy version has its full checkpoint. Do not point a new run at an old database, change source definitions under existing IDs, or set trainer `ckpt.resume_step` manually. Only one coordinator may hold a run root.
 
 If the trainer repeatedly reports a missing `run_<id>/control/orch.toml`, compare the logged path with the directory exported under the trainer output. Run directory names preserve the complete `run_id`, including dots; a shortened name indicates mismatched or outdated coordinator/trainer code.
 
-For workers, preserve the original `state_dir`. Starting two workers against one state directory fails its process lock and risks operational confusion.
+For workers, preserve the original `state_dir` for stable identity and cached adapters. Starting two workers against one state directory fails its process lock and risks operational confusion. Worker restart does not resume active inference leases; coordinator-owned episode attempts fail or expire and are retried centrally. Coordinator restart retains accepted results but reruns episodes that had not reached durable acceptance.
 
 ## Disk growth
 

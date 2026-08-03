@@ -50,11 +50,3 @@ class CoordinatorScheduler:
             lease_duration_seconds=self.lease_duration_seconds,
         )
         return cast(AssignmentLease | None, result)
-
-    async def try_lease_group(self, request: LeaseRequest) -> tuple[AssignmentLease, ...]:
-        result = await self.serialized_call(
-            self.repository.lease_group_or_create_next_compatible,
-            request,
-            lease_duration_seconds=self.lease_duration_seconds,
-        )
-        return cast(tuple[AssignmentLease, ...], result)

@@ -10,9 +10,9 @@ description: Monitor an Aether RL coordinator, trainer, and outbound worker flee
 ```bash
 curl -fsS https://coordinator.example.com/health
 curl -fsS https://coordinator.example.com/ready
-curl -fsS https://coordinator.example.com/api/v1/status \
+curl -fsS https://coordinator.example.com/api/v2/status \
   -H "Authorization: Bearer $AETHER_COORDINATOR_TOKEN" \
-  -H "Aether-Protocol-Version: 1"
+  -H "Aether-Protocol-Version: 2"
 ```
 
 `/health` is process liveness. `/ready` includes database, policy integrity, trainer, and result processing. Status reports active policy, trainer readiness, worker/session and stale-session counts, active leases, and assignment/group/result counts by state. It does not report free slots.
@@ -56,17 +56,19 @@ Open `http://127.0.0.1:8090`. The monitor is read-only; it reads `<run_root>/coo
 
 Capture worker stdout/stderr with the service manager and inspect `<state_dir>/inference.log` for vLLM. The worker has no inbound health endpoint; coordinator status is the fleet view. In-process worker/runtime counters use `inference/agg/*` keys for throughput, rollouts/hour, queue wait, generation time, request counts, KV-cache usage, prefix-cache hit rate, adapter timing, policy lag, stale drops, and informative-group fraction when a monitor consumes them.
 
-Inspect `<state_dir>/spool/pending/` when results do not drain, `<state_dir>/spool/rejected/` for nonretryable submissions, and disk use under `<state_dir>/cache/policies/`.
+Inspect disk use under `<state_dir>/cache/policies/`. Workers do not retain completed results; result durability is entirely under coordinator `run_root`.
 
-For external policy delivery, inspect coordinator and relay logs, fetch relay `aether-policies.json`, and verify the worker's exact approved origins. SHARDCAST or presigned failures fall through to coordinator delivery when enabled. Prefetch only warms the disk cache. For slow result draining, compare pending spool growth with `result_upload_concurrency` and proxy/server connection limits; zstd limits are enforced after decompression.
+For external policy delivery, inspect coordinator and relay logs, fetch relay `aether-policies.json`, and verify the worker's exact approved origins. SHARDCAST or presigned failures fall through to coordinator delivery when enabled. Prefetch only warms the disk cache.
 
-Lease capacity is backpressure, not a worker-fatal condition. Current coordinators return `429 capacity_exceeded`; current workers also retry the capacity-specific `409 conflict` messages emitted by older coordinators. If a worker exits on `requested slots exceed worker session capacity`, update the worker before restarting it. Other 409 responses remain fatal protocol conflicts and must be diagnosed rather than retried.
+For stalled episodes, compare server `environment_slots` with aggregate worker `inference_slots`, inspect worker vLLM logs, and verify server/worker/proxy inference body limits and long-poll timeouts. Environment, Docker, tool, finalization, and scoring failures are coordinator-side. Workers exchange inference requests and replies through `/api/v2/inference/exchange` over outbound HTTPS.
+
+Lease capacity is backpressure, not a worker-fatal condition. Coordinators return `429 capacity_exceeded`. Other conflict responses are protocol or identity failures and must be diagnosed rather than retried.
 
 ## Restarts
 
 Never restart unless explicitly requested. Preserve the complete server `run_root`, external database/trainer paths, and worker `state_dir`. Only one process may own each state directory.
 
-Coordinator restart verifies and reconciles durable state and resumes from the active policy checkpoint. Worker restart reuses its stable ID and retries pending results, while old in-flight leases expire server-side. Neither trainer nor vLLM is automatically relaunched after child-process failure; restart the owning server or worker process after diagnosis.
+Coordinator restart verifies and reconciles durable state, retains centrally accepted results, expires inference leases, and resumes from the active policy checkpoint. Coordinator episodes that had not reached durable acceptance are retried rather than resumed. Worker restart reuses its stable ID and cached policies but does not resume in-flight inference leases or replay results. Neither trainer nor vLLM is automatically relaunched after child-process failure; restart the owning server or worker process after diagnosis.
 
 For a disk-full trainer failure, stop the coordinator before changing files. Preserve the active checkpoint, any newer unpublished checkpoint containing `STABLE`, and every published policy. A checkpoint directory for the failed next step that lacks `STABLE` is unpublished partial output and may be removed while stopped. When `published_checkpoint_keep_last` is configured, older published full checkpoints are coordinator-pruned automatically. Free enough capacity for retained artifacts plus one temporary checkpoint write, then restart with the same run root and configuration so training resumes from the active policy's stable checkpoint.
 

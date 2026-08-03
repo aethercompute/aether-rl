@@ -21,7 +21,7 @@ from aether_rl.utils.process import DEFAULT_COMMON_ENV_VARS, DEFAULT_INFERENCE_E
 from .client import CoordinatorClient, CoordinatorProtocolError
 from .policy_cache import AdapterCache, CachedPolicy
 from .policy_transport import PolicyFileTransport
-from .spool import WorkerState
+from .state import WorkerState
 
 
 class WorkerVLLMSupervisor:

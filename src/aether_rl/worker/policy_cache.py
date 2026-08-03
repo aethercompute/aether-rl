@@ -18,7 +18,7 @@ from aether_rl.trainer.policy import POLICY_MANIFEST_NAME, verify_lora_policy
 
 from .client import CoordinatorAPIError, CoordinatorClient, CoordinatorProtocolError
 from .policy_transport import PolicyFileTransport
-from .spool import WorkerState
+from .state import WorkerState
 
 
 class AdapterCacheError(RuntimeError):

@@ -7,14 +7,14 @@ Use a process supervisor such as systemd, a container runtime, or Kubernetes for
 ```bash
 curl -fsS https://coordinator.example.com/health
 curl -fsS https://coordinator.example.com/ready
-curl -fsS https://coordinator.example.com/api/v1/status \
+curl -fsS https://coordinator.example.com/api/v2/status \
   -H "Authorization: Bearer $AETHER_COORDINATOR_TOKEN" \
-  -H "Aether-Protocol-Version: 1"
+  -H "Aether-Protocol-Version: 2"
 ```
 
 `/health` reports API-process liveness. `/ready` returns 200 only when database and active-policy verification pass and trainer/result processing is healthy. Both are unauthenticated.
 
-Authenticated status reports the active policy, trainer readiness, worker/session counts, stale sessions, active leases, and assignment/group/result counts by state. The coordinator does not currently expose Prometheus `/metrics` or detailed free-slot, latency, policy-lag, or adapter-cache metrics.
+Authenticated status reports the active policy, trainer readiness, worker/session counts, stale sessions, active inference leases, and assignment/group/result counts by state. The coordinator does not expose Prometheus `/metrics` or detailed free-slot, latency, policy-lag, or adapter-cache metrics.
 
 Summarize durable evaluation records by source and behavior-policy version with:
 
@@ -61,8 +61,6 @@ Default worker state:
 ├── identity/worker-id
 ├── inference.toml
 ├── inference.log
-├── spool/pending/
-├── spool/rejected/
 └── cache/policies/
 ```
 
@@ -87,7 +85,7 @@ Optional trainer monitoring:
 - `[file_monitor]` writes scalar JSONL, by default under the trainer output directory.
 - `[metrics_server]` exposes unauthenticated trainer `/health` and Prometheus `/metrics`; firewall or externally secure it.
 
-Do not edit SQLite, spools, queues, policies, checkpoints, or generated inference files while processes are running.
+Do not edit SQLite, coordinator result artifacts, queues, policies, checkpoints, or generated inference files while processes are running.
 
 ## Restart and recovery
 
@@ -98,7 +96,7 @@ Do not edit SQLite, spools, queues, policies, checkpoints, or generated inferenc
 3. Start exactly one coordinator with the same run, source definitions, model identity, and trainer configuration.
 4. Wait for `/ready`, then inspect authenticated status.
 
-Startup migrates older supported schemas, verifies referenced results and policies, removes abandoned incoming files, resets interrupted result processing, expires stale leases, and reconciles stable unpublished trainer artifacts. Resume uses the active policy's exact full checkpoint.
+Startup verifies referenced results and policies, removes abandoned incoming files, resets interrupted result processing, expires stale leases, and reconciles stable unpublished trainer artifacts. Resume uses the active policy's exact full checkpoint. Completed episodes accepted before shutdown remain durable under `run_root`; episodes still running at shutdown are not resumed and their assignments become eligible for another attempt.
 
 When `published_checkpoint_keep_last` is configured, the coordinator prunes older full checkpoints only after the corresponding policy is durably activated. It also removes published trainer broadcast copies; immutable policy adapters remain under `policies/`. Startup repeats this cleanup to reconcile a crash between activation and deletion. Filesystem cleanup failures are logged without invalidating the activated policy and are retried on the next publication or restart, so monitor disk use rather than treating retention as a hard quota.
 
@@ -108,15 +106,15 @@ If the trainer exits unexpectedly, readiness becomes false and new leases are ga
 
 1. Stop the worker cleanly when possible.
 2. Preserve its unique `state_dir`.
-3. Restart with the same identity, model, environment, and coordinator configuration.
+3. Restart with the same identity, model, inference, and coordinator configuration.
 
-The worker reuses its stable worker ID, creates a new session, verifies cached adapters, and retries pending result envelopes. In-flight leases are not resumed and expire server-side. Nonretryable submissions remain in `spool/rejected/` for operator inspection.
+The worker reuses its stable worker ID, creates a new session, and verifies cached adapters. It has no completed-result state to replay. In-flight inference leases are not resumed; the coordinator stops or expires them and centrally retries the affected assignment according to source policy.
 
 ## Backups
 
 Back up state while the coordinator is stopped. Copying only `coordinator.sqlite` is insufficient because it references result, policy, training-queue, and checkpoint files.
 
-Preserve the entire `run_root`, plus `database_path` and `trainer_output_dir` if either points outside it. Preserve worker `state_dir` to retain stable identity and unacknowledged results. Test restoration to a separate path before depending on a backup.
+Preserve the entire `run_root`, plus `database_path` and `trainer_output_dir` if either points outside it. Worker `state_dir` is not needed for result durability; preserve it to retain stable identity and cached policies. Test restoration to a separate path before depending on a backup.
 
 ## Upgrades
 
@@ -128,8 +126,8 @@ There is no guaranteed mixed-version rolling upgrade or database downgrade.
 4. Run server and worker preflight again.
 5. Start the coordinator, wait for its health state, then restart workers.
 
-Protocol version is exact rather than negotiated. Startup refuses databases newer than the running code. Keep model identity, environment revisions, run ID, source definitions, LoRA shape, trainer topology, and checkpoint-compatible optimizer settings unchanged for an existing run.
+Protocol version 2 is exact rather than negotiated. Keep model identity, environment revisions, run ID, source definitions, LoRA shape, trainer topology, and checkpoint-compatible optimizer settings unchanged for an existing run.
 
 Bearer-token rotation is restart-based and has no overlap window. Change the coordinator token, restart it, then restart workers with the same token; temporary authentication failures are expected during the transition.
 
-Rotate R2/S3 credentials on the coordinator, then restart it. The relay uses coordinator-issued presigned locations and needs only `AETHER_COORDINATOR_TOKEN`. Presigned URLs expire according to `presign_ttl_seconds`; workers request fresh locations on retry. Size `max_versions`, relay disk, object-store egress, `result_upload_concurrency`, and proxy connection limits for the fleet rather than treating their defaults as quotas.
+Rotate R2/S3 credentials on the coordinator, then restart it. The policy relay uses coordinator-issued presigned locations and needs only `AETHER_COORDINATOR_TOKEN`. Presigned URLs expire according to `presign_ttl_seconds`; workers request fresh locations on retry. Size `max_versions`, relay disk, object-store egress, worker `inference_slots`, server `environment_slots`, inference body limits, and proxy connection limits for the fleet rather than treating defaults as quotas.

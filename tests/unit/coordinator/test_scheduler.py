@@ -65,7 +65,6 @@ def lease_request(
     *,
     request_id: str,
     sent_at: float | None = None,
-    environments: tuple[EnvironmentIdentity, ...] = (EnvironmentIdentity(id="env", revision="1"),),
     loaded_policy_ids: tuple[str, ...] = (),
     slots: int = 1,
     wait_seconds: float = 0,
@@ -75,7 +74,6 @@ def lease_request(
         worker_id="worker-1",
         worker_session_id="session-1",
         sent_at=clock.now if sent_at is None else sent_at,
-        environments=environments,
         loaded_policy_ids=loaded_policy_ids,
         available_slots=slots,
         wait_seconds=wait_seconds,
@@ -160,9 +158,7 @@ def test_weighted_generation_is_atomic_deterministic_and_survives_restart(tmp_pa
 def test_compatible_leasing_preference_order_capacity_expiry_and_secure_ids(tmp_path: Path):
     clock = FakeClock()
     other = EnvironmentIdentity(id="other", revision="2")
-    caps = capabilities(capacity=2).model_copy(
-        update={"environments": (EnvironmentIdentity(id="env", revision="1"), other)}
-    )
+    caps = capabilities(capacity=2)
     with make_repository(tmp_path, clock) as repository:
         repository.register_worker(registration(caps=caps))
         repository.register_scheduler_source(source("a-other", environment=other))
@@ -171,17 +167,15 @@ def test_compatible_leasing_preference_order_capacity_expiry_and_secure_ids(tmp_
         env_group = repository.create_next_group("train")
 
         repository.configure_scheduler(max_policy_lag=0, loaded_policy_preference_seconds=0)
-        request = lease_request(
-            clock, request_id="request-env-1", environments=(EnvironmentIdentity(id="env", revision="1"),)
-        )
+        request = lease_request(clock, request_id="request-env-1")
         repository.validate_lease_request(request)
         first = repository.lease_next_compatible(request, lease_duration_seconds=2)
-        assert first.assignment.group_id == env_group.group_id
+        assert first.assignment.group_id == other_group.group_id
         assert first.lease_id.startswith("lease-") and len(first.lease_id) == 70
-        other_request = lease_request(clock, request_id="request-other", sent_at=11, environments=(other,))
+        other_request = lease_request(clock, request_id="request-other", sent_at=11)
         repository.validate_lease_request(other_request)
         second = repository.lease_next_compatible(other_request, lease_duration_seconds=2)
-        assert second.assignment.group_id == other_group.group_id
+        assert second.assignment.group_id == env_group.group_id
         assert second.lease_id != first.lease_id
         retry_same_request = repository.lease_next_compatible(request, lease_duration_seconds=2)
         assert retry_same_request == first
@@ -277,27 +271,27 @@ async def test_default_api_scheduler_returns_durable_lease(tmp_path: Path):
         app = create_coordinator_app(repository, token="token")
         headers = {
             "Authorization": "Bearer token",
-            "Aether-Protocol-Version": "1",
+            "Aether-Protocol-Version": "2",
             "Content-Type": "application/json",
         }
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/v1/workers/register", headers=headers, content=canonical_json_bytes(registration()))
+            await client.post("/api/v2/workers/register", headers=headers, content=canonical_json_bytes(registration()))
             response = await client.post(
-                "/api/v1/assignments/lease",
+                "/api/v2/assignments/lease",
                 headers=headers,
                 content=canonical_json_bytes(lease_request(clock, request_id="request-api")),
             )
             assert response.status_code == 200
             lease_id = response.json()["lease_id"]
             retry = await client.post(
-                "/api/v1/assignments/lease",
+                "/api/v2/assignments/lease",
                 headers=headers,
                 content=canonical_json_bytes(lease_request(clock, request_id="request-api")),
             )
             assert retry.status_code == 200
             assert retry.json() == response.json()
             conflict = await client.post(
-                "/api/v1/assignments/lease",
+                "/api/v2/assignments/lease",
                 headers=headers,
                 content=canonical_json_bytes(
                     lease_request(clock, request_id="request-api").model_copy(update={"wait_seconds": 1})
@@ -307,12 +301,12 @@ async def test_default_api_scheduler_returns_durable_lease(tmp_path: Path):
             policy1 = publish_policy(repository, 1, 4)
             repository.activate_policy(policy1.policy_id)
             stopped = await client.post(
-                f"/api/v1/assignments/{response.json()['assignment']['assignment_id']}/renew",
+                f"/api/v2/assignments/{response.json()['assignment_id']}/renew",
                 headers=headers,
                 content=canonical_json_bytes(
                     {
-                        "protocol_version": 1,
-                        "assignment_id": response.json()["assignment"]["assignment_id"],
+                        "protocol_version": 2,
+                        "assignment_id": response.json()["assignment_id"],
                         "lease_id": lease_id,
                         "worker_id": "worker-1",
                         "worker_session_id": "session-1",
@@ -361,7 +355,7 @@ async def test_cancelled_default_scheduler_request_recovers_committed_lease(tmp_
         repository.lease_or_create_next_compatible = delayed  # type: ignore[method-assign]
         headers = {
             "Authorization": "Bearer token",
-            "Aether-Protocol-Version": "1",
+            "Aether-Protocol-Version": "2",
             "Content-Type": "application/json",
         }
         timeout_body = canonical_json_bytes(lease_request(clock, request_id="request-timeout", wait_seconds=30))
@@ -370,25 +364,25 @@ async def test_cancelled_default_scheduler_request_recovers_committed_lease(tmp_
         )
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             await client.post(
-                "/api/v1/workers/register",
+                "/api/v2/workers/register",
                 headers=headers,
                 content=canonical_json_bytes(registration(caps=capabilities(capacity=2))),
             )
-            timed_out = await client.post("/api/v1/assignments/lease", headers=headers, content=timeout_body)
+            timed_out = await client.post("/api/v2/assignments/lease", headers=headers, content=timeout_body)
             assert timed_out.status_code == 503
             assert timed_out.json()["error"]["code"] == "lease_pending"
             await asyncio.to_thread(first_completed.wait)
-            first_recovered = await client.post("/api/v1/assignments/lease", headers=headers, content=timeout_body)
+            first_recovered = await client.post("/api/v2/assignments/lease", headers=headers, content=timeout_body)
             assert first_recovered.status_code == 200
             pending = asyncio.create_task(
-                client.post("/api/v1/assignments/lease", headers=headers, content=cancelled_body)
+                client.post("/api/v2/assignments/lease", headers=headers, content=cancelled_body)
             )
             await asyncio.to_thread(started.wait)
             pending.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await pending
             await asyncio.to_thread(completed.wait)
-            recovered = await client.post("/api/v1/assignments/lease", headers=headers, content=cancelled_body)
+            recovered = await client.post("/api/v2/assignments/lease", headers=headers, content=cancelled_body)
         assert recovered.status_code == 200
         assert repository.connection.execute("SELECT COUNT(*) FROM lease_attempts").fetchone()[0] == 2
         app.state.coordinator_service.close()
